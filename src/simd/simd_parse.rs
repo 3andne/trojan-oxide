@@ -1,10 +1,10 @@
-pub fn simd16_wrap(buf: &[u8]) -> usize {
-    unsafe { parse_simd_16(buf) }
-}
+// pub fn simd16_wrap(buf: &[u8]) -> usize {
+//     unsafe { parse_simd_16(buf) }
+// }
 
-pub fn simd8_wrap(buf: &[u8]) -> usize {
-    unsafe { parse_simd_8(buf) }
-}
+// pub fn simd8_wrap(buf: &[u8]) -> usize {
+//     unsafe { parse_simd_8(buf) }
+// }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
