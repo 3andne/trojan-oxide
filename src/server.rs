@@ -1,7 +1,6 @@
 use anyhow::{Error, Result};
 use futures::future;
 use std::io::IoSlice;
-use std::net::SocketAddr;
 use std::pin::Pin;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, oneshot};
@@ -22,8 +21,8 @@ enum ParserError {
     Invalid,
 }
 
-const HEADER0: &'static [u8] = b"GET / HTTP/1.1\nHost: ";
-const HEADER1: &'static [u8] = b"\nConnection: keep-alive";
+const HEADER0: &'static [u8] = b"GET / HTTP/1.1\r\nHost: ";
+const HEADER1: &'static [u8] = b"\r\nConnection: keep-alive\r\n\r\n";
 
 impl Target {
     fn new() -> Self {
