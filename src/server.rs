@@ -81,8 +81,16 @@ impl Target {
             self.host =
                 String::from_utf8(buf[start..end].to_vec()).map_err(|_| ParserError::Invalid)?;
             if !self.is_https {
-                // bug remains here
-                self.host += ":80";
+                let mut has_port = false;
+                for i in self.host[self.host.len() - 6..].as_bytes() {
+                    if *i == b':' {
+                        has_port = true;
+                        break;
+                    }
+                }
+                if !has_port {
+                    self.host += ":80";
+                }
             }
             return Ok(());
         }
