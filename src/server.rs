@@ -182,21 +182,28 @@ async fn handle(
     let (mut in_read, mut in_write) = stream.into_split();
     let (mut out_read, mut out_write) = outbound.into_split();
 
+    let (shutdown_tx1, shutdown_rx1) = oneshot::channel::<()>();
+    let (shutdown_tx2, shutdown_rx2) = oneshot::channel::<()>();
+
     tokio::spawn(async move {
         trace!("relaying 1");
         select! {
             _ = tokio::io::copy(&mut in_read, &mut out_write) => {},
             _ = upper_shutdown1.recv() => {},
+            _ = shutdown_rx2 => {},
         }
         trace!("relaying 1 end");
+        drop(shutdown_tx1);
     });
 
     trace!("relaying 2");
-
     select! {
         _ = tokio::io::copy(&mut out_read, &mut in_write) => {},
         _ = upper_shutdown2.recv() => {},
+        _ = shutdown_rx1 => {},
     }
+
+    drop(shutdown_tx2);
 
     trace!("relaying 2 end");
 
