@@ -127,86 +127,79 @@ impl Target {
         }
         Err(ParserError::Incomplete)
     }
+
+    async fn accept(&mut self, inbound: &mut TcpStream) -> Result<()> {
+        let mut buffer = Vec::with_capacity(200);
+        loop {
+            let read = inbound.read_buf(&mut buffer).await?;
+            if read != 0 {
+                match self.parse(&mut buffer) {
+                    Ok(_) => {
+                        trace!("stream parsed");
+                        return Ok(());
+                    }
+                    Err(ParserError::Invalid) => {
+                        return Err(Error::new(ParserError::Invalid));
+                    }
+                    _ => (),
+                }
+            } else {
+                return Err(Error::new(ParserError::Invalid));
+            }
+        }
+    }
+
+    async fn write_packet0(&self, inbound: &mut TcpStream, outbound: &mut TcpStream) -> Result<()> {
+        if self.is_https {
+            inbound
+                .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                .await?;
+            trace!("https packet 0 sent");
+        } else {
+            let bufs = [
+                IoSlice::new(HEADER0),
+                IoSlice::new(self.host.as_bytes()),
+                IoSlice::new(HEADER1),
+            ];
+
+            let mut writer = Pin::new(outbound);
+            future::poll_fn(|cx| writer.as_mut().poll_write_vectored(cx, &bufs[..]))
+                .await
+                .map_err(|e| Box::new(e))?;
+
+            writer.flush().await.map_err(|e| Box::new(e))?;
+            trace!("http packet 0 sent");
+        }
+        Ok(())
+    }
 }
 
-async fn handle(
-    mut stream: TcpStream,
-    mut upper_shutdown1: broadcast::Receiver<()>,
-    mut upper_shutdown2: broadcast::Receiver<()>,
-) -> Result<()> {
-    let mut buffer = Vec::with_capacity(500);
+async fn handle(mut stream: TcpStream, mut upper_shutdown: broadcast::Receiver<()>) -> Result<()> {
     let mut target = Target::new();
-    loop {
-        let read = stream.read_buf(&mut buffer).await?;
-        if read != 0 {
-            match target.parse(&mut buffer) {
-                Ok(_) => {
-                    trace!("stream parsed");
-                    break;
-                }
-                Err(ParserError::Invalid) => {
-                    return Err(Error::new(ParserError::Invalid));
-                }
-                _ => (),
-            }
-        } else {
-            return Err(Error::new(ParserError::Invalid));
-        }
-    }
+    target.accept(&mut stream).await?;
 
     let mut outbound = TcpStream::connect(target.host.clone()).await?;
-
+    
     trace!("outbound connected");
+    
+    target.write_packet0(&mut stream, &mut outbound).await?;
 
-    if target.is_https {
-        stream
-            .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
-            .await?;
-        trace!("https packet 0 sent");
-    } else {
-        let bufs = [
-            IoSlice::new(HEADER0),
-            IoSlice::new(target.host.as_bytes()),
-            IoSlice::new(HEADER1),
-        ];
 
-        let mut writer = Pin::new(&mut outbound);
-        future::poll_fn(|cx| writer.as_mut().poll_write_vectored(cx, &bufs[..]))
-            .await
-            .map_err(|e| Box::new(e))?;
+    let (mut in_read, mut in_write) = stream.split();
+    let (mut out_read, mut out_write) = outbound.split();
 
-        outbound.flush().await.map_err(|e| Box::new(e))?;
-        trace!("http packet 0 sent");
-    }
-
-    let (mut in_read, mut in_write) = stream.into_split();
-    let (mut out_read, mut out_write) = outbound.into_split();
-
-    let (shutdown_tx1, shutdown_rx1) = oneshot::channel::<()>();
-    let (shutdown_tx2, shutdown_rx2) = oneshot::channel::<()>();
-
-    tokio::spawn(async move {
-        trace!("relaying 1");
-        select! {
-            _ = tokio::io::copy(&mut in_read, &mut out_write) => {},
-            _ = upper_shutdown1.recv() => {},
-            _ = shutdown_rx2 => {},
-        }
-        trace!("relaying 1 end");
-        drop(shutdown_tx1);
-    });
-
-    trace!("relaying 2");
+    trace!("start relaying");
     select! {
-        _ = tokio::io::copy(&mut out_read, &mut in_write) => {},
-        _ = upper_shutdown2.recv() => {},
-        _ = shutdown_rx1 => {},
+        _ = tokio::io::copy(&mut out_read, &mut in_write) => {
+            trace!("relaying upload end");
+        },
+        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+            trace!("relaying download end");
+        },
+        _ = upper_shutdown.recv() => {
+            trace!("shutdown signal received");
+        },
     }
-
-    drop(shutdown_tx2);
-
-    trace!("relaying 2 end");
-
     Ok(())
 }
 
@@ -221,10 +214,9 @@ async fn run(listener: TcpListener, mut upper_shutdown: oneshot::Receiver<()>) -
         }
         let (stream, _) = listener.accept().await?;
         trace!("accepted tcp: {:?}", stream);
-        let shutdown_rx1 = shutdown_tx.subscribe();
-        let shutdown_rx2 = shutdown_tx.subscribe();
+        let shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
-            let _ = handle(stream, shutdown_rx1, shutdown_rx2).await;
+            let _ = handle(stream, shutdown_rx).await;
         });
     }
     Ok(())
