@@ -1,46 +1,49 @@
 #![feature(aarch64_target_feature)]
 #![feature(stdsimd)]
+mod server;
 pub mod simd;
-use simd::simd_parse::*;
-// use async_std::{
-//     io::BufReader,
-//     net::{TcpListener, TcpStream, ToSocketAddrs},
-//     prelude::*,
-//     task,
-// };
 
-// use hyper::*;
+use anyhow::Result;
+use clap::{App, Arg};
+use std::net::SocketAddr;
+use tokio::net::TcpListener;
 
-// type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-// fn main() {
-//     let _ = task::block_on(start_server());
-// }
+#[tokio::main]
+async fn main() -> Result<()> {
+    let matches = App::new("proxx")
+        .version("0.0.1")
+        .arg(
+            Arg::with_name("port")
+                .short("p")
+                .long("port")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("log-level")
+                .short("l")
+                .long("log-level")
+                .takes_value(true),
+        )
+        .get_matches();
 
-// async fn start_server() -> Result<()> {
-//     let addr = "127.0.0.1:7788";
-//     let listener = TcpListener::bind(addr).await?;
-//     let mut incoming = listener.incoming();
-//     while let Some(stream) = incoming.next().await {
-//         let stream = stream?;
-//         println!("Accepting from: {}", stream.peer_addr()?);
-//         task::spawn(async { connection_loop(stream) });
-//     }
-//     unimplemented!()
-// }
+    let addr = "127.0.0.1:".to_owned() + matches.value_of("port").unwrap_or("8888");
+    let loglevel = matches
+        .value_of("log-level")
+        .map_or(tracing::Level::INFO, |f| match &f.to_lowercase()[..] {
+            "info" => tracing::Level::INFO,
+            "debug" => tracing::Level::DEBUG,
+            "warn" => tracing::Level::WARN,
+            "error" => tracing::Level::ERROR,
+            "trace" => tracing::Level::TRACE,
+            _ => tracing::Level::INFO,
+        });
 
-// fn connection_loop(_: TcpStream) {
-//     println!("stream acc");
-// }
+    let collector = tracing_subscriber::fmt().with_max_level(loglevel).finish();
 
-fn main() {
-    let test = [
-        b'_', b'_', b'_', b'_', b'_', b'_', b'_', b'_', b'_', b'_', b'\r', b'\n', b'_', b'_', b'_',
-        b'_',
-    ];
+    let _ = tracing::subscriber::set_global_default(collector);
 
-    let t1 = simd8_wrap(&test);
-    let t2 = simd16_wrap(&test);
-    let t3 = parse_scalar(&test);
-
-    println!("{}, {}, {}", t1, t2, t3);
+    let addr = addr.parse::<SocketAddr>()?;
+    let listener = TcpListener::bind(&addr).await?;
+    let _ = server::start_server(listener, tokio::signal::ctrl_c()).await;
+    Ok(())
 }
