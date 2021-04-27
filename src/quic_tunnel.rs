@@ -6,7 +6,7 @@ use tokio::{fs, io};
 use tracing::*;
 use url::Url;
 
-// #[allow(dead_code)]
+#[allow(dead_code)]
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
 async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Result<()> {
@@ -32,7 +32,7 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
     Ok(())
 }
 
-async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
+pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
     let url = Url::parse(options.remote_url.as_str())?;
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?

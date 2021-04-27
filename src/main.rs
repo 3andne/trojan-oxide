@@ -22,6 +22,6 @@ async fn main() -> Result<()> {
 
     let addr = opt.addr.parse::<SocketAddr>()?;
     let listener = TcpListener::bind(&addr).await?;
-    let _ = server::start_server(listener, tokio::signal::ctrl_c()).await;
+    let _ = server::start_server(listener, tokio::signal::ctrl_c(), opt).await;
     Ok(())
 }

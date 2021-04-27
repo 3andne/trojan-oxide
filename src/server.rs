@@ -1,5 +1,7 @@
+use crate::{args::Opt, quic_tunnel::*};
 use anyhow::{Error, Result};
 use futures::future;
+use quinn::*;
 use std::io::IoSlice;
 use std::pin::Pin;
 use tokio::net::{TcpListener, TcpStream};
@@ -149,7 +151,11 @@ impl Target {
         }
     }
 
-    async fn write_packet0(&self, inbound: &mut TcpStream, outbound: &mut TcpStream) -> Result<()> {
+    async fn write_packet0<A, B>(&self, inbound: &mut A, outbound: &mut B) -> Result<()>
+    where
+        A: AsyncWrite + Unpin + ?Sized,
+        B: AsyncWrite + Unpin + ?Sized,
+    {
         if self.is_https {
             inbound
                 .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
@@ -174,19 +180,22 @@ impl Target {
     }
 }
 
-async fn handle(mut stream: TcpStream, mut upper_shutdown: broadcast::Receiver<()>) -> Result<()> {
+async fn handle(
+    mut stream: TcpStream,
+    mut upper_shutdown: broadcast::Receiver<()>,
+    tunnel: (SendStream, RecvStream),
+) -> Result<()> {
     let mut target = Target::new();
     target.accept(&mut stream).await?;
 
-    let mut outbound = TcpStream::connect(target.host.clone()).await?;
-    
-    trace!("outbound connected");
-    
-    target.write_packet0(&mut stream, &mut outbound).await?;
+    // let mut outbound = TcpStream::connect(target.host.clone()).await?;
 
+    trace!("outbound connected");
+
+    let (mut out_write, mut out_read) = tunnel;
+    target.write_packet0(&mut stream, &mut out_write).await?;
 
     let (mut in_read, mut in_write) = stream.split();
-    let (mut out_read, mut out_write) = outbound.split();
 
     trace!("start relaying");
     select! {
@@ -203,9 +212,13 @@ async fn handle(mut stream: TcpStream, mut upper_shutdown: broadcast::Receiver<(
     Ok(())
 }
 
-async fn run(listener: TcpListener, mut upper_shutdown: oneshot::Receiver<()>) -> Result<()> {
+async fn run(
+    listener: TcpListener,
+    mut upper_shutdown: oneshot::Receiver<()>,
+    options: Opt,
+) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
-    // let quic_tx 
+    let mut quic_tx = quic_tunnel_tx(&options).await?;
     loop {
         match upper_shutdown.try_recv() {
             Err(oneshot::error::TryRecvError::Empty) => (),
@@ -215,15 +228,27 @@ async fn run(listener: TcpListener, mut upper_shutdown: oneshot::Receiver<()>) -
         }
         let (stream, _) = listener.accept().await?;
         trace!("accepted tcp: {:?}", stream);
+        let tunnel = match quic_tx.open_bi().await {
+            Ok(t) => t,
+            Err(e) => {
+                trace!("{}", e);
+                quic_tx = quic_tunnel_tx(&options).await?;
+                quic_tx.open_bi().await?
+            }
+        };
         let shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
-            let _ = handle(stream, shutdown_rx).await;
+            let _ = handle(stream, shutdown_rx, tunnel).await;
         });
     }
     Ok(())
 }
 
-pub async fn start_server(listener: TcpListener, ctrl_c: impl std::future::Future) -> Result<()> {
+pub async fn start_server(
+    listener: TcpListener,
+    ctrl_c: impl std::future::Future,
+    options: Opt,
+) -> Result<()> {
     info!("server-start");
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -231,7 +256,7 @@ pub async fn start_server(listener: TcpListener, ctrl_c: impl std::future::Futur
         _ = ctrl_c => {
             info!("ctrl-c");
         }
-        _ = run(listener, shutdown_rx) => {}
+        _ = run(listener, shutdown_rx, options) => {}
     }
 
     drop(shutdown_tx);
