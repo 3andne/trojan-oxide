@@ -21,6 +21,7 @@ quinn-proto = "*"
 directories = "3.0"
 structopt = "0.3"
 url = "*"
+rcgen = "0.8"
 rustls = "0.19"
 
 [dev-dependencies]

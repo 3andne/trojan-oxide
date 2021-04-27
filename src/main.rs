@@ -10,8 +10,6 @@ mod quic_tunnel;
 
 use anyhow::Result;
 // use clap::{App, Arg};
-use std::net::SocketAddr;
-use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,8 +18,6 @@ async fn main() -> Result<()> {
 
     let _ = tracing::subscriber::set_global_default(collector);
 
-    let addr = opt.addr.parse::<SocketAddr>()?;
-    let listener = TcpListener::bind(&addr).await?;
-    let _ = server::start_server(listener, tokio::signal::ctrl_c(), opt).await;
+    let _ = server::build_tunnel(tokio::signal::ctrl_c(), opt).await;
     Ok(())
 }

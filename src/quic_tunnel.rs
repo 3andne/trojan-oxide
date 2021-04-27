@@ -2,6 +2,7 @@ use crate::args::Opt;
 use anyhow::*;
 use quinn::*;
 use std::net::ToSocketAddrs;
+use std::sync::Arc;
 use tokio::{fs, io};
 use tracing::*;
 use url::Url;
@@ -33,7 +34,7 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
 }
 
 pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
-    let url = Url::parse(options.remote_url.as_str())?;
+    let url = Url::parse(options.proxy_url.as_str())?;
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?
         .next()
@@ -49,7 +50,7 @@ pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
 
     let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
 
-    let host = options.remote_url.as_str();
+    let host = options.proxy_url.as_str();
 
     eprintln!("connecting to {} at {}", host, remote);
     let new_conn = endpoint
@@ -61,4 +62,74 @@ pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
         connection: conn, ..
     } = new_conn;
     Ok(conn)
+}
+
+pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.max_concurrent_uni_streams(0).unwrap();
+    let mut server_config = quinn::ServerConfig::default();
+    server_config.transport = Arc::new(transport_config);
+    let mut server_config = quinn::ServerConfigBuilder::new(server_config);
+    server_config.protocols(ALPN_QUIC_HTTP);
+
+    server_config.use_stateless_retry(true);
+
+    if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
+        let key = fs::read(key_path)
+            .await
+            .context("failed to read private key")?;
+        let key = if key_path.extension().map_or(false, |x| x == "der") {
+            quinn::PrivateKey::from_der(&key)?
+        } else {
+            quinn::PrivateKey::from_pem(&key)?
+        };
+        let cert_chain = fs::read(cert_path)
+            .await
+            .context("failed to read certificate chain")?;
+        let cert_chain = if cert_path.extension().map_or(false, |x| x == "der") {
+            quinn::CertificateChain::from_certs(Some(
+                quinn::Certificate::from_der(&cert_chain).unwrap(),
+            ))
+        } else {
+            quinn::CertificateChain::from_pem(&cert_chain)?
+        };
+        server_config.certificate(cert_chain, key)?;
+    } else {
+        let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
+        let path = dirs.data_local_dir();
+        let cert_path = path.join("cert.der");
+        let key_path = path.join("key.der");
+        let cert = fs::read(&cert_path).await;
+        let key = fs::read(&key_path).await;
+        let (cert, key) = match cert.and_then(|x| Ok((x, key?))) {
+            Ok(x) => x,
+            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
+                info!("generating self-signed certificate");
+                let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+                let key = cert.serialize_private_key_der();
+                let cert = cert.serialize_der().unwrap();
+                fs::create_dir_all(&path)
+                    .await
+                    .context("failed to create certificate directory")?;
+                fs::write(&cert_path, &cert)
+                    .await
+                    .context("failed to write certificate")?;
+                fs::write(&key_path, &key)
+                    .await
+                    .context("failed to write private key")?;
+                (cert, key)
+            }
+            Err(e) => {
+                bail!("failed to read certificate: {}", e);
+            }
+        };
+        let key = quinn::PrivateKey::from_der(&key)?;
+        let cert = quinn::Certificate::from_der(&cert)?;
+        server_config.certificate(quinn::CertificateChain::from_certs(vec![cert]), key)?;
+    }
+
+    let mut endpoint = quinn::Endpoint::builder();
+    endpoint.listen(server_config.build());
+
+    Ok(endpoint.bind(&options.proxy_port.parse()?)?)
 }
