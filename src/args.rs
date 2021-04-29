@@ -1,4 +1,7 @@
+use sha2::{Digest, Sha224};
+use std::fmt::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
 use structopt::StructOpt;
 
 fn parse_log_level(l: &str) -> tracing::Level {
@@ -14,6 +17,19 @@ fn parse_log_level(l: &str) -> tracing::Level {
 
 fn parse_addr(l: &str) -> String {
     "127.0.0.1:".to_owned() + l
+}
+
+const HASH_LEN: usize = 56;
+
+fn password_to_hash(s: &str) -> Arc<String> {
+    let mut hasher = Sha224::new();
+    hasher.update(s);
+    let h = hasher.finalize();
+    let mut s = String::with_capacity(HASH_LEN);
+    for i in h {
+        write!(&mut s, "{:02x}", i).unwrap();
+    }
+    Arc::new(s)
 }
 
 #[derive(StructOpt, Debug)]
@@ -44,4 +60,7 @@ pub struct Opt {
     /// TLS certificate in PEM format
     #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
     pub cert: Option<PathBuf>,
+
+    #[structopt(short, long, parse(from_str = password_to_hash))]
+    pub password_hash: Arc<String>,
 }

@@ -23,6 +23,7 @@ structopt = "0.3"
 url = "*"
 rcgen = "0.8"
 rustls = "0.19"
+sha2 = "0.9"
 
 [dev-dependencies]
 criterion = "0.3"

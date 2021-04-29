@@ -6,6 +6,7 @@ use quinn::*;
 use std::io::IoSlice;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, oneshot};
 use tokio::{io::*, select};
@@ -14,6 +15,7 @@ use tracing::*;
 struct Target {
     is_https: bool,
     host: String,
+    port: u16,
     cursor: usize,
 }
 
@@ -33,6 +35,7 @@ impl Target {
         Self {
             is_https: false,
             host: String::new(),
+            port: 0,
             cursor: 0,
         }
     }
@@ -81,25 +84,41 @@ impl Target {
             end += 1;
         }
 
-        if end < buf.len() {
-            self.host =
-                String::from_utf8(buf[start..end].to_vec()).map_err(|_| ParserError::Invalid)?;
-            if !self.is_https {
-                let mut has_port = false;
-                for i in self.host[self.host.len() - 6..].as_bytes() {
-                    if *i == b':' {
-                        has_port = true;
-                        break;
-                    }
-                }
-                if !has_port {
-                    self.host += ":80";
-                }
-            }
-            return Ok(());
+        if end == buf.len() {
+            return Err(ParserError::Incomplete);
         }
 
-        return Err(ParserError::Incomplete);
+        let mut port_idx = end;
+        for i in end - 6..end {
+            if buf[i] == b':' {
+                port_idx = i;
+                break;
+            }
+        }
+
+        if port_idx + 1 == end {
+            return Err(ParserError::Invalid);
+        } else if port_idx == end {
+            if !self.is_https {
+                self.port = 80;
+            } else {
+                return Err(ParserError::Invalid);
+            }
+        } else {
+            for i in port_idx..end {
+                let di = buf[i];
+                if di >= b'0' && di <= b'9' {
+                    self.port = self.port * 10 + (di - b'0') as u16;
+                } else {
+                    return Err(ParserError::Invalid);
+                }
+            }
+        }
+
+        self.host =
+            String::from_utf8(buf[start..port_idx].to_vec()).map_err(|_| ParserError::Invalid)?;
+
+        return Ok(());
     }
 
     fn parse(&mut self, buf: &mut Vec<u8>) -> Result<(), ParserError> {
@@ -162,10 +181,24 @@ impl Target {
         Ok(())
     }
 
-    async fn send_packet0<A>(&self, outbound: &mut A) -> Result<()>
+    async fn send_packet0<A>(&self, outbound: &mut A, password_hash: Arc<String>) -> Result<()>
     where
         A: AsyncWrite + Unpin + ?Sized,
     {
+        let command0 = [b'\r', b'\n', 1, 0];
+        let port_arr = self.port.to_be_bytes();
+        let packet0 = [
+            IoSlice::new(password_hash.as_bytes()),
+            IoSlice::new(&command0),
+            IoSlice::new(self.host.as_bytes()),
+            IoSlice::new(&port_arr),
+            IoSlice::new(&[b'\r', b'\n']),
+        ];
+        let mut writer = Pin::new(outbound);
+        future::poll_fn(|cx| writer.as_mut().poll_write_vectored(cx, &packet0[..]))
+            .await
+            .map_err(|e| Box::new(e))?;
+
         if !self.is_https {
             let bufs = [
                 IoSlice::new(HEADER0),
@@ -173,14 +206,15 @@ impl Target {
                 IoSlice::new(HEADER1),
             ];
 
-            let mut writer = Pin::new(outbound);
             future::poll_fn(|cx| writer.as_mut().poll_write_vectored(cx, &bufs[..]))
                 .await
                 .map_err(|e| Box::new(e))?;
 
-            writer.flush().await.map_err(|e| Box::new(e))?;
             trace!("http packet 0 sent");
         }
+        trace!("trojan packet 0 sent");
+        writer.flush().await.map_err(|e| Box::new(e))?;
+
         Ok(())
     }
 }
@@ -189,6 +223,7 @@ async fn handle_http_quic(
     mut stream: TcpStream,
     mut upper_shutdown: broadcast::Receiver<()>,
     tunnel: (SendStream, RecvStream),
+    password_hash: Arc<String>,
 ) -> Result<()> {
     let mut target = Target::new();
     let (mut out_write, mut out_read) = tunnel;
@@ -198,7 +233,7 @@ async fn handle_http_quic(
 
     // trace!("outbound connected");
 
-    target.send_packet0(&mut out_write).await?;
+    target.send_packet0(&mut out_write, password_hash).await?;
 
     let (mut in_read, mut in_write) = stream.split();
 
@@ -240,17 +275,67 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
             }
         };
         let shutdown_rx = shutdown_tx.subscribe();
+        let hash_copy = options.password_hash.clone();
         tokio::spawn(async move {
-            let _ = handle_http_quic(stream, shutdown_rx, tunnel).await;
+            let _ = handle_http_quic(stream, shutdown_rx, tunnel, hash_copy).await;
         });
     }
     Ok(())
 }
 
-async fn handle_quic_outbound(
-    conn: Connecting,
+async fn handle_quic_connection(
+    mut streams: IncomingBiStreams,
     mut upper_shutdown: broadcast::Receiver<()>,
+    password_hash: Arc<String>,
 ) -> Result<()> {
+    let (shutdown_tx, _) = broadcast::channel(1);
+
+    loop {
+        let stream = select! {
+            s = streams.next() => {
+                match s {
+                    Some(stream) => stream,
+                    None => {break;}
+                }
+            },
+            _ = upper_shutdown.recv() => {
+                // info
+                break;
+            }
+        };
+
+        let stream = match stream {
+            Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
+                info!("connection closed");
+                return Ok(());
+            }
+            Err(e) => {
+                return Err(anyhow::Error::new(e));
+            }
+            Ok(s) => s,
+        };
+        let shutdown = shutdown_tx.subscribe();
+        let pass_copy = password_hash.clone();
+        tokio::spawn(handle_quic_outbound(stream, shutdown, pass_copy));
+    }
+    todo!()
+}
+
+async fn handle_quic_outbound(
+    stream: (SendStream, RecvStream),
+    mut upper_shutdown: broadcast::Receiver<()>,
+    password_hash: Arc<String>,
+) -> Result<()> {
+    let (mut send, mut recv) = stream;
+    let mut buffer = Vec::with_capacity(200);
+    loop {
+        let read = recv.read_buf(&mut buffer).await?;
+        if read != 0 {
+
+        } else {
+            return Err(Error::new(ParserError::Invalid));
+        }
+    }
     todo!()
 }
 
@@ -267,8 +352,10 @@ async fn run_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
         }
         trace!("connection incoming");
         let shutdown_rx = shutdown_tx.subscribe();
+        let hash_copy = options.password_hash.clone();
+        let quinn::NewConnection { bi_streams, .. } = conn.await?;
         tokio::spawn(
-            handle_quic_outbound(conn, shutdown_rx).unwrap_or_else(move |e| {
+            handle_quic_connection(bi_streams, shutdown_rx, hash_copy).unwrap_or_else(move |e| {
                 error!("connection failed: {reason}", reason = e.to_string())
             }),
         );
