@@ -1,8 +1,8 @@
 use crate::utils::{MixAddrType, ParserError};
 use anyhow::{Error, Result};
-use futures::future;
-use std::io::IoSlice;
-use std::pin::Pin;
+// use futures::future;
+// use std::io::IoSlice;
+// use std::pin::Pin;
 use std::sync::Arc;
 use tokio::io::*;
 use tokio::net::TcpStream;
@@ -184,12 +184,13 @@ impl Target {
         let p0 = [
             password_hash.as_bytes(),
             &command0[..command0_len],
-            self.host.as_bytes(), 
+            self.host.as_bytes(),
             &port_arr,
-            &[b'\r', b'\n']
-        ].concat();
+            &[b'\r', b'\n'],
+        ]
+        .concat();
         outbound.write_all(&p0).await?;
-        outbound.flush().await?;
+        // not using the following code because of quinn's bug.
         // let packet0 = [
         //     IoSlice::new(password_hash.as_bytes()),
         //     IoSlice::new(&command0[..command0_len]),
@@ -203,20 +204,22 @@ impl Target {
         //     .map_err(|e| Box::new(e))?;
 
         if !self.is_https {
-            todo!("fix http bug");
-        //     let bufs = [
-        //         IoSlice::new(HEADER0),
-        //         IoSlice::new(self.host_raw.as_bytes()),
-        //         IoSlice::new(HEADER1),
-        //     ];
+            let http_p0 = [HEADER0, self.host_raw.as_bytes(), HEADER1].concat();
+            outbound.write_all(&http_p0).await?;
+            //     let bufs = [
+            //         IoSlice::new(HEADER0),
+            //         IoSlice::new(self.host_raw.as_bytes()),
+            //         IoSlice::new(HEADER1),
+            //     ];
 
-        //     future::poll_fn(|cx| writer.as_mut().poll_write_vectored(cx, &bufs[..]))
-        //         .await
-        //         .map_err(|e| Box::new(e))?;
+            //     future::poll_fn(|cx| writer.as_mut().poll_write_vectored(cx, &bufs[..]))
+            //         .await
+            //         .map_err(|e| Box::new(e))?;
 
-        //     trace!("http packet 0 sent");
+            //     trace!("http packet 0 sent");
         }
         // writer.flush().await.map_err(|e| Box::new(e))?;
+        outbound.flush().await?;
         trace!("trojan packet 0 sent");
 
         Ok(())

@@ -8,7 +8,6 @@ edition = "2018"
 
 [dependencies]
 tokio={version = "1", features = ["full"]}
-bytes = "1"
 clap = "2"
 anyhow = { version = "1" }
 tracing = "0.1.25"
@@ -20,9 +19,8 @@ quinn = "0.7.2"
 quinn-proto = "*"
 directories = "3.0"
 structopt = "0.3"
-url = "*"
 rcgen = "0.8"
-rustls = "0.19"
+#rustls = "0.19"
 sha2 = "0.9"
 
 [dev-dependencies]
@@ -31,4 +29,3 @@ criterion = "0.3"
 [[bench]]
 name = "bench_simd"
 harness = false
-

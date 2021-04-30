@@ -1,8 +1,8 @@
-#![feature(aarch64_target_feature)]
-#![feature(stdsimd)]
+// #![feature(aarch64_target_feature)]
+// #![feature(stdsimd)]
 mod proxy;
 mod server;
-pub mod simd;
+// pub mod simd;
 
 mod args;
 use structopt::StructOpt;

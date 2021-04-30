@@ -5,7 +5,6 @@ use quinn::*;
 use std::sync::Arc;
 use tokio::{io::*, select};
 use tokio::{net::TcpStream, sync::broadcast};
-use tracing::*;
 
 pub async fn handle_quic_connection(
     mut streams: IncomingBiStreams,
