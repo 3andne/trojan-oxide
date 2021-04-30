@@ -55,6 +55,7 @@ impl Target {
     }
 
     fn set_host(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
+        trace!("set_host entered");
         while self.cursor < buf.len() && buf[self.cursor] == b' ' {
             self.cursor += 1;
         }
@@ -95,7 +96,7 @@ impl Target {
                 return Err(ParserError::Invalid);
             }
         } else {
-            for i in port_idx..end {
+            for i in (port_idx + 1)..end {
                 let di = buf[i];
                 if di >= b'0' && di <= b'9' {
                     self.port = self.port * 10 + (di - b'0') as u16;
@@ -166,6 +167,7 @@ impl Target {
             inbound
                 .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
                 .await?;
+            inbound.flush().await?;
             trace!("https packet 0 sent");
         }
 
@@ -179,33 +181,43 @@ impl Target {
         let command0 = [b'\r', b'\n', 1, self.host.socks_type(), self.host.len()];
         let command0_len = if self.host.is_hostname() { 5 } else { 4 };
         let port_arr = self.port.to_be_bytes();
-        let packet0 = [
-            IoSlice::new(password_hash.as_bytes()),
-            IoSlice::new(&command0[..command0_len]),
-            IoSlice::new(self.host.as_bytes()),
-            IoSlice::new(&port_arr),
-            IoSlice::new(&[b'\r', b'\n']),
-        ];
-        let mut writer = Pin::new(outbound);
-        future::poll_fn(|cx| writer.as_mut().poll_write_vectored(cx, &packet0[..]))
-            .await
-            .map_err(|e| Box::new(e))?;
+        let p0 = [
+            password_hash.as_bytes(),
+            &command0[..command0_len],
+            self.host.as_bytes(), 
+            &port_arr,
+            &[b'\r', b'\n']
+        ].concat();
+        outbound.write_all(&p0).await?;
+        outbound.flush().await?;
+        // let packet0 = [
+        //     IoSlice::new(password_hash.as_bytes()),
+        //     IoSlice::new(&command0[..command0_len]),
+        //     IoSlice::new(self.host.as_bytes()),
+        //     IoSlice::new(&port_arr),
+        //     IoSlice::new(&[b'\r', b'\n']),
+        // ];
+        // let mut writer = Pin::new(outbound);
+        // future::poll_fn(|cx| writer.as_mut().poll_write_vectored(cx, &packet0[..]))
+        //     .await
+        //     .map_err(|e| Box::new(e))?;
 
         if !self.is_https {
-            let bufs = [
-                IoSlice::new(HEADER0),
-                IoSlice::new(self.host_raw.as_bytes()),
-                IoSlice::new(HEADER1),
-            ];
+            todo!("fix http bug");
+        //     let bufs = [
+        //         IoSlice::new(HEADER0),
+        //         IoSlice::new(self.host_raw.as_bytes()),
+        //         IoSlice::new(HEADER1),
+        //     ];
 
-            future::poll_fn(|cx| writer.as_mut().poll_write_vectored(cx, &bufs[..]))
-                .await
-                .map_err(|e| Box::new(e))?;
+        //     future::poll_fn(|cx| writer.as_mut().poll_write_vectored(cx, &bufs[..]))
+        //         .await
+        //         .map_err(|e| Box::new(e))?;
 
-            trace!("http packet 0 sent");
+        //     trace!("http packet 0 sent");
         }
+        // writer.flush().await.map_err(|e| Box::new(e))?;
         trace!("trojan packet 0 sent");
-        writer.flush().await.map_err(|e| Box::new(e))?;
 
         Ok(())
     }

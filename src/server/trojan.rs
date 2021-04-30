@@ -1,10 +1,10 @@
 use crate::{server::*, utils::ParserError};
 use anyhow::{Error, Result};
-use futures::StreamExt;
+use futures::{StreamExt, TryFutureExt};
 use quinn::*;
 use std::sync::Arc;
-use tokio::{net::TcpStream, sync::broadcast};
 use tokio::{io::*, select};
+use tokio::{net::TcpStream, sync::broadcast};
 use tracing::*;
 
 pub async fn handle_quic_connection(
@@ -40,7 +40,12 @@ pub async fn handle_quic_connection(
         };
         let shutdown = shutdown_tx.subscribe();
         let pass_copy = password_hash.clone();
-        tokio::spawn(handle_quic_outbound(stream, shutdown, pass_copy));
+        tokio::spawn(
+            handle_quic_outbound(stream, shutdown, pass_copy).map_err(|e| {
+                trace!("handle_quic_outbound quit due to {:?}", e);
+                e
+            }),
+        );
     }
     todo!()
 }
@@ -58,12 +63,15 @@ async fn handle_quic_outbound(
         if read != 0 {
             match target.parse(&buffer) {
                 Err(ParserError::Invalid) => {
+                    trace!("invalid");
                     return Err(Error::new(ParserError::Invalid));
                 }
                 Err(ParserError::Incomplete) => {
+                    trace!("Incomplete");
                     continue;
                 }
                 Ok(()) => {
+                    trace!("Ok");
                     break;
                 }
             }
@@ -72,13 +80,20 @@ async fn handle_quic_outbound(
         }
     }
 
+    trace!("outbound trying to connect");
+
     let mut outbound = if target.host.is_ip() {
         TcpStream::connect(target.host.to_socket_addrs(target.port)).await?
     } else {
-        TcpStream::connect(target.host.unwrap_hostname()).await?
+        TcpStream::connect(target.host.unwrap_hostname() + &":" + &target.port.to_string()).await?
     };
+    trace!("outbound connected: {:?}", outbound);
 
     if target.cursor < buffer.len() {
+        trace!(
+            "remaining packet: {:?}",
+            String::from_utf8(buffer[target.cursor..].to_vec())
+        );
         let mut t = std::io::Cursor::new(&buffer[target.cursor..]);
         outbound.write_buf(&mut t).await?;
         outbound.flush().await?;

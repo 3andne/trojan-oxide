@@ -20,6 +20,18 @@ fn parse_addr(l: &str) -> String {
     "127.0.0.1:".to_owned() + l
 }
 
+// fn parse_port(l: &str) -> u16 {
+//     let mut res = 0;
+//     for i in l.bytes() {
+//         if i <= b'9' && i >= b'0' {
+//             res = res * 10 + (i - b'0') as u16;
+//         } else {
+//             return 8889;
+//         }
+//     }
+//     res
+// }
+
 fn password_to_hash(s: &str) -> Arc<String> {
     let mut hasher = Sha224::new();
     hasher.update(s);
@@ -46,7 +58,7 @@ pub struct Opt {
     #[structopt(short = "u", long, default_value = "localhost")]
     pub proxy_url: String,
 
-    #[structopt(short = "x", long, default_value = "8889", parse(from_str = parse_addr))]
+    #[structopt(short = "x", long, default_value = "8889")]
     pub proxy_port: String,
 
     #[structopt(short, long)]

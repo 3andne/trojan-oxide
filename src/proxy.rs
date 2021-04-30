@@ -40,9 +40,18 @@ async fn forward_through_quic(
 
 async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
-    let mut quic_tx = quic_tunnel_tx(&options).await?;
-    let addr = options.local_addr.parse::<SocketAddr>()?;
-    let listener = TcpListener::bind(&addr).await?;
+    let mut quic_tx = quic_tunnel_tx(&options).await.map_err(|e| {
+        trace!("quic_tunnel_tx failed due to {:?}", e);
+        e
+    })?;
+    let addr = options.local_addr.parse::<SocketAddr>().map_err(|e| {
+        trace!("local_addr.parse failed due to {:?}", e);
+        e
+    })?;
+    let listener = TcpListener::bind(&addr).await.map_err(|e| {
+        trace!("TcpListener::bind local addr failed due to {:?}", e);
+        e
+    })?;
     loop {
         match upper_shutdown.try_recv() {
             Err(oneshot::error::TryRecvError::Empty) => (),
@@ -84,6 +93,7 @@ async fn run_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
         let shutdown_rx = shutdown_tx.subscribe();
         let hash_copy = options.password_hash.clone();
         let quinn::NewConnection { bi_streams, .. } = conn.await?;
+        trace!("connected");
         tokio::spawn(async move {
             handle_quic_connection(bi_streams, shutdown_rx, hash_copy)
                 .await

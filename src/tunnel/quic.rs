@@ -5,7 +5,6 @@ use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tokio::{fs, io};
 use tracing::*;
-use url::Url;
 
 #[allow(dead_code)]
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
@@ -34,17 +33,19 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
 }
 
 pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
-    let url = Url::parse(options.proxy_url.as_str())?;
-    let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
-        .to_socket_addrs()?
+    trace!("0");
+    let remote = (options.proxy_url.to_owned() + ":" + &options.proxy_port)
+        .to_socket_addrs()
+        .unwrap()
         .next()
-        .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
-
+        .unwrap();
+    trace!("1");
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(ALPN_QUIC_HTTP);
 
     load_cert(options, &mut client_config).await?;
+    trace!("2");
 
     endpoint.default_client_config(client_config.build());
 
@@ -131,5 +132,6 @@ pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut endpoint = quinn::Endpoint::builder();
     endpoint.listen(server_config.build());
 
-    Ok(endpoint.bind(&options.proxy_port.parse()?)?)
+    let server_addr = "127.0.0.1:".to_owned() + &options.proxy_port;
+    Ok(endpoint.bind(&server_addr.parse()?)?)
 }
