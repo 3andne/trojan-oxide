@@ -76,6 +76,7 @@ pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     server_config.use_stateless_retry(true);
 
     if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
+        trace!("private key path {:?}, cert_path {:?}", key_path, cert_path);
         let key = fs::read(key_path)
             .await
             .context("failed to read private key")?;
