@@ -1,12 +1,15 @@
 #![feature(aarch64_target_feature)]
 #![feature(stdsimd)]
+mod proxy;
 mod server;
 pub mod simd;
 
 mod args;
 use structopt::StructOpt;
 
-mod quic_tunnel;
+mod tunnel;
+mod client;
+mod utils;
 
 use anyhow::Result;
 // use clap::{App, Arg};
@@ -18,6 +21,6 @@ async fn main() -> Result<()> {
 
     let _ = tracing::subscriber::set_global_default(collector);
 
-    let _ = server::build_tunnel(tokio::signal::ctrl_c(), opt).await;
+    let _ = proxy::build_tunnel(tokio::signal::ctrl_c(), opt).await;
     Ok(())
 }

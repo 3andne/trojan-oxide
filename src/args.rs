@@ -3,6 +3,7 @@ use std::fmt::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use structopt::StructOpt;
+use crate::server::HASH_LEN;
 
 fn parse_log_level(l: &str) -> tracing::Level {
     match &l.to_lowercase()[..] {
@@ -18,8 +19,6 @@ fn parse_log_level(l: &str) -> tracing::Level {
 fn parse_addr(l: &str) -> String {
     "127.0.0.1:".to_owned() + l
 }
-
-const HASH_LEN: usize = 56;
 
 fn password_to_hash(s: &str) -> Arc<String> {
     let mut hasher = Sha224::new();
