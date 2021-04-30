@@ -104,7 +104,14 @@ pub async fn build_tunnel(ctrl_c: impl std::future::Future, options: Opt) -> Res
             _ = ctrl_c => {
                 info!("ctrl-c");
             }
-            _ = run_server(shutdown_rx, options) => {}
+            res = run_server(shutdown_rx, options) => {
+                match res {
+                    Err(err) => {
+                        trace!("server quit due to {:?}", err);
+                    }
+                    _ => {}
+                }
+            }
         }
     } else {
         info!("client-start");
@@ -112,7 +119,14 @@ pub async fn build_tunnel(ctrl_c: impl std::future::Future, options: Opt) -> Res
             _ = ctrl_c => {
                 info!("ctrl-c");
             }
-            _ = run_client(shutdown_rx, options) => {}
+            res = run_client(shutdown_rx, options) => {
+                match res {
+                    Err(err) => {
+                        trace!("client quit due to {:?}", err);
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 

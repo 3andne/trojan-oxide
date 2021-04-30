@@ -1,3 +1,4 @@
+use crate::utils::{MixAddrType, ParserError};
 use anyhow::{Error, Result};
 use futures::future;
 use std::io::IoSlice;
@@ -6,11 +7,11 @@ use std::sync::Arc;
 use tokio::io::*;
 use tokio::net::TcpStream;
 use tracing::*;
-use crate::utils::ParserError;
 
 pub struct Target {
     is_https: bool,
-    host: String,
+    host: MixAddrType,
+    host_raw: String,
     port: u16,
     cursor: usize,
 }
@@ -22,7 +23,8 @@ impl Target {
     pub fn new() -> Self {
         Self {
             is_https: false,
-            host: String::new(),
+            host: MixAddrType::None,
+            host_raw: String::new(),
             port: 0,
             cursor: 0,
         }
@@ -103,9 +105,10 @@ impl Target {
             }
         }
 
-        self.host =
-            String::from_utf8(buf[start..port_idx].to_vec()).map_err(|_| ParserError::Invalid)?;
+        self.host = MixAddrType::from_http_header(&buf[start..port_idx])?;
 
+        self.host_raw =
+            String::from_utf8(buf[start..end].to_vec()).map_err(|_| ParserError::Invalid)?;
         return Ok(());
     }
 
@@ -117,11 +120,11 @@ impl Target {
 
         trace!("stream is https: {}", self.is_https);
 
-        if self.host.len() == 0 {
+        if self.host.is_none() {
             self.set_host(buf)?;
         }
 
-        trace!("stream target host: {}", self.host);
+        trace!("stream target host: {:?}", self.host);
 
         // `integrity` check
         if &buf[buf.len() - 4..] == b"\r\n\r\n" {
@@ -173,11 +176,12 @@ impl Target {
     where
         A: AsyncWrite + Unpin + ?Sized,
     {
-        let command0 = [b'\r', b'\n', 1, 0];
+        let command0 = [b'\r', b'\n', 1, self.host.socks_type(), self.host.len()];
+        let command0_len = if self.host.is_hostname() { 5 } else { 4 };
         let port_arr = self.port.to_be_bytes();
         let packet0 = [
             IoSlice::new(password_hash.as_bytes()),
-            IoSlice::new(&command0),
+            IoSlice::new(&command0[..command0_len]),
             IoSlice::new(self.host.as_bytes()),
             IoSlice::new(&port_arr),
             IoSlice::new(&[b'\r', b'\n']),
@@ -190,7 +194,7 @@ impl Target {
         if !self.is_https {
             let bufs = [
                 IoSlice::new(HEADER0),
-                IoSlice::new(self.host.as_bytes()),
+                IoSlice::new(self.host_raw.as_bytes()),
                 IoSlice::new(HEADER1),
             ];
 

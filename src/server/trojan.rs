@@ -1,9 +1,9 @@
-use crate::{client::http::*, utils::ParserError};
+use crate::{server::*, utils::ParserError};
 use anyhow::{Error, Result};
 use futures::StreamExt;
 use quinn::*;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::{net::TcpStream, sync::broadcast};
 use tokio::{io::*, select};
 use tracing::*;
 
@@ -50,14 +50,54 @@ async fn handle_quic_outbound(
     mut upper_shutdown: broadcast::Receiver<()>,
     password_hash: Arc<String>,
 ) -> Result<()> {
-    let (mut send, mut recv) = stream;
-    let mut buffer = Vec::with_capacity(200);
+    let (mut in_write, mut in_read) = stream;
+    let mut buffer = Vec::with_capacity(128);
+    let mut target = Target::new(password_hash.as_bytes());
     loop {
-        let read = recv.read_buf(&mut buffer).await?;
+        let read = in_read.read_buf(&mut buffer).await?;
         if read != 0 {
+            match target.parse(&buffer) {
+                Err(ParserError::Invalid) => {
+                    return Err(Error::new(ParserError::Invalid));
+                }
+                Err(ParserError::Incomplete) => {
+                    continue;
+                }
+                Ok(()) => {
+                    break;
+                }
+            }
         } else {
             return Err(Error::new(ParserError::Invalid));
         }
     }
-    todo!()
+
+    let mut outbound = if target.host.is_ip() {
+        TcpStream::connect(target.host.to_socket_addrs(target.port)).await?
+    } else {
+        TcpStream::connect(target.host.unwrap_hostname()).await?
+    };
+
+    if target.cursor < buffer.len() {
+        let mut t = std::io::Cursor::new(&buffer[target.cursor..]);
+        outbound.write_buf(&mut t).await?;
+        outbound.flush().await?;
+    }
+
+    let (mut out_read, mut out_write) = outbound.split();
+
+    trace!("server start relaying");
+    select! {
+        _ = tokio::io::copy(&mut out_read, &mut in_write) => {
+            trace!("server relaying upload end");
+        },
+        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+            trace!("server relaying download end");
+        },
+        _ = upper_shutdown.recv() => {
+            trace!("server shutdown signal received");
+        },
+    }
+
+    Ok(())
 }

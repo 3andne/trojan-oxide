@@ -43,10 +43,10 @@ pub struct Opt {
     #[structopt(parse(from_os_str), long = "ca")]
     pub ca: Option<PathBuf>,
 
-    #[structopt(short, long, default_value = "localhost")]
+    #[structopt(short = "u", long, default_value = "localhost")]
     pub proxy_url: String,
 
-    #[structopt(short, long, default_value = "8889", parse(from_str = parse_addr))]
+    #[structopt(short = "x", long, default_value = "8889", parse(from_str = parse_addr))]
     pub proxy_port: String,
 
     #[structopt(short, long)]
@@ -60,6 +60,6 @@ pub struct Opt {
     #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
     pub cert: Option<PathBuf>,
 
-    #[structopt(short, long, parse(from_str = password_to_hash))]
+    #[structopt(short = "w", long, parse(from_str = password_to_hash))]
     pub password_hash: Arc<String>,
 }
