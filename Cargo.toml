@@ -20,8 +20,10 @@ quinn-proto = "*"
 directories = "3.0"
 structopt = "0.3"
 rcgen = "0.8"
-#rustls = "0.19"
+rustls = "0.19"
 sha2 = "0.9"
+webpki = "0.21.0"
+webpki-roots = "0.21"
 
 [dev-dependencies]
 criterion = "0.3"

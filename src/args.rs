@@ -64,6 +64,9 @@ pub struct Opt {
     #[structopt(short, long)]
     pub server: bool,
 
+    #[structopt(short, long)]
+    pub trust: bool,
+
     /// TLS private key in PEM format
     #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
     pub key: Option<PathBuf>,

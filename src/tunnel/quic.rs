@@ -32,6 +32,7 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
     Ok(())
 }
 
+
 pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
     trace!("0");
     let remote = (options.proxy_url.to_owned() + ":" + &options.proxy_port)
@@ -47,7 +48,13 @@ pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
     load_cert(options, &mut client_config).await?;
     trace!("2");
 
-    endpoint.default_client_config(client_config.build());
+    let mut cfg = client_config.build();
+    let tls_cfg: &mut rustls::ClientConfig = Arc::get_mut(&mut cfg.crypto).unwrap();
+    tls_cfg
+        .root_store
+        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+
+    endpoint.default_client_config(cfg);
 
     let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
 
