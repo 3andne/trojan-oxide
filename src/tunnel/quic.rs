@@ -73,8 +73,8 @@ pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
 }
 
 pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config.max_concurrent_uni_streams(0).unwrap();
+    let transport_config = quinn::TransportConfig::default();
+    // transport_config.max_concurrent_uni_streams(0).unwrap();
     let mut server_config = quinn::ServerConfig::default();
     server_config.transport = Arc::new(transport_config);
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
