@@ -32,7 +32,6 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
     Ok(())
 }
 
-
 pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
     trace!("0");
     let remote = (options.proxy_url.to_owned() + ":" + &options.proxy_port)
@@ -140,6 +139,10 @@ pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut endpoint = quinn::Endpoint::builder();
     endpoint.listen(server_config.build());
 
-    let server_addr = "127.0.0.1:".to_owned() + &options.proxy_port;
-    Ok(endpoint.bind(&server_addr.parse()?)?)
+    let server_addr = ("localhost:".to_owned() + &options.proxy_port)
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .unwrap();
+    Ok(endpoint.bind(&server_addr)?)
 }

@@ -80,8 +80,8 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
 
 async fn run_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
-    let (_, mut incoming) = quic_tunnel_rx(&options).await?;
-    trace!("quic_tunnel_rx() built");
+    let (endpoint, mut incoming) = quic_tunnel_rx(&options).await?;
+    info!("listening on {}", endpoint.local_addr()?);
     while let Some(conn) = incoming.next().await {
         match upper_shutdown.try_recv() {
             Err(oneshot::error::TryRecvError::Empty) => (),
