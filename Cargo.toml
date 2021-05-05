@@ -7,11 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-#async-std = "1"
-#async-tls = "*"
-#hyper = "*"
 tokio={version = "1", features = ["full"]}
-bytes = "1"
 clap = "2"
 anyhow = { version = "1" }
 tracing = "0.1.25"
@@ -19,6 +15,15 @@ tracing-futures = "0.2.5"
 tracing-subscriber = "0.2"
 futures = "0.3"
 err-derive = "*"
+quinn = "0.7.2"
+quinn-proto = "*"
+directories = "3.0"
+structopt = "0.3"
+rcgen = "0.8"
+rustls = "0.19"
+sha2 = "0.9"
+webpki = "0.21.0"
+webpki-roots = "0.21"
 
 [dev-dependencies]
 criterion = "0.3"
@@ -26,4 +31,3 @@ criterion = "0.3"
 [[bench]]
 name = "bench_simd"
 harness = false
-
