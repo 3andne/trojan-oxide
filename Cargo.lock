@@ -1442,7 +1442,6 @@ dependencies = [
  "tracing",
  "tracing-futures",
  "tracing-subscriber",
- "webpki",
  "webpki-roots",
 ]
 

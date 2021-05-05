@@ -25,10 +25,9 @@ pub fn transmute_u16s_to_u8s(a: &[u16], b: &mut [u8]) {
 
 #[derive(Debug)]
 pub enum MixAddrType {
-    V4([u8; 4]),
-    V6u8([u8; 16]),
-    V6u16([u16; 8]),
-    Hostname(String),
+    V4(([u8; 4], u16)),
+    V6(([u16; 8], u16)),
+    Hostname((String, u16)),
     None,
 }
 
@@ -46,58 +45,73 @@ impl MixAddrType {
         }
     }
 
-    pub fn is_hostname(&self) -> bool {
-        match self {
-            MixAddrType::Hostname(_) => true,
-            _ => false,
-        }
-    }
-
     pub fn is_ip(&self) -> bool {
         match self {
             MixAddrType::V4(_) => true,
-            MixAddrType::V6u16(_) => true,
+            MixAddrType::V6(_) => true,
             _ => false,
         }
     }
 
-    pub fn unwrap_hostname(self) -> String {
+    pub fn host_repr(&self) -> String {
         match self {
-            MixAddrType::Hostname(host) => host,
+            MixAddrType::Hostname((host, port)) => host.to_owned() + &":" + &port.to_string(),
             _ => {
                 panic!("only Hostname can use this method");
             }
         }
     }
 
-    pub fn len(&self) -> u8 {
+    pub fn encoded_len(&self) -> usize {
+        use MixAddrType::*;
         match self {
-            MixAddrType::Hostname(h) => h.len() as u8,
-            _ => 0,
+            Hostname((h, _)) => 2 + h.len() + 2,
+            V4(_) => 1 + 4 + 2,
+            V6(_) => 1 + 16 + 2,
+            MixAddrType::None => panic!("encoded_len() unexpected: MixAddrType::None"),
         }
     }
 
-    pub fn socks_type(&self) -> u8 {
+    pub fn to_socket_addrs(self) -> SocketAddr {
         match self {
-            MixAddrType::V4(_) => 1,
-            MixAddrType::Hostname(_) => 3,
-            MixAddrType::V6u8(_) => 4,
-            MixAddrType::None => panic!("socks_type() unexpected: MixAddrType::None"),
-            MixAddrType::V6u16(_) => panic!("socks_type() unexpected: MixAddrType::V6u16"),
-        }
-    }
-
-    pub fn to_socket_addrs(self, port: u16) -> SocketAddr {
-        match self {
-            MixAddrType::V4(ip) => (ip, port).into(),
-            MixAddrType::V6u16(ip) => (ip, port).into(),
+            MixAddrType::V4(addr) => addr.into(),
+            MixAddrType::V6(addr) => addr.into(),
             _ => {
                 panic!("only IP can use this method");
             }
         }
     }
 
-    pub fn from_http_header(buf: &[u8]) -> Result<Self, ParserError> {
+    pub fn from_http_header(is_https: bool, buf: &[u8]) -> Result<Self, ParserError> {
+        let end = buf.len();
+        let mut port_idx = end;
+        let mut port = 0u16;
+        for i in (0..buf.len()).rev() {
+            if buf[i] == b':' {
+                port_idx = i;
+                break;
+            }
+        }
+
+        if port_idx + 1 == end {
+            return Err(ParserError::Invalid);
+        } else if port_idx == end {
+            if is_https {
+                port = 80;
+            } else {
+                return Err(ParserError::Invalid);
+            }
+        } else {
+            for i in (port_idx + 1)..end {
+                let di = buf[i];
+                if di >= b'0' && di <= b'9' {
+                    port = port * 10 + (di - b'0') as u16;
+                } else {
+                    return Err(ParserError::Invalid);
+                }
+            }
+        }
+
         let last = buf[buf.len() - 1];
         if last == b']' {
             // IPv6: `[real_IPv6_addr]`
@@ -106,34 +120,69 @@ impl MixAddrType {
                 .map_err(|_| ParserError::Invalid)?
                 .ip()
                 .segments();
-            let mut v6_addr_u8 = [0u8; 16];
-            transmute_u16s_to_u8s(&v6_addr_u16, &mut v6_addr_u8);
-            Ok(Self::V6u8(v6_addr_u8))
+            Ok(Self::V6((v6_addr_u16, port)))
         } else if last <= b'z' && last >= b'a' || last <= b'Z' && last >= b'A' {
             // Hostname: ends with alphabetic characters
-            Ok(Self::Hostname(
+            Ok(Self::Hostname((
                 String::from_utf8(buf.to_vec()).map_err(|_| ParserError::Invalid)?,
-            ))
+                port,
+            )))
         } else {
             // IPv4: ends with digit characters
             let str_buf = std::str::from_utf8(buf).map_err(|_| ParserError::Invalid)?;
-            Ok(Self::V4(
+            Ok(Self::V4((
                 SocketAddrV4::from_str(str_buf)
                     .map_err(|_| ParserError::Invalid)?
                     .ip()
                     .octets(),
-            ))
+                port,
+            )))
         }
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
+    pub fn write_buf(&self, buf: &mut Vec<u8>) {
         use MixAddrType::*;
         match self {
-            Hostname(h) => h.as_bytes(),
-            V4(ip) => ip,
-            V6u8(ip) => ip,
-            MixAddrType::V6u16(_) => panic!("as_bytes() unexpected: MixAddrType::V6u16"),
+            Hostname((host, port)) => {
+                buf.extend_from_slice(&[0x03, host.len() as u8]);
+                buf.extend_from_slice(host.as_bytes());
+                buf.extend_from_slice(&port.to_be_bytes());
+            }
+            V4((ip, port)) => {
+                buf.push(0x01);
+                buf.extend_from_slice(ip);
+                buf.extend_from_slice(&port.to_be_bytes());
+            }
+            V6((ip, port)) => {
+                let mut v6_addr_u8 = [0u8; 16];
+                transmute_u16s_to_u8s(ip, &mut v6_addr_u8);
+                buf.push(0x04);
+                buf.extend_from_slice(&v6_addr_u8);
+                buf.extend_from_slice(&port.to_be_bytes());
+            }
             MixAddrType::None => panic!("as_bytes() unexpected: MixAddrType::None"),
         }
     }
+
+    pub fn init_from(addr: &SocketAddr) -> Self {
+        match addr {
+            SocketAddr::V4(v4) => Self::V4((v4.ip().octets(), v4.port())),
+            SocketAddr::V6(v6) => Self::V6((v6.ip().segments(), v6.port())),
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! expect_buf_len {
+    ($buf:expr, $len:expr) => {
+        if $buf.len() < $len {
+            return Err(ParserError::Incomplete);
+        }
+    };
+    ($buf:expr, $len:expr, $mark:expr) => {
+        if $buf.len() < $len {
+            debug!("expect_buf_len {}", $mark);
+            return Err(ParserError::Incomplete);
+        }
+    };
 }

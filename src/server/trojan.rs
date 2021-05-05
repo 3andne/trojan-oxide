@@ -41,7 +41,7 @@ pub async fn handle_quic_connection(
         let pass_copy = password_hash.clone();
         tokio::spawn(
             handle_quic_outbound(stream, shutdown, pass_copy).map_err(|e| {
-                trace!("handle_quic_outbound quit due to {:?}", e);
+                debug!("handle_quic_outbound quit due to {:?}", e);
                 e
             }),
         );
@@ -62,15 +62,15 @@ async fn handle_quic_outbound(
         if read != 0 {
             match target.parse(&buffer) {
                 Err(ParserError::Invalid) => {
-                    trace!("invalid");
+                    debug!("invalid");
                     return Err(Error::new(ParserError::Invalid));
                 }
                 Err(ParserError::Incomplete) => {
-                    trace!("Incomplete");
+                    debug!("Incomplete");
                     continue;
                 }
                 Ok(()) => {
-                    trace!("Ok");
+                    debug!("Ok");
                     break;
                 }
             }
@@ -79,17 +79,17 @@ async fn handle_quic_outbound(
         }
     }
 
-    trace!("outbound trying to connect");
+    debug!("outbound trying to connect");
 
     let mut outbound = if target.host.is_ip() {
-        TcpStream::connect(target.host.to_socket_addrs(target.port)).await?
+        TcpStream::connect(target.host.to_socket_addrs()).await?
     } else {
-        TcpStream::connect(target.host.unwrap_hostname() + &":" + &target.port.to_string()).await?
+        TcpStream::connect(target.host.host_repr()).await?
     };
-    trace!("outbound connected: {:?}", outbound);
+    debug!("outbound connected: {:?}", outbound);
 
     if target.cursor < buffer.len() {
-        trace!(
+        debug!(
             "remaining packet: {:?}",
             String::from_utf8(buffer[target.cursor..].to_vec())
         );
@@ -100,16 +100,16 @@ async fn handle_quic_outbound(
 
     let (mut out_read, mut out_write) = outbound.split();
 
-    trace!("server start relaying");
+    debug!("server start relaying");
     select! {
         _ = tokio::io::copy(&mut out_read, &mut in_write) => {
-            trace!("server relaying upload end");
+            debug!("server relaying upload end");
         },
         _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-            trace!("server relaying download end");
+            debug!("server relaying download end");
         },
         _ = upper_shutdown.recv() => {
-            trace!("server shutdown signal received");
+            debug!("server shutdown signal received");
         },
     }
 

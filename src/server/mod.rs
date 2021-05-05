@@ -1,5 +1,7 @@
-use crate::utils::MixAddrType;
-use crate::utils::ParserError;
+use crate::{
+    expect_buf_len,
+    utils::{MixAddrType, ParserError},
+};
 use anyhow::Result;
 use tracing::*;
 
@@ -10,24 +12,9 @@ pub const HASH_LEN: usize = 56;
 #[derive(Default, Debug)]
 pub struct Target<'a> {
     host: MixAddrType,
-    port: u16,
     cursor: usize,
     host_len: usize,
     password_hash: &'a [u8],
-}
-
-macro_rules! expect_buf_len {
-    ($buf:expr, $len:expr) => {
-        if $buf.len() < $len {
-            return Err(ParserError::Incomplete);
-        }
-    };
-    ($buf:expr, $len:expr, $mark:expr) => {
-        if $buf.len() < $len {
-            trace!("expect_buf_len {}", $mark);
-            return Err(ParserError::Incomplete);
-        }
-    };
 }
 
 impl<'a> Target<'a> {
@@ -63,20 +50,20 @@ impl<'a> Target<'a> {
                     buf[HASH_LEN + 6],
                     buf[HASH_LEN + 7],
                 ];
-                self.host = MixAddrType::V4(ip);
-                self.port = u16::from_be_bytes([buf[HASH_LEN + 8], buf[HASH_LEN + 9]]);
+                let port = u16::from_be_bytes([buf[HASH_LEN + 8], buf[HASH_LEN + 9]]);
+                self.host = MixAddrType::V4((ip, port));
                 self.cursor = HASH_LEN + 10;
             }
             3 => {
                 self.host_len = buf[HASH_LEN + 4] as usize;
                 // HASH + \r\n + cmd + host_len + host(host_len bytes) + port
                 expect_buf_len!(buf, HASH_LEN + 5 + self.host_len + 2, 3);
-                self.host = MixAddrType::Hostname(
+                let host =
                     String::from_utf8(buf[HASH_LEN + 5..HASH_LEN + 5 + self.host_len].to_vec())
-                        .map_err(|_| ParserError::Invalid)?,
-                );
+                        .map_err(|_| ParserError::Invalid)?;
                 self.cursor = HASH_LEN + 5 + self.host_len;
-                self.port = u16::from_be_bytes([buf[self.cursor], buf[self.cursor + 1]]);
+                let port = u16::from_be_bytes([buf[self.cursor], buf[self.cursor + 1]]);
+                self.host = MixAddrType::Hostname((host, port));
                 self.cursor += 2;
             }
             4 => {
@@ -87,8 +74,8 @@ impl<'a> Target<'a> {
                 for i in 0..8 {
                     v6u16[i] = u16::from_be_bytes([v6u8[i], v6u8[i + 1]]);
                 }
-                self.host = MixAddrType::V6u16(v6u16);
-                self.port = u16::from_be_bytes([buf[HASH_LEN + 20], buf[HASH_LEN + 21]]);
+                let port = u16::from_be_bytes([buf[HASH_LEN + 20], buf[HASH_LEN + 21]]);
+                self.host = MixAddrType::V6((v6u16, port));
                 self.cursor = HASH_LEN + 22;
             }
             _ => {
@@ -100,7 +87,7 @@ impl<'a> Target<'a> {
     }
 
     pub fn parse(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
-        trace!(
+        debug!(
             "parse begin, cursor {}, buffer({}): {:?}",
             self.cursor,
             buf.len(),
@@ -108,14 +95,14 @@ impl<'a> Target<'a> {
         );
         if self.cursor == 0 {
             self.verify(buf)?;
-            trace!("verified");
+            debug!("verified");
         }
 
         if self.host.is_none() {
             self.set_host_and_port(buf)?;
         }
 
-        trace!("target: {:?}", self);
+        debug!("target: {:?}", self);
 
         expect_buf_len!(buf, self.cursor + 2);
         if &buf[self.cursor..self.cursor + 2] == b"\r\n" {

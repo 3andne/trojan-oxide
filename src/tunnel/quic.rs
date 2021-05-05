@@ -5,6 +5,7 @@ use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tokio::{fs, io};
 use tracing::*;
+use webpki_roots;
 
 #[allow(dead_code)]
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
@@ -33,25 +34,25 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
 }
 
 pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
-    trace!("0");
     let remote = (options.proxy_url.to_owned() + ":" + &options.proxy_port)
         .to_socket_addrs()
         .unwrap()
         .next()
         .unwrap();
-    trace!("1");
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(ALPN_QUIC_HTTP);
 
     load_cert(options, &mut client_config).await?;
-    trace!("2");
 
     let mut cfg = client_config.build();
-    let tls_cfg: &mut rustls::ClientConfig = Arc::get_mut(&mut cfg.crypto).unwrap();
+    let tls_cfg = Arc::get_mut(&mut cfg.crypto).unwrap();
     tls_cfg
         .root_store
         .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+
+    let transport_cfg = Arc::get_mut(&mut cfg.transport).unwrap();
+    transport_cfg.max_idle_timeout(None)?;
 
     endpoint.default_client_config(cfg);
 
@@ -59,7 +60,7 @@ pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
 
     let host = options.proxy_url.as_str();
 
-    eprintln!("connecting to {} at {}", host, remote);
+    info!("[building tunnel] => {} at {}", host, remote);
     let new_conn = endpoint
         .connect(&remote, &host)?
         .await
@@ -72,7 +73,8 @@ pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
 }
 
 pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
-    let transport_config = quinn::TransportConfig::default();
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.max_idle_timeout(None)?;
     // transport_config.max_concurrent_uni_streams(0).unwrap();
     let mut server_config = quinn::ServerConfig::default();
     server_config.transport = Arc::new(transport_config);
@@ -80,9 +82,8 @@ pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     server_config.protocols(ALPN_QUIC_HTTP);
 
     server_config.use_stateless_retry(true);
-
     if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
-        trace!("private key path {:?}, cert_path {:?}", key_path, cert_path);
+        debug!("private key path {:?}, cert_path {:?}", key_path, cert_path);
         let key = fs::read(key_path)
             .await
             .context("failed to read private key")?;

@@ -1,13 +1,52 @@
 use crate::{args::Opt, client::http::*, server::trojan::*, tunnel::quic::*};
 use anyhow::Result;
-use futures::StreamExt;
+use futures::{ready, StreamExt};
 use quinn::*;
-use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::{TcpListener, TcpStream};
+use std::{net::SocketAddr, task::Poll};
 use tokio::select;
 use tokio::sync::{broadcast, oneshot};
+use tokio::{
+    io::AsyncRead,
+    net::{TcpListener, TcpStream, UdpSocket},
+};
 use tracing::*;
+
+pub enum ConnectionRequest {
+    TCP,
+    UDP(ClientUdpStream),
+}
+
+pub struct ClientUdpStream {
+    server_udp_socket: Arc<UdpSocket>,
+    client_udp_addr: Option<SocketAddr>,
+}
+
+impl ClientUdpStream {
+    pub fn new(server_udp_socket: Arc<UdpSocket>) -> Self {
+        Self {
+            server_udp_socket,
+            client_udp_addr: None,
+        }
+    }
+}
+
+impl AsyncRead for ClientUdpStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let addr = match ready!(self.server_udp_socket.poll_recv_from(cx, buf)) {
+            Ok(addr) => addr,
+            Err(e) => {
+                return Poll::Ready(Err(e));
+            }
+        };
+        ;
+        todo!()
+    }
+}
 
 async fn forward_through_quic(
     mut stream: TcpStream,
@@ -15,43 +54,40 @@ async fn forward_through_quic(
     tunnel: (SendStream, RecvStream),
     password_hash: Arc<String>,
 ) -> Result<()> {
-    let mut target = Target::new();
+    let mut req = HttpRequest::new();
     let (mut out_write, mut out_read) = tunnel;
-    target.accept(&mut stream).await?;
+    let conn_req = req.accept(&mut stream).await?;
 
-    target.send_packet0(&mut out_write, password_hash).await?;
+    req.send_packet0(&mut out_write, password_hash).await?;
 
-    let (mut in_read, mut in_write) = stream.split();
-
-    trace!("start relaying");
-    select! {
-        _ = tokio::io::copy(&mut out_read, &mut in_write) => {
-            trace!("relaying upload end");
-        },
-        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-            trace!("relaying download end");
-        },
-        _ = upper_shutdown.recv() => {
-            trace!("shutdown signal received");
-        },
+    use ConnectionRequest::*;
+    match conn_req {
+        TCP => {
+            info!("[tcp]{:?} => {:?}", stream.peer_addr()?, req.addr);
+            let (mut in_read, mut in_write) = stream.split();
+            select! {
+                _ = tokio::io::copy(&mut out_read, &mut in_write) => {
+                    debug!("relaying upload end");
+                },
+                _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+                    debug!("relaying download end");
+                },
+                _ = upper_shutdown.recv() => {
+                    debug!("shutdown signal received");
+                },
+            }
+        }
+        UDP(udp) => {}
     }
+
     Ok(())
 }
 
 async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
-    let mut quic_tx = quic_tunnel_tx(&options).await.map_err(|e| {
-        trace!("quic_tunnel_tx failed due to {:?}", e);
-        e
-    })?;
-    let addr = options.local_addr.parse::<SocketAddr>().map_err(|e| {
-        trace!("local_addr.parse failed due to {:?}", e);
-        e
-    })?;
-    let listener = TcpListener::bind(&addr).await.map_err(|e| {
-        trace!("TcpListener::bind local addr failed due to {:?}", e);
-        e
-    })?;
+    let mut quic_tx = quic_tunnel_tx(&options).await?;
+    let addr = options.local_addr.parse::<SocketAddr>()?;
+    let listener = TcpListener::bind(&addr).await?;
     loop {
         match upper_shutdown.try_recv() {
             Err(oneshot::error::TryRecvError::Empty) => (),
@@ -60,11 +96,12 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
             }
         }
         let (stream, _) = listener.accept().await?;
-        trace!("accepted tcp: {:?}", stream);
+        debug!("accepted tcp: {:?}", stream);
+
         let tunnel = match quic_tx.open_bi().await {
             Ok(t) => t,
             Err(e) => {
-                trace!("{}", e);
+                error!("{}", e);
                 quic_tx = quic_tunnel_tx(&options).await?;
                 quic_tx.open_bi().await?
             }
@@ -89,11 +126,11 @@ async fn run_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
                 break;
             }
         }
-        trace!("connection incoming");
+        debug!("connection incoming");
         let shutdown_rx = shutdown_tx.subscribe();
         let hash_copy = options.password_hash.clone();
         let quinn::NewConnection { bi_streams, .. } = conn.await?;
-        trace!("connected");
+        debug!("connected");
         tokio::spawn(async move {
             handle_quic_connection(bi_streams, shutdown_rx, hash_copy)
                 .await
@@ -117,7 +154,7 @@ pub async fn build_tunnel(ctrl_c: impl std::future::Future, options: Opt) -> Res
             res = run_server(shutdown_rx, options) => {
                 match res {
                     Err(err) => {
-                        trace!("server quit due to {:?}", err);
+                        error!("server quit due to {:?}", err);
                     }
                     _ => {}
                 }
@@ -132,7 +169,7 @@ pub async fn build_tunnel(ctrl_c: impl std::future::Future, options: Opt) -> Res
             res = run_client(shutdown_rx, options) => {
                 match res {
                     Err(err) => {
-                        trace!("client quit due to {:?}", err);
+                        error!("client quit due to {:?}", err);
                     }
                     _ => {}
                 }
