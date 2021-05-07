@@ -1,14 +1,14 @@
 use crate::{
     expect_buf_len,
-    proxy::{ClientUdpStream, ConnectionRequest},
-    utils::{MixAddrType, ParserError},
+    proxy::ConnectionRequest,
+    utils::{ClientUdpStream, MixAddrType, ParserError},
 };
 use anyhow::{Error, Result};
+use core::str;
 // use futures::future;
 // use std::io::IoSlice;
 // use std::pin::Pin;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio::{io::*, net::UdpSocket};
 use tracing::*;
@@ -33,12 +33,22 @@ enum Sock5ParsePhase {
 }
 
 impl Socks5Request {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             phase: Sock5ParsePhase::P1ClientHello,
             is_udp: false,
             extracted_request: Vec::new(),
         }
+    }
+
+    pub fn addr(&self) -> &str {
+        let start = if self.extracted_request[0] == 0x03 {
+            2
+        } else {
+            1
+        };
+        let end = self.extracted_request.len() - 2;
+        unsafe { str::from_utf8_unchecked(&self.extracted_request[start..end]) }
     }
 
     pub async fn accept(&mut self, inbound: &mut TcpStream) -> Result<ConnectionRequest> {
@@ -83,7 +93,7 @@ impl Socks5Request {
             Ok(ConnectionRequest::TCP)
         } else {
             let local_ip = inbound.local_addr()?.ip();
-            let server_udp_socket = Arc::new(UdpSocket::bind(SocketAddr::new(local_ip, 0)).await?);
+            let server_udp_socket = UdpSocket::bind(SocketAddr::new(local_ip, 0)).await?;
             MixAddrType::init_from(&server_udp_socket.local_addr()?).write_buf(&mut buf);
             inbound.write_all(&buf).await?;
             let udp_stream = ClientUdpStream::new(server_udp_socket);

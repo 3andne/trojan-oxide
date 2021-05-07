@@ -1,15 +1,15 @@
-use crate::{args::Opt, client::http::*, server::trojan::*, tunnel::quic::*};
-use anyhow::{anyhow, Result};
-use futures::{ready, StreamExt};
+use crate::{
+    args::Opt, client::{http::*, socks5::*}, server::trojan::*, tunnel::quic::*, utils::ClientUdpStream,
+};
+use anyhow::Result;
+use futures::StreamExt;
 use quinn::*;
+use std::net::SocketAddr;
 use std::sync::Arc;
-use std::{net::SocketAddr, task::Poll};
+use tokio::io::AsyncReadExt;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::sync::{broadcast, oneshot};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net::{TcpListener, TcpStream, UdpSocket},
-};
 use tracing::*;
 
 pub enum ConnectionRequest {
@@ -17,123 +17,66 @@ pub enum ConnectionRequest {
     UDP(ClientUdpStream),
 }
 
-pub struct ClientUdpStream {
-    server_udp_socket: Arc<UdpSocket>,
-    client_udp_addr: Option<SocketAddr>,
-}
-
-pub struct ClientUdpRecvStream {
-    server_udp_socket: Arc<UdpSocket>,
-    client_udp_addr: Option<SocketAddr>,
-    addr_tx: Option<oneshot::Sender<SocketAddr>>,
-}
-
-impl ClientUdpStream {
-    pub fn new(server_udp_socket: Arc<UdpSocket>) -> Self {
-        Self {
-            server_udp_socket,
-            client_udp_addr: None,
-        }
-    }
-}
-
-impl AsyncRead for ClientUdpRecvStream {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        let addr = match ready!(self.server_udp_socket.poll_recv_from(cx, buf)) {
-            Ok(addr) => addr,
-            Err(e) => {
-                return Poll::Ready(Err(e));
-            }
-        };
-
-        if self.client_udp_addr.is_none() {
-            self.client_udp_addr = Some(addr.clone());
-            let addr_tx = match self.addr_tx.take() {
-                Some(v) => v,
-                None => {
-                    return Poll::Ready(Err(std::io::ErrorKind::Other.into()));
-                }
-            };
-            match addr_tx.send(addr) {
-                Ok(_) => {
-                    return Poll::Ready(Ok(()));
-                }
-                Err(_) => {
-                    return Poll::Ready(Err(std::io::ErrorKind::Other.into()));
-                }
-            }
-        } else {
-            if !self.client_udp_addr.map(|v| v == addr).unwrap() {
-                return Poll::Ready(Err(std::io::ErrorKind::Interrupted.into()));
-            }
-        }
-        Poll::Ready(Ok(()))
-    }
-}
-
-pub struct ClientUdpSendStream {
-    server_udp_socket: Arc<UdpSocket>,
-    client_udp_addr: Option<SocketAddr>,
-    addr_tx: Option<oneshot::Receiver<SocketAddr>>,
-}
-
-impl AsyncWrite for ClientUdpSendStream {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, std::io::Error>> {
+macro_rules! create_forward_through_quic {
+    ($fn_name:ident, $request_type:ident) => {
+        async fn $fn_name(
+            mut stream: TcpStream,
+            mut upper_shutdown: broadcast::Receiver<()>,
+            tunnel: (SendStream, RecvStream),
+            password_hash: Arc<String>,
+        ) -> Result<()> {
+            let mut req = $request_type::new();
+            let (mut out_write, mut out_read) = tunnel;
+            let conn_req = req.accept(&mut stream).await?;
         
-        todo!()
-    }
-
-    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), std::io::Error>> {
-        todo!()
-    }
-
-    fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), std::io::Error>> {
-        todo!()
-    }
-}
-
-async fn forward_through_quic(
-    mut stream: TcpStream,
-    mut upper_shutdown: broadcast::Receiver<()>,
-    tunnel: (SendStream, RecvStream),
-    password_hash: Arc<String>,
-) -> Result<()> {
-    let mut req = HttpRequest::new();
-    let (mut out_write, mut out_read) = tunnel;
-    let conn_req = req.accept(&mut stream).await?;
-
-    req.send_packet0(&mut out_write, password_hash).await?;
-
-    use ConnectionRequest::*;
-    match conn_req {
-        TCP => {
-            info!("[tcp]{:?} => {:?}", stream.peer_addr()?, req.addr);
-            let (mut in_read, mut in_write) = stream.split();
-            select! {
-                _ = tokio::io::copy(&mut out_read, &mut in_write) => {
-                    debug!("relaying upload end");
-                },
-                _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                    debug!("relaying download end");
-                },
-                _ = upper_shutdown.recv() => {
-                    debug!("shutdown signal received");
-                },
+            req.send_packet0(&mut out_write, password_hash).await?;
+        
+            use ConnectionRequest::*;
+            match conn_req {
+                TCP => {
+                    info!("[tcp]{:?} => {:?}", stream.peer_addr()?, req.addr());
+                    let (mut in_read, mut in_write) = stream.split();
+                    select! {
+                        _ = tokio::io::copy(&mut out_read, &mut in_write) => {
+                            debug!("relaying upload end");
+                        },
+                        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+                            debug!("relaying download end");
+                        },
+                        _ = upper_shutdown.recv() => {
+                            debug!("shutdown signal received");
+                        },
+                    }
+                }
+                UDP(udp) => {
+                    let (mut in_read, mut in_write) = udp.split();
+                    info!("[udp] => {:?}", req.addr());
+                    let mut dummy = [0; 2];
+                    select! {
+                        _ = tokio::io::copy(&mut out_read, &mut in_write) => {
+                            debug!("relaying upload end");
+                        },
+                        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+                            debug!("relaying download end");
+                        },
+                        _ = upper_shutdown.recv() => {
+                            debug!("shutdown signal received");
+                        },
+                        _ = stream.read(&mut dummy) => {
+                            debug!("udp shutdown");
+                        },
+                    }
+                }
             }
+        
+            Ok(())
         }
-        UDP(udp) => {}
-    }
-
-    Ok(())
+    };
 }
+
+create_forward_through_quic!(forward_http_through_quic, HttpRequest);
+create_forward_through_quic!(forward_socks5_through_quic, Socks5Request);
+
 
 async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
@@ -161,7 +104,7 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
         let shutdown_rx = shutdown_tx.subscribe();
         let hash_copy = options.password_hash.clone();
         tokio::spawn(async move {
-            let _ = forward_through_quic(stream, shutdown_rx, tunnel, hash_copy).await;
+            let _ = forward_http_through_quic(stream, shutdown_rx, tunnel, hash_copy).await;
         });
     }
     Ok(())

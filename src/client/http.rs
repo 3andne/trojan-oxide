@@ -14,7 +14,7 @@ use tracing::*;
 
 pub struct HttpRequest {
     is_https: bool,
-    pub addr: MixAddrType,
+    addr: MixAddrType,
     cursor: usize,
 }
 
@@ -28,6 +28,10 @@ impl HttpRequest {
             addr: MixAddrType::None,
             cursor: 0,
         }
+    }
+
+    pub fn addr(&self) -> MixAddrType {
+        self.addr
     }
 
     fn set_stream_type(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
