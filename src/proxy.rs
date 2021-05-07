@@ -1,5 +1,5 @@
 use crate::{args::Opt, client::http::*, server::trojan::*, tunnel::quic::*};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use futures::{ready, StreamExt};
 use quinn::*;
 use std::sync::Arc;
@@ -7,7 +7,7 @@ use std::{net::SocketAddr, task::Poll};
 use tokio::select;
 use tokio::sync::{broadcast, oneshot};
 use tokio::{
-    io::AsyncRead,
+    io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream, UdpSocket},
 };
 use tracing::*;
@@ -22,6 +22,12 @@ pub struct ClientUdpStream {
     client_udp_addr: Option<SocketAddr>,
 }
 
+pub struct ClientUdpRecvStream {
+    server_udp_socket: Arc<UdpSocket>,
+    client_udp_addr: Option<SocketAddr>,
+    addr_tx: Option<oneshot::Sender<SocketAddr>>,
+}
+
 impl ClientUdpStream {
     pub fn new(server_udp_socket: Arc<UdpSocket>) -> Self {
         Self {
@@ -31,9 +37,9 @@ impl ClientUdpStream {
     }
 }
 
-impl AsyncRead for ClientUdpStream {
+impl AsyncRead for ClientUdpRecvStream {
     fn poll_read(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
@@ -43,7 +49,53 @@ impl AsyncRead for ClientUdpStream {
                 return Poll::Ready(Err(e));
             }
         };
-        ;
+
+        if self.client_udp_addr.is_none() {
+            self.client_udp_addr = Some(addr.clone());
+            let addr_tx = match self.addr_tx.take() {
+                Some(v) => v,
+                None => {
+                    return Poll::Ready(Err(std::io::ErrorKind::Other.into()));
+                }
+            };
+            match addr_tx.send(addr) {
+                Ok(_) => {
+                    return Poll::Ready(Ok(()));
+                }
+                Err(_) => {
+                    return Poll::Ready(Err(std::io::ErrorKind::Other.into()));
+                }
+            }
+        } else {
+            if !self.client_udp_addr.map(|v| v == addr).unwrap() {
+                return Poll::Ready(Err(std::io::ErrorKind::Interrupted.into()));
+            }
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+pub struct ClientUdpSendStream {
+    server_udp_socket: Arc<UdpSocket>,
+    client_udp_addr: Option<SocketAddr>,
+    addr_tx: Option<oneshot::Receiver<SocketAddr>>,
+}
+
+impl AsyncWrite for ClientUdpSendStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        
+        todo!()
+    }
+
+    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), std::io::Error>> {
+        todo!()
+    }
+
+    fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), std::io::Error>> {
         todo!()
     }
 }
