@@ -1,7 +1,7 @@
 use crate::args::Opt;
 use anyhow::*;
 use quinn::*;
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use tokio::{fs, io};
 use tracing::*;
@@ -9,6 +9,86 @@ use webpki_roots;
 
 #[allow(dead_code)]
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
+
+pub struct EndpointManager {
+    inner: Endpoint,
+    connection: Option<Connection>,
+    remote: SocketAddr,
+    remote_url: String,
+}
+
+impl EndpointManager {
+    pub async fn new(options: &Opt) -> Result<Self> {
+        let (inner, _) = new_builder(options)
+            .await?
+            .bind(&"[::]:0".parse().unwrap())?;
+        let remote = (options.proxy_url.to_owned() + ":" + &options.proxy_port)
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap();
+        let remote_url = options.proxy_url.clone();
+
+        Ok(Self {
+            inner,
+            connection: None,
+            remote,
+            remote_url,
+        })
+    }
+
+    pub async fn connect(&mut self) -> Result<(SendStream, RecvStream)> {
+        match self.connection {
+            Some(ref conn) => match conn.open_bi().await {
+                Ok(x) => {
+                    return Ok(x);
+                }
+                _ => (),
+            },
+            _ => (),
+        }
+
+        info!(
+            "[building tunnel] => {} at {}",
+            self.remote_url, self.remote
+        );
+
+        let new_conn = self
+            .inner
+            .connect(&self.remote, &self.remote_url)?
+            .await
+            .map_err(|e| anyhow!("failed to connect: {}", e))?;
+
+        let quinn::NewConnection {
+            connection: conn, ..
+        } = new_conn;
+
+        let new_tunnel = conn.open_bi().await?;
+        self.connection = Some(conn);
+        Ok(new_tunnel)
+    }
+}
+
+async fn new_builder(options: &Opt) -> Result<EndpointBuilder> {
+    let mut builder = quinn::Endpoint::builder();
+    let mut client_config = quinn::ClientConfigBuilder::default();
+    client_config.protocols(ALPN_QUIC_HTTP);
+
+    load_cert(options, &mut client_config).await?;
+
+    let mut cfg = client_config.build();
+    let tls_cfg = Arc::get_mut(&mut cfg.crypto).unwrap();
+    tls_cfg
+        .root_store
+        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+
+    let transport_cfg = Arc::get_mut(&mut cfg.transport).unwrap();
+    transport_cfg.max_idle_timeout(None)?;
+
+    builder.default_client_config(cfg);
+
+    Ok(builder)
+}
 
 async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Result<()> {
     if let Some(ca_path) = &options.ca {
@@ -33,44 +113,7 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
     Ok(())
 }
 
-pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
-    let remote = (options.proxy_url.to_owned() + ":" + &options.proxy_port)
-        .to_socket_addrs()
-        .unwrap()
-        .next()
-        .unwrap();
-    let mut endpoint = quinn::Endpoint::builder();
-    let mut client_config = quinn::ClientConfigBuilder::default();
-    client_config.protocols(ALPN_QUIC_HTTP);
-
-    load_cert(options, &mut client_config).await?;
-
-    let mut cfg = client_config.build();
-    let tls_cfg = Arc::get_mut(&mut cfg.crypto).unwrap();
-    tls_cfg
-        .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-
-    let transport_cfg = Arc::get_mut(&mut cfg.transport).unwrap();
-    transport_cfg.max_idle_timeout(None)?;
-
-    endpoint.default_client_config(cfg);
-
-    let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
-
-    let host = options.proxy_url.as_str();
-
-    info!("[building tunnel] => {} at {}", host, remote);
-    let new_conn = endpoint
-        .connect(&remote, &host)?
-        .await
-        .map_err(|e| anyhow!("failed to connect: {}", e))?;
-
-    let quinn::NewConnection {
-        connection: conn, ..
-    } = new_conn;
-    Ok(conn)
-}
+// pub async fn quic_tunnel_tx(options: &Opt) ->  {}
 
 pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut transport_config = quinn::TransportConfig::default();

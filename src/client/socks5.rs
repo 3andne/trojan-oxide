@@ -1,10 +1,9 @@
 use crate::{
     expect_buf_len,
     proxy::ConnectionRequest,
-    utils::{ClientUdpStream, MixAddrType, ParserError},
+    utils::{ClientTcpStream, ClientUdpStream, MixAddrType, ParserError},
 };
 use anyhow::{Error, Result};
-use core::str;
 // use futures::future;
 // use std::io::IoSlice;
 // use std::pin::Pin;
@@ -24,7 +23,7 @@ const Phase2ServerReply: [u8; 3] = [0x05, 0x00, 0x00];
 pub struct Socks5Request {
     phase: Sock5ParsePhase,
     is_udp: bool,
-    extracted_request: Vec<u8>,
+    addr: MixAddrType,
 }
 
 enum Sock5ParsePhase {
@@ -37,21 +36,22 @@ impl Socks5Request {
         Self {
             phase: Sock5ParsePhase::P1ClientHello,
             is_udp: false,
-            extracted_request: Vec::new(),
+            addr: MixAddrType::None,
         }
     }
 
-    pub fn addr(&self) -> &str {
-        let start = if self.extracted_request[0] == 0x03 {
-            2
-        } else {
-            1
-        };
-        let end = self.extracted_request.len() - 2;
-        unsafe { str::from_utf8_unchecked(&self.extracted_request[start..end]) }
+    pub fn addr(&self) -> &MixAddrType {
+        todo!()
+        // let start = if self.extracted_request[0] == 0x03 {
+        //     2
+        // } else {
+        //     1
+        // };
+        // let end = self.extracted_request.len() - 2;
+        // unsafe { str::from_utf8_unchecked(&self.extracted_request[start..end]) }
     }
 
-    pub async fn accept(&mut self, inbound: &mut TcpStream) -> Result<ConnectionRequest> {
+    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ConnectionRequest> {
         let mut buffer = Vec::with_capacity(200);
         loop {
             let read = inbound.read_buf(&mut buffer).await?;
@@ -90,14 +90,17 @@ impl Socks5Request {
         if !self.is_udp {
             MixAddrType::init_from(&inbound.local_addr()?).write_buf(&mut buf);
             inbound.write_all(&buf).await?;
-            Ok(ConnectionRequest::TCP)
+            Ok(ConnectionRequest::TCP(ClientTcpStream {
+                inner: inbound,
+                http_request_extension: None,
+            }))
         } else {
             let local_ip = inbound.local_addr()?.ip();
             let server_udp_socket = UdpSocket::bind(SocketAddr::new(local_ip, 0)).await?;
             MixAddrType::init_from(&server_udp_socket.local_addr()?).write_buf(&mut buf);
             inbound.write_all(&buf).await?;
             let udp_stream = ClientUdpStream::new(server_udp_socket);
-            Ok(ConnectionRequest::UDP(udp_stream))
+            Ok(ConnectionRequest::UDP((udp_stream, inbound)))
         }
     }
 
@@ -158,11 +161,12 @@ impl Socks5Request {
                 };
 
                 expect_buf_len!(buf, 4 + field_5_len + 2);
-                self.extracted_request = Vec::with_capacity(2 + field_5_len + 2);
-                self.extracted_request[0] = if self.is_udp { 0x03 } else { 0x01 };
-                self.extracted_request.extend_from_slice(
+                let mut extracted_request = Vec::with_capacity(2 + field_5_len + 2);
+                extracted_request[0] = if self.is_udp { 0x03 } else { 0x01 };
+                extracted_request.extend_from_slice(
                     &buf[ADDR_TYPE_INDEX..ADDR_TYPE_INDEX + 1 + field_5_len + 2],
                 );
+                self.addr = MixAddrType::EncodedSocks(extracted_request);
 
                 return Ok(());
             }

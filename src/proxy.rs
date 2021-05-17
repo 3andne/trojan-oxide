@@ -1,5 +1,9 @@
 use crate::{
-    args::Opt, client::{http::*, socks5::*}, server::trojan::*, tunnel::quic::*, utils::ClientUdpStream,
+    args::Opt,
+    client::{http::*, socks5::*},
+    server::trojan::*,
+    tunnel::quic::*,
+    utils::{ClientTcpStream, ClientUdpStream},
 };
 use anyhow::Result;
 use futures::StreamExt;
@@ -13,27 +17,26 @@ use tokio::sync::{broadcast, oneshot};
 use tracing::*;
 
 pub enum ConnectionRequest {
-    TCP,
-    UDP(ClientUdpStream),
+    TCP(ClientTcpStream),
+    UDP((ClientUdpStream, TcpStream)),
 }
 
 macro_rules! create_forward_through_quic {
     ($fn_name:ident, $request_type:ident) => {
         async fn $fn_name(
-            mut stream: TcpStream,
+            stream: TcpStream,
             mut upper_shutdown: broadcast::Receiver<()>,
             tunnel: (SendStream, RecvStream),
             password_hash: Arc<String>,
         ) -> Result<()> {
             let mut req = $request_type::new();
             let (mut out_write, mut out_read) = tunnel;
-            let conn_req = req.accept(&mut stream).await?;
-        
-            req.send_packet0(&mut out_write, password_hash).await?;
-        
+            let conn_req = req.accept(stream).await?;
+
             use ConnectionRequest::*;
             match conn_req {
-                TCP => {
+                TCP(mut stream) => {
+                    send_tcp_packet0(req.addr(), &mut out_write, password_hash).await?;
                     info!("[tcp]{:?} => {:?}", stream.peer_addr()?, req.addr());
                     let (mut in_read, mut in_write) = stream.split();
                     select! {
@@ -48,7 +51,8 @@ macro_rules! create_forward_through_quic {
                         },
                     }
                 }
-                UDP(udp) => {
+                UDP((udp, mut control)) => {
+                    todo!("udp packet 0");
                     let (mut in_read, mut in_write) = udp.split();
                     info!("[udp] => {:?}", req.addr());
                     let mut dummy = [0; 2];
@@ -62,25 +66,24 @@ macro_rules! create_forward_through_quic {
                         _ = upper_shutdown.recv() => {
                             debug!("shutdown signal received");
                         },
-                        _ = stream.read(&mut dummy) => {
+                        _ = control.read(&mut dummy) => {
                             debug!("udp shutdown");
                         },
                     }
                 }
             }
-        
+
             Ok(())
         }
     };
 }
 
 create_forward_through_quic!(forward_http_through_quic, HttpRequest);
-create_forward_through_quic!(forward_socks5_through_quic, Socks5Request);
-
+// create_forward_through_quic!(forward_socks5_through_quic, Socks5Request);
 
 async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
-    let mut quic_tx = quic_tunnel_tx(&options).await?;
+    let mut endpoint = EndpointManager::new(&options).await?;
     let addr = options.local_addr.parse::<SocketAddr>()?;
     let listener = TcpListener::bind(&addr).await?;
     loop {
@@ -93,14 +96,7 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
         let (stream, _) = listener.accept().await?;
         debug!("accepted tcp: {:?}", stream);
 
-        let tunnel = match quic_tx.open_bi().await {
-            Ok(t) => t,
-            Err(e) => {
-                error!("{}", e);
-                quic_tx = quic_tunnel_tx(&options).await?;
-                quic_tx.open_bi().await?
-            }
-        };
+        let tunnel = endpoint.connect().await?;
         let shutdown_rx = shutdown_tx.subscribe();
         let hash_copy = options.password_hash.clone();
         tokio::spawn(async move {
@@ -134,7 +130,7 @@ async fn run_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
                 });
         });
     }
-    todo!()
+    Ok(())
 }
 
 pub async fn build_tunnel(ctrl_c: impl std::future::Future, options: Opt) -> Result<()> {

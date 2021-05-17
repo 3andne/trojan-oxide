@@ -1,7 +1,7 @@
 use crate::{
     proxy::ConnectionRequest,
     server::HASH_LEN,
-    utils::{MixAddrType, ParserError},
+    utils::{ClientTcpStream, MixAddrType, ParserError},
 };
 use anyhow::{Error, Result};
 // use futures::future;
@@ -30,8 +30,8 @@ impl HttpRequest {
         }
     }
 
-    pub fn addr(&self) -> MixAddrType {
-        self.addr
+    pub fn addr(&self) -> &MixAddrType {
+        &self.addr
     }
 
     fn set_stream_type(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
@@ -117,7 +117,7 @@ impl HttpRequest {
         Err(ParserError::Incomplete)
     }
 
-    pub async fn accept(&mut self, inbound: &mut TcpStream) -> Result<ConnectionRequest> {
+    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ConnectionRequest> {
         let mut buffer = Vec::with_capacity(200);
         loop {
             let read = inbound.read_buf(&mut buffer).await?;
@@ -137,43 +137,15 @@ impl HttpRequest {
             }
         }
 
-        if self.is_https {
+        let http_p0 = if self.is_https {
             inbound
                 .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
                 .await?;
             inbound.flush().await?;
             debug!("https packet 0 sent");
-        }
-
-        Ok(ConnectionRequest::TCP)
-    }
-
-    pub async fn send_packet0<A>(&self, outbound: &mut A, password_hash: Arc<String>) -> Result<()>
-    where
-        A: AsyncWrite + Unpin + ?Sized,
-    {
-        let mut buf = Vec::with_capacity(HASH_LEN + 2 + 1 + self.addr.encoded_len() + 2);
-        buf.extend_from_slice(password_hash.as_bytes());
-        buf.extend_from_slice(&[b'\r', b'\n', 1]);
-        self.addr.write_buf(&mut buf);
-        buf.extend_from_slice(&[b'\r', b'\n']);
-        outbound.write_all(&buf).await?;
-        // not using the following code because of quinn's bug.
-        // let packet0 = [
-        //     IoSlice::new(password_hash.as_bytes()),
-        //     IoSlice::new(&command0[..command0_len]),
-        //     IoSlice::new(self.host.as_bytes()),
-        //     IoSlice::new(&port_arr),
-        //     IoSlice::new(&[b'\r', b'\n']),
-        // ];
-        // let mut writer = Pin::new(outbound);
-        // future::poll_fn(|cx| writer.as_mut().poll_write_vectored(cx, &packet0[..]))
-        //     .await
-        //     .map_err(|e| Box::new(e))?;
-
-        if !self.is_https {
-            let http_p0 = [HEADER0, self.addr.host_repr().as_bytes(), HEADER1].concat();
-            outbound.write_all(&http_p0).await?;
+            None
+        } else {
+            Some([HEADER0, self.addr.host_repr().as_bytes(), HEADER1].concat())
             //     let bufs = [
             //         IoSlice::new(HEADER0),
             //         IoSlice::new(self.host_raw.as_bytes()),
@@ -185,11 +157,11 @@ impl HttpRequest {
             //         .map_err(|e| Box::new(e))?;
 
             //     debug!("http packet 0 sent");
-        }
-        // writer.flush().await.map_err(|e| Box::new(e))?;
-        outbound.flush().await?;
-        debug!("trojan packet 0 sent");
+        };
 
-        Ok(())
+        Ok(ConnectionRequest::TCP(ClientTcpStream {
+            inner: inbound,
+            http_request_extension: http_p0,
+        }))
     }
 }
