@@ -1,4 +1,10 @@
-use crate::utils::{transmute_u16s_to_u8s, ParserError};
+use anyhow::Result;
+
+// use tracing::*;
+use crate::{
+    expect_buf_len,
+    utils::{transmute_u16s_to_u8s, ParserError},
+};
 use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     str::FromStr,
@@ -145,6 +151,66 @@ impl MixAddrType {
             MixAddrType::None => panic!("as_bytes() unexpected: MixAddrType::None"),
             EncodedSocks(en) => {
                 buf.extend_from_slice(en);
+            }
+        }
+    }
+    //     The SOCKS request is formed as follows:
+
+    //     +----+-----+-------+------+----------+----------+
+    //     |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+    //     +----+-----+-------+------+----------+----------+
+    //     | 1  |  1  | X'00' |  1   | Variable |    2     |
+    //     +----+-----+-------+------+----------+----------+
+
+    //  Where:
+
+    //       o  VER    protocol version: X'05'
+    //       o  CMD
+    //          o  CONNECT X'01'
+    //          o  BIND X'02'
+    //          o  UDP ASSOCIATE X'03'
+    //       o  RSV    RESERVED
+    //       o  ATYP   address type of following address
+    //          o  IP V4 address: X'01'
+    //          o  DOMAINNAME: X'03'
+    //          o  IP V6 address: X'04'
+    //       o  DST.ADDR       desired destination address
+    //       o  DST.PORT desired destination port in network octet
+    //          order
+    pub fn from_encoded(buf: &[u8]) -> Result<MixAddrType, ParserError> {
+        todo!("use cursor instead");
+        expect_buf_len!(buf, 2);
+        match buf[0] {
+            // Field ATYP
+            0x01 => {
+                // IPv4
+                expect_buf_len!(buf, 1 + 4 + 2); // cmd + ipv4 + port
+                let ip = [buf[2], buf[3], buf[4], buf[5]];
+                let port = u16::from_be_bytes([buf[6], buf[7]]);
+                Ok(MixAddrType::V4((ip, port)))
+            }
+            0x03 => {
+                // Domain Name
+                let host_len = buf[1] as usize;
+                expect_buf_len!(buf, 1 + 1 + host_len + 2); // cmd + host_len + host(host_len bytes) + port
+                let host = String::from_utf8(buf[2..2 + host_len].to_vec())
+                    .map_err(|_| ParserError::Invalid)?;
+                let port = u16::from_be_bytes([buf[2 + host_len], buf[2 + host_len + 1]]);
+                Ok(MixAddrType::Hostname((host, port)))
+            }
+            0x04 => {
+                // IPv6
+                expect_buf_len!(buf, 1 + 16 + 2); // cmd + ipv6u8(16 bytes) + port
+                let v6u8 = &buf[1..1 + 16];
+                let mut v6u16 = [0u16; 8];
+                for i in 0..8 {
+                    v6u16[i] = u16::from_be_bytes([v6u8[i], v6u8[i + 1]]);
+                }
+                let port = u16::from_be_bytes([buf[1 + 16], buf[1 + 16 + 1]]);
+                Ok(MixAddrType::V6((v6u16, port)))
+            }
+            _ => {
+                return Err(ParserError::Invalid);
             }
         }
     }

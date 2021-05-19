@@ -1,13 +1,11 @@
 use crate::{
     proxy::ConnectionRequest,
-    server::HASH_LEN,
     utils::{ClientTcpStream, MixAddrType, ParserError},
 };
 use anyhow::{Error, Result};
 // use futures::future;
 // use std::io::IoSlice;
 // use std::pin::Pin;
-use std::sync::Arc;
 use tokio::io::*;
 use tokio::net::TcpStream;
 use tracing::*;

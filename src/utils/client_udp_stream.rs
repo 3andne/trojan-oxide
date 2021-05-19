@@ -1,7 +1,8 @@
-use futures::ready;
+use futures::{ready, Future};
 use std::net::SocketAddr;
-use std::task::Poll;
-use tokio::io::{AsyncRead, AsyncWrite};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 
@@ -126,5 +127,22 @@ impl<'a> AsyncWrite for ClientUdpSendStream<'a> {
         _: &mut std::task::Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         Poll::Ready(Ok(()))
+    }
+}
+
+pub trait UdpRead {
+    fn poll_proxy_stream_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<crate::utils::MixAddrType>>;
+}
+
+impl<'a> UdpRead for ClientUdpRecvStream<'a> {
+    fn poll_proxy_stream_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<super::MixAddrType>> {
+        match ready!(self.poll_read(cx, buf)) {
+            Ok(_) => {
+                todo!("parse udp header");
+            }
+            Err(e) => {
+                return Poll::Ready(Err(e));
+            }
+        }
     }
 }
