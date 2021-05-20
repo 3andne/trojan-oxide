@@ -81,18 +81,24 @@ macro_rules! create_forward_through_quic {
 create_forward_through_quic!(forward_http_through_quic, HttpRequest);
 // create_forward_through_quic!(forward_socks5_through_quic, Socks5Request);
 
+macro_rules! try_shutdown {
+    ($T:tt, $instance:expr) => {
+        match $instance.try_recv() {
+            Err($T::error::TryRecvError::Empty) => (),
+            _ => {
+                break;
+            }
+        }
+    };
+}
+
 async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
     let mut endpoint = EndpointManager::new(&options).await?;
     let addr = options.local_addr.parse::<SocketAddr>()?;
     let listener = TcpListener::bind(&addr).await?;
     loop {
-        match upper_shutdown.try_recv() {
-            Err(oneshot::error::TryRecvError::Empty) => (),
-            _ => {
-                break;
-            }
-        }
+        try_shutdown!(oneshot, upper_shutdown);
         let (stream, _) = listener.accept().await?;
         debug!("accepted tcp: {:?}", stream);
 
@@ -111,12 +117,7 @@ async fn run_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
     let (endpoint, mut incoming) = quic_tunnel_rx(&options).await?;
     info!("listening on {}", endpoint.local_addr()?);
     while let Some(conn) = incoming.next().await {
-        match upper_shutdown.try_recv() {
-            Err(oneshot::error::TryRecvError::Empty) => (),
-            _ => {
-                break;
-            }
-        }
+        try_shutdown!(oneshot, upper_shutdown);
         debug!("connection incoming");
         let shutdown_rx = shutdown_tx.subscribe();
         let hash_copy = options.password_hash.clone();
