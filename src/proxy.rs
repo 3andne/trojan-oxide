@@ -92,6 +92,7 @@ macro_rules! try_shutdown {
     };
 }
 
+// todo: refactor into Client class
 async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
     let mut endpoint = EndpointManager::new(&options).await?;
@@ -112,6 +113,7 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
     Ok(())
 }
 
+// todo: refactor into Server class
 async fn run_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
     let (endpoint, mut incoming) = quic_tunnel_rx(&options).await?;

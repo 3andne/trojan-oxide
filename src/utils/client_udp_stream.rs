@@ -1,4 +1,5 @@
-use futures::{ready, Future};
+use super::MixAddrType;
+use futures::{ready};
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -21,6 +22,7 @@ pub struct ClientUdpSendStream<'a> {
     server_udp_socket: &'a UdpSocket,
     client_udp_addr: Option<SocketAddr>,
     addr_rx: Option<oneshot::Receiver<SocketAddr>>,
+    buffer: Vec<u8>,
 }
 
 impl ClientUdpStream {
@@ -43,6 +45,7 @@ impl ClientUdpStream {
                 server_udp_socket: &self.server_udp_socket,
                 client_udp_addr: None,
                 addr_rx: Some(rx),
+                buffer: Vec::with_capacity(2048),
             },
         )
     }
@@ -86,11 +89,11 @@ impl<'a> AsyncRead for ClientUdpRecvStream<'a> {
     }
 }
 
-impl<'a> AsyncWrite for ClientUdpSendStream<'a> {
-    fn poll_write(
+impl<'a> ClientUdpSendStream<'a> {
+    fn poll_write_optioned(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-        buf: &[u8],
+        buf: Option<&[u8]>,
     ) -> Poll<Result<usize, std::io::Error>> {
         if self.client_udp_addr.is_none() {
             let maybe_addr = match self.addr_rx {
@@ -108,11 +111,26 @@ impl<'a> AsyncWrite for ClientUdpSendStream<'a> {
             }
         }
 
+        let buf = match buf {
+            Some(b) => b,
+            None => &self.buffer,
+        };
+
         Poll::Ready(ready!(self.server_udp_socket.poll_send_to(
             cx,
             buf,
             self.client_udp_addr.unwrap()
         )))
+    }
+}
+
+impl<'a> AsyncWrite for ClientUdpSendStream<'a> {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        self.poll_write_optioned(cx, Some(buf))
     }
 
     fn poll_flush(
@@ -131,18 +149,68 @@ impl<'a> AsyncWrite for ClientUdpSendStream<'a> {
 }
 
 pub trait UdpRead {
-    fn poll_proxy_stream_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<crate::utils::MixAddrType>>;
+    fn poll_proxy_stream_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<crate::utils::MixAddrType>>;
 }
 
+// +----+------+------+----------+----------+----------+
+// |RSV | FRAG | ATYP | DST.ADDR | DST.PORT |   DATA   |
+// +----+------+------+----------+----------+----------+
+// | 2  |  1   |  1   | Variable |    2     | Variable |
+// +----+------+------+----------+----------+----------+
+
+// The fields in the UDP request header are:
+
+//     o  RSV  Reserved X'0000'
+//     o  FRAG    Current fragment number
+//     o  ATYP    address type of following addresses:
+//        o  IP V4 address: X'01'
+//        o  DOMAINNAME: X'03'
+//        o  IP V6 address: X'04'
+//     o  DST.ADDR       desired destination address
+//     o  DST.PORT       desired destination port
+//     o  DATA     user data
 impl<'a> UdpRead for ClientUdpRecvStream<'a> {
-    fn poll_proxy_stream_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<super::MixAddrType>> {
+    fn poll_proxy_stream_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<MixAddrType>> {
         match ready!(self.poll_read(cx, buf)) {
             Ok(_) => {
-                todo!("parse udp header");
+                buf.advance(3);
+                Poll::Ready(
+                    MixAddrType::from_encoded(buf).map_err(|_| std::io::ErrorKind::Other.into()),
+                )
             }
-            Err(e) => {
-                return Poll::Ready(Err(e));
-            }
+            Err(e) => Poll::Ready(Err(e)),
         }
+    }
+}
+
+pub trait UdpWrite {
+    fn poll_proxy_stream_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+        addr: &mut MixAddrType,
+    ) -> Poll<std::io::Result<()>>;
+}
+
+impl<'a> UdpWrite for ClientUdpSendStream<'a> {
+    fn poll_proxy_stream_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+        addr: &mut MixAddrType,
+    ) -> Poll<std::io::Result<()>> {
+        todo!("fill in inner buffer");
+        let res = self.poll_write_optioned(cx, None);
+        // match res {
+
+        // }
     }
 }

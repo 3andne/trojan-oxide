@@ -3,7 +3,7 @@ use anyhow::Result;
 // use tracing::*;
 use crate::{
     expect_buf_len,
-    utils::{transmute_u16s_to_u8s, ParserError},
+    utils::{transmute_u16s_to_u8s, ParserError, CursoredBuffer},
 };
 use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -154,6 +154,7 @@ impl MixAddrType {
             }
         }
     }
+
     //     The SOCKS request is formed as follows:
 
     //     +----+-----+-------+------+----------+----------+
@@ -177,17 +178,16 @@ impl MixAddrType {
     //       o  DST.ADDR       desired destination address
     //       o  DST.PORT desired destination port in network octet
     //          order
-    pub fn from_encoded(buf: &[u8]) -> Result<MixAddrType, ParserError> {
-        todo!("use cursor instead");
+    fn from_encoded_bytes(buf: &[u8]) -> Result<(MixAddrType, usize), ParserError> {
         expect_buf_len!(buf, 2);
         match buf[0] {
             // Field ATYP
             0x01 => {
                 // IPv4
                 expect_buf_len!(buf, 1 + 4 + 2); // cmd + ipv4 + port
-                let ip = [buf[2], buf[3], buf[4], buf[5]];
-                let port = u16::from_be_bytes([buf[6], buf[7]]);
-                Ok(MixAddrType::V4((ip, port)))
+                let ip = [buf[1], buf[2], buf[3], buf[4]];
+                let port = u16::from_be_bytes([buf[5], buf[6]]);
+                Ok((MixAddrType::V4((ip, port)), 7))
             }
             0x03 => {
                 // Domain Name
@@ -196,7 +196,7 @@ impl MixAddrType {
                 let host = String::from_utf8(buf[2..2 + host_len].to_vec())
                     .map_err(|_| ParserError::Invalid)?;
                 let port = u16::from_be_bytes([buf[2 + host_len], buf[2 + host_len + 1]]);
-                Ok(MixAddrType::Hostname((host, port)))
+                Ok((MixAddrType::Hostname((host, port)), 1 + 1 + host_len + 2))
             }
             0x04 => {
                 // IPv6
@@ -207,12 +207,20 @@ impl MixAddrType {
                     v6u16[i] = u16::from_be_bytes([v6u8[i], v6u8[i + 1]]);
                 }
                 let port = u16::from_be_bytes([buf[1 + 16], buf[1 + 16 + 1]]);
-                Ok(MixAddrType::V6((v6u16, port)))
+                Ok((MixAddrType::V6((v6u16, port)), 1 + 16 + 2))
             }
             _ => {
                 return Err(ParserError::Invalid);
             }
         }
+    }
+
+    pub fn from_encoded<T: CursoredBuffer>(cursored_buf: &mut T) -> Result<MixAddrType, ParserError> {
+        let buf = cursored_buf.as_bytes();
+        Self::from_encoded_bytes(buf).map(|(addr, len)| {
+            cursored_buf.advance(len);
+            addr
+        })
     }
 
     pub fn init_from(addr: &SocketAddr) -> Self {
