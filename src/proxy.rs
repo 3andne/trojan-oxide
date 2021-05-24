@@ -3,7 +3,7 @@ use crate::{
     client::{http::*, socks5::*},
     server::trojan::*,
     tunnel::quic::*,
-    utils::{ClientTcpStream, ClientUdpStream},
+    utils::{ClientTcpStream, Socks5UdpStream},
 };
 use anyhow::Result;
 use futures::StreamExt;
@@ -18,7 +18,7 @@ use tracing::*;
 
 pub enum ConnectionRequest {
     TCP(ClientTcpStream),
-    UDP((ClientUdpStream, TcpStream)),
+    UDP((Socks5UdpStream, TcpStream)),
 }
 
 macro_rules! create_forward_through_quic {
@@ -36,7 +36,7 @@ macro_rules! create_forward_through_quic {
             use ConnectionRequest::*;
             match conn_req {
                 TCP(mut stream) => {
-                    send_tcp_packet0(req.addr(), &mut out_write, password_hash).await?;
+                    trojan_connect_tcp(req.addr(), &mut out_write, password_hash).await?;
                     info!("[tcp]{:?} => {:?}", stream.peer_addr()?, req.addr());
                     let (mut in_read, mut in_write) = stream.split();
                     select! {
@@ -52,7 +52,8 @@ macro_rules! create_forward_through_quic {
                     }
                 }
                 UDP((udp, mut control)) => {
-                    todo!("udp packet 0");
+                    // todo!("udp packet 0");
+                    trojan_connect_udp(&mut out_write, password_hash).await?;
                     let (mut in_read, mut in_write) = udp.split();
                     info!("[udp] => {:?}", req.addr());
                     let mut dummy = [0; 2];

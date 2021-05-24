@@ -6,18 +6,27 @@ use std::sync::Arc;
 use tokio::{io::*, select};
 use tokio::{net::TcpStream, sync::broadcast};
 
-pub async fn send_udp_packet0<A>(
-    addr: MixAddrType,
+pub async fn trojan_connect_udp<A>(outbound: &mut A, password: Arc<String>) -> Result<()>
+where
+    A: AsyncWrite + Unpin + ?Sized,
+{
+    let addr = MixAddrType::V4(([0, 0, 0, 0], 0));
+    trojan_connect(true, &addr, outbound, password).await
+}
+
+pub async fn trojan_connect_tcp<A>(
+    addr: &MixAddrType,
     outbound: &mut A,
     password: Arc<String>,
 ) -> Result<()>
 where
     A: AsyncWrite + Unpin + ?Sized,
 {
-    todo!()
+    trojan_connect(false, addr, outbound, password).await
 }
 
-pub async fn send_tcp_packet0<A>(
+async fn trojan_connect<A>(
+    udp: bool,
     addr: &MixAddrType,
     outbound: &mut A,
     password: Arc<String>,
@@ -27,7 +36,7 @@ where
 {
     let mut buf = Vec::with_capacity(HASH_LEN + 2 + 1 + addr.encoded_len() + 2);
     buf.extend_from_slice(password.as_bytes());
-    buf.extend_from_slice(&[b'\r', b'\n', 1]);
+    buf.extend_from_slice(&[b'\r', b'\n', if udp { 0x03 } else { 0x01 }]);
     addr.write_buf(&mut buf);
     buf.extend_from_slice(&[b'\r', b'\n']);
     outbound.write_all(&buf).await?;

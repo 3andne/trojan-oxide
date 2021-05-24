@@ -24,6 +24,7 @@ rustls = "0.19"
 sha2 = "0.9"
 #webpki = "0.22"
 webpki-roots = "0.21"
+bytes = "1"
 
 [dev-dependencies]
 criterion = "0.3"

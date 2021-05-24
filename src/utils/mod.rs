@@ -2,9 +2,11 @@ mod client_tcp_stream;
 mod client_udp_stream;
 mod mix_addr;
 
+use bytes::BufMut;
 pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
-pub use client_udp_stream::{ClientUdpRecvStream, ClientUdpSendStream, ClientUdpStream};
+pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream};
 pub use mix_addr::MixAddrType;
+use tokio::io::ReadBuf;
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
@@ -62,5 +64,42 @@ impl<'a> CursoredBuffer for tokio::io::ReadBuf<'a> {
 
     fn advance(&mut self, len: usize) {
         self.advance(len);
+    }
+}
+
+impl<'a> CursoredBuffer for (&'a mut usize, &Vec<u8>) {
+    fn as_bytes(&self) -> &[u8] {
+        &self.1[*self.0..]
+    }
+
+    fn advance(&mut self, len: usize) {
+        *self.0 += len;
+    }
+}
+
+pub struct UdpRelayBuffer<'a> {
+    cursor: usize,
+    buf: &'a mut Vec<u8>,
+}
+
+impl<'a> UdpRelayBuffer<'a> {
+    fn as_read_buf(&mut self) -> ReadBuf<'a> {
+        let dst = self.buf.chunk_mut();
+        let dst = unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>]) };
+        ReadBuf::uninit(dst)
+    }
+
+    unsafe fn advance_mut(&mut self, cnt: usize) {
+        self.buf.advance_mut(cnt);
+    }
+}
+
+impl<'a> CursoredBuffer for UdpRelayBuffer<'a> {
+    fn as_bytes(&self) -> &[u8] {
+        &self.buf[self.cursor..]
+    }
+
+    fn advance(&mut self, len: usize) {
+        self.cursor += len;
     }
 }

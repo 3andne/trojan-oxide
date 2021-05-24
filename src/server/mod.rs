@@ -13,7 +13,6 @@ pub const HASH_LEN: usize = 56;
 pub struct Target<'a> {
     host: MixAddrType,
     cursor: usize,
-    host_len: usize,
     password_hash: &'a [u8],
 }
 
@@ -39,50 +38,8 @@ impl<'a> Target<'a> {
     }
 
     fn set_host_and_port(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
-        expect_buf_len!(buf, HASH_LEN + 5, 1); // HASH + \r\n + cmd(2 bytes) + host_len(1 byte, only valid when address is hostname)
-
-        match buf[HASH_LEN + 3] {
-            1 => {
-                expect_buf_len!(buf, HASH_LEN + 4 + 4 + 2, 2); // HASH + \r\n + cmd + ipv4 + port
-                let ip = [
-                    buf[HASH_LEN + 4],
-                    buf[HASH_LEN + 5],
-                    buf[HASH_LEN + 6],
-                    buf[HASH_LEN + 7],
-                ];
-                let port = u16::from_be_bytes([buf[HASH_LEN + 8], buf[HASH_LEN + 9]]);
-                self.host = MixAddrType::V4((ip, port));
-                self.cursor = HASH_LEN + 10;
-            }
-            3 => {
-                self.host_len = buf[HASH_LEN + 4] as usize;
-                // HASH + \r\n + cmd + host_len + host(host_len bytes) + port
-                expect_buf_len!(buf, HASH_LEN + 5 + self.host_len + 2, 3);
-                let host =
-                    String::from_utf8(buf[HASH_LEN + 5..HASH_LEN + 5 + self.host_len].to_vec())
-                        .map_err(|_| ParserError::Invalid)?;
-                self.cursor = HASH_LEN + 5 + self.host_len;
-                let port = u16::from_be_bytes([buf[self.cursor], buf[self.cursor + 1]]);
-                self.host = MixAddrType::Hostname((host, port));
-                self.cursor += 2;
-            }
-            4 => {
-                // HASH + \r\n + cmd + ipv6u8(16 bytes) + port
-                expect_buf_len!(buf, HASH_LEN + 4 + 16 + 2, 4);
-                let v6u8 = &buf[HASH_LEN + 4..HASH_LEN + 4 + 16];
-                let mut v6u16 = [0u16; 8];
-                for i in 0..8 {
-                    v6u16[i] = u16::from_be_bytes([v6u8[i], v6u8[i + 1]]);
-                }
-                let port = u16::from_be_bytes([buf[HASH_LEN + 20], buf[HASH_LEN + 21]]);
-                self.host = MixAddrType::V6((v6u16, port));
-                self.cursor = HASH_LEN + 22;
-            }
-            _ => {
-                return Err(ParserError::Invalid);
-            }
-        }
-
+        expect_buf_len!(buf, HASH_LEN + 5); // HASH + \r\n + cmd(2 bytes) + host_len(1 byte, only valid when address is hostname)
+        self.host = MixAddrType::from_encoded(&mut (&mut self.cursor, buf))?;
         Ok(())
     }
 

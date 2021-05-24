@@ -1,7 +1,7 @@
 use crate::{
     expect_buf_len,
     proxy::ConnectionRequest,
-    utils::{ClientTcpStream, ClientUdpStream, MixAddrType, ParserError},
+    utils::{ClientTcpStream, Socks5UdpStream, MixAddrType, ParserError},
 };
 use anyhow::{Error, Result};
 // use futures::future;
@@ -99,7 +99,7 @@ impl Socks5Request {
             let server_udp_socket = UdpSocket::bind(SocketAddr::new(local_ip, 0)).await?;
             MixAddrType::init_from(&server_udp_socket.local_addr()?).write_buf(&mut buf);
             inbound.write_all(&buf).await?;
-            let udp_stream = ClientUdpStream::new(server_udp_socket);
+            let udp_stream = Socks5UdpStream::new(server_udp_socket);
             Ok(ConnectionRequest::UDP((udp_stream, inbound)))
         }
     }
