@@ -1,5 +1,6 @@
 mod client_tcp_stream;
 mod client_udp_stream;
+mod copy;
 mod mix_addr;
 
 use bytes::BufMut;
@@ -83,6 +84,10 @@ pub struct UdpRelayBuffer<'a> {
 }
 
 impl<'a> UdpRelayBuffer<'a> {
+    fn new(buf: &'a mut Vec<u8>) -> Self {
+        Self { cursor: 0, buf }
+    }
+
     fn as_read_buf(&mut self) -> ReadBuf<'a> {
         let dst = self.buf.chunk_mut();
         let dst = unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>]) };

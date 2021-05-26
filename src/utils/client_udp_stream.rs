@@ -266,7 +266,7 @@ pub trait UdpWrite {
         self: &mut Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
-        addr: &mut MixAddrType,
+        addr: &MixAddrType,
     ) -> Poll<std::io::Result<usize>>;
 }
 
@@ -275,7 +275,7 @@ impl<'a> UdpWrite for Socks5UdpSendStream<'a> {
         self: &mut Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
-        addr: &mut MixAddrType,
+        addr: &MixAddrType,
     ) -> Poll<std::io::Result<usize>> {
         if self.buffer.is_empty() {
             addr.write_buf(&mut self.buffer);
