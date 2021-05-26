@@ -1,5 +1,5 @@
-use super::{CursoredBuffer, UdpRelayBuffer, MixAddrType};
-use bytes::{BufMut, Buf};
+use super::{CursoredBuffer, MixAddrType, UdpRelayBuffer};
+// use bytes::{Buf, BufMut};
 use futures::ready;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -7,15 +7,15 @@ use std::{
     net::SocketAddr,
     ops::{Deref, DerefMut},
 };
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 
-struct Socks5UdpSpecificBuffer {
+struct Socks5UdpSpecifiedBuffer {
     inner: Vec<u8>,
 }
 
-impl Socks5UdpSpecificBuffer {
+impl Socks5UdpSpecifiedBuffer {
     fn new(capacity: usize) -> Self {
         let mut inner = Vec::with_capacity(capacity);
         // The fields in the UDP request header are:
@@ -34,21 +34,21 @@ impl Socks5UdpSpecificBuffer {
     fn is_empty(&self) -> bool {
         assert!(
             self.inner.len() >= 3,
-            "Socks5UdpSpecificBuffer unexpected len: {}",
+            "Socks5UdpSpecifiedBuffer unexpected len: {}",
             self.inner.len()
         );
         self.inner.len() == 3
     }
 }
 
-impl Deref for Socks5UdpSpecificBuffer {
+impl Deref for Socks5UdpSpecifiedBuffer {
     type Target = Vec<u8>;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl DerefMut for Socks5UdpSpecificBuffer {
+impl DerefMut for Socks5UdpSpecifiedBuffer {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
@@ -79,7 +79,7 @@ pub struct Socks5UdpSendStream<'a> {
     server_udp_socket: &'a UdpSocket,
     client_udp_addr: Option<SocketAddr>,
     addr_rx: Option<oneshot::Receiver<SocketAddr>>,
-    buffer: Socks5UdpSpecificBuffer,
+    buffer: Socks5UdpSpecifiedBuffer,
 }
 
 impl<'a> Socks5UdpSendStream<'a> {
@@ -88,7 +88,7 @@ impl<'a> Socks5UdpSendStream<'a> {
             server_udp_socket,
             client_udp_addr: None,
             addr_rx: Some(addr_tx),
-            buffer: Socks5UdpSpecificBuffer::new(2048),
+            buffer: Socks5UdpSpecifiedBuffer::new(2048),
         }
     }
 }
@@ -175,11 +175,8 @@ impl<'a> Socks5UdpSendStream<'a> {
             None => &self.buffer,
         };
 
-        Poll::Ready(ready!(self.server_udp_socket.poll_send_to(
-            cx,
-            buf,
-            self.client_udp_addr.unwrap()
-        )))
+        self.server_udp_socket
+            .poll_send_to(cx, buf, self.client_udp_addr.unwrap())
     }
 }
 
@@ -245,6 +242,11 @@ impl<'a> UdpRead for Socks5UdpRecvStream<'a> {
                 // Ensure the pointer does not change from under us
                 assert_eq!(ptr, buf_inner.filled().as_ptr());
                 let n = buf_inner.filled().len();
+
+                if n < 3 {
+                    return Poll::Ready(Ok(MixAddrType::None));
+                }
+
                 // Safety: This is guaranteed to be the number of initialized (and read)
                 // bytes due to the invariants provided by `ReadBuf::filled`.
                 unsafe {
@@ -252,8 +254,7 @@ impl<'a> UdpRead for Socks5UdpRecvStream<'a> {
                 }
                 buf.advance(3);
                 Poll::Ready(
-                    MixAddrType::from_encoded(buf)
-                        .map_err(|_| std::io::ErrorKind::Other.into()),
+                    MixAddrType::from_encoded(buf).map_err(|_| std::io::ErrorKind::Other.into()),
                 )
             }
             Err(e) => Poll::Ready(Err(e)),

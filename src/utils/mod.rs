@@ -54,6 +54,10 @@ impl CursoredBuffer for std::io::Cursor<&[u8]> {
     }
 
     fn advance(&mut self, len: usize) {
+        assert!(
+            self.get_ref().len() as u64 >= self.position() + len as u64,
+            "Cursor<&[u8]> was about to set a larger position than it's length"
+        );
         self.set_position(self.position() + len as u64);
     }
 }
@@ -74,22 +78,27 @@ impl<'a> CursoredBuffer for (&'a mut usize, &Vec<u8>) {
     }
 
     fn advance(&mut self, len: usize) {
+        assert!(
+            self.1.len() >= *self.0 + len,
+            "(&'a mut usize, &Vec<u8>) was about to set a larger position than it's length"
+        );
         *self.0 += len;
     }
 }
 
-pub struct UdpRelayBuffer<'a> {
+pub struct UdpRelayBuffer {
     cursor: usize,
-    buf: &'a mut Vec<u8>,
+    buf: Vec<u8>,
 }
 
-impl<'a> UdpRelayBuffer<'a> {
-    fn new(buf: &'a mut Vec<u8>) -> Self {
+impl<'a> UdpRelayBuffer {
+    fn new() -> Self {
+        let buf = Vec::with_capacity(2048);
         Self { cursor: 0, buf }
     }
 
-    fn as_read_buf(&mut self) -> ReadBuf<'a> {
-        let dst = self.buf.chunk_mut();
+    fn as_read_buf(&'a mut self) -> ReadBuf<'a> {
+        let dst = &mut self.buf.chunk_mut()[self.cursor..];
         let dst = unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>]) };
         ReadBuf::uninit(dst)
     }
@@ -97,14 +106,27 @@ impl<'a> UdpRelayBuffer<'a> {
     unsafe fn advance_mut(&mut self, cnt: usize) {
         self.buf.advance_mut(cnt);
     }
+
+    unsafe fn reset(&mut self) {
+        self.buf.set_len(0);
+        self.cursor = 0;
+    }
+
+    fn has_remaining(&self) -> bool {
+        self.cursor < self.buf.len()
+    }
 }
 
-impl<'a> CursoredBuffer for UdpRelayBuffer<'a> {
+impl<'a> CursoredBuffer for UdpRelayBuffer {
     fn as_bytes(&self) -> &[u8] {
         &self.buf[self.cursor..]
     }
 
     fn advance(&mut self, len: usize) {
+        assert!(
+            self.buf.len() >= self.cursor + len,
+            "UdpRelayBuffer was about to set a larger position than it's length"
+        );
         self.cursor += len;
     }
 }
