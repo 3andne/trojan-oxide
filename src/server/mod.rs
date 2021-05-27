@@ -3,6 +3,8 @@ use crate::{
     utils::{MixAddrType, ParserError},
 };
 use anyhow::Result;
+use quinn::*;
+use tokio::io::AsyncReadExt;
 use tracing::*;
 
 pub mod trojan;
@@ -14,6 +16,7 @@ pub struct Target<'a> {
     host: MixAddrType,
     cursor: usize,
     password_hash: &'a [u8],
+    buf: Vec<u8>,
 }
 
 impl<'a> Target<'a> {
@@ -24,12 +27,12 @@ impl<'a> Target<'a> {
         }
     }
 
-    fn verify(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
-        if buf.len() < HASH_LEN {
+    fn verify(&mut self) -> Result<(), ParserError> {
+        if self.buf.len() < HASH_LEN {
             return Err(ParserError::Incomplete);
         }
 
-        if &buf[..HASH_LEN] == self.password_hash {
+        if &self.buf[..HASH_LEN] == self.password_hash {
             self.cursor = HASH_LEN + 2;
             Ok(())
         } else {
@@ -37,32 +40,60 @@ impl<'a> Target<'a> {
         }
     }
 
-    fn set_host_and_port(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
-        expect_buf_len!(buf, HASH_LEN + 5); // HASH + \r\n + cmd(2 bytes) + host_len(1 byte, only valid when address is hostname)
-        self.host = MixAddrType::from_encoded(&mut (&mut self.cursor, buf))?;
+    fn set_host_and_port(&mut self) -> Result<(), ParserError> {
+        expect_buf_len!(self.buf, HASH_LEN + 5); // HASH + \r\n + cmd(2 bytes) + host_len(1 byte, only valid when address is hostname)
+        self.host = MixAddrType::from_encoded(&mut (&mut self.cursor, &self.buf))?;
         Ok(())
     }
 
-    pub fn parse(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
+    pub async fn accept(&mut self, in_read: &mut RecvStream) -> Result<(), ParserError> {
+        loop {
+            let read = in_read
+                .read_buf(&mut self.buf)
+                .await
+                .map_err(|_| ParserError::Invalid)?;
+            if read != 0 {
+                match self.parse() {
+                    Err(ParserError::Invalid) => {
+                        debug!("invalid");
+                        return Err(ParserError::Invalid);
+                    }
+                    Err(ParserError::Incomplete) => {
+                        debug!("Incomplete");
+                        continue;
+                    }
+                    Ok(()) => {
+                        debug!("Ok");
+                        break;
+                    }
+                }
+            } else {
+                return Err(ParserError::Invalid);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn parse(&mut self) -> Result<(), ParserError> {
         debug!(
             "parse begin, cursor {}, buffer({}): {:?}",
             self.cursor,
-            buf.len(),
-            &buf[self.cursor..]
+            self.buf.len(),
+            &self.buf[self.cursor..]
         );
         if self.cursor == 0 {
-            self.verify(buf)?;
+            self.verify()?;
             debug!("verified");
         }
 
         if self.host.is_none() {
-            self.set_host_and_port(buf)?;
+            self.set_host_and_port()?;
         }
 
         debug!("target: {:?}", self);
 
-        expect_buf_len!(buf, self.cursor + 2);
-        if &buf[self.cursor..self.cursor + 2] == b"\r\n" {
+        expect_buf_len!(self.buf, self.cursor + 2);
+        if &self.buf[self.cursor..self.cursor + 2] == b"\r\n" {
             self.cursor += 2;
             Ok(())
         } else {

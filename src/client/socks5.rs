@@ -51,7 +51,7 @@ impl Socks5Request {
         // unsafe { str::from_utf8_unchecked(&self.extracted_request[start..end]) }
     }
 
-    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ConnectionRequest> {
+    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ConnectionRequest<ClientTcpStream, Socks5UdpStream>> {
         let mut buffer = Vec::with_capacity(200);
         loop {
             let read = inbound.read_buf(&mut buffer).await?;

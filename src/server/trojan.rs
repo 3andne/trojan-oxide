@@ -109,30 +109,16 @@ async fn handle_quic_outbound(
     password_hash: Arc<String>,
 ) -> Result<()> {
     let (mut in_write, mut in_read) = stream;
-    let mut buffer = Vec::with_capacity(128);
+    // let mut buffer = Vec::with_capacity(128);
     let mut target = Target::new(password_hash.as_bytes());
-    loop {
-        let read = in_read.read_buf(&mut buffer).await?;
-        if read != 0 {
-            match target.parse(&buffer) {
-                Err(ParserError::Invalid) => {
-                    debug!("invalid");
-                    return Err(Error::new(ParserError::Invalid));
-                }
-                Err(ParserError::Incomplete) => {
-                    debug!("Incomplete");
-                    continue;
-                }
-                Ok(()) => {
-                    debug!("Ok");
-                    break;
-                }
-            }
-        } else {
-            return Err(Error::new(ParserError::Invalid));
+    match target.accept(&mut in_read).await {
+        Ok(_) => {
+            todo!()
+        }
+        Err(_) => {
+            todo!()
         }
     }
-
     debug!("outbound trying to connect");
 
     let mut outbound = if target.host.is_ip() {
@@ -142,12 +128,12 @@ async fn handle_quic_outbound(
     };
     debug!("outbound connected: {:?}", outbound);
 
-    if target.cursor < buffer.len() {
+    if target.cursor < target.buf.len() {
         debug!(
             "remaining packet: {:?}",
-            String::from_utf8(buffer[target.cursor..].to_vec())
+            String::from_utf8(target.buf[target.cursor..].to_vec())
         );
-        let mut t = std::io::Cursor::new(&buffer[target.cursor..]);
+        let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
         outbound.write_buf(&mut t).await?;
         outbound.flush().await?;
     }

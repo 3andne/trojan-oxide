@@ -1,6 +1,6 @@
 use crate::{
     proxy::ConnectionRequest,
-    utils::{ClientTcpStream, MixAddrType, ParserError},
+    utils::{ClientTcpStream, Socks5UdpStream, MixAddrType, ParserError},
 };
 use anyhow::{Error, Result};
 // use futures::future;
@@ -115,7 +115,7 @@ impl HttpRequest {
         Err(ParserError::Incomplete)
     }
 
-    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ConnectionRequest> {
+    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ConnectionRequest<ClientTcpStream, Socks5UdpStream>> {
         let mut buffer = Vec::with_capacity(200);
         loop {
             let read = inbound.read_buf(&mut buffer).await?;

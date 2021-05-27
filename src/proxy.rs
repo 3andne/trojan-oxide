@@ -16,9 +16,9 @@ use tokio::select;
 use tokio::sync::{broadcast, oneshot};
 use tracing::*;
 
-pub enum ConnectionRequest {
-    TCP(ClientTcpStream),
-    UDP((Socks5UdpStream, TcpStream)),
+pub enum ConnectionRequest<TcpRequest, UdpRequest> {
+    TCP(TcpRequest),
+    UDP((UdpRequest, TcpStream)),
 }
 
 macro_rules! create_forward_through_quic {
