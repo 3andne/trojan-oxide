@@ -52,11 +52,17 @@ where
                 }
                 me.addr = Some(new_addr);
             }
+
             let x = ready!(Pin::new(&mut *me.writer).poll_proxy_stream_write(
                 cx,
                 &me.buf.as_bytes(),
                 me.addr.as_ref().unwrap()
             ))?;
+
+            if x == 0 {
+                return Poll::Ready(Ok(me.amt));
+            }
+
             me.buf.advance(x);
 
             if !me.buf.has_remaining() {

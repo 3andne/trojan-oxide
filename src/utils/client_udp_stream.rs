@@ -7,9 +7,12 @@ use std::{
     net::SocketAddr,
     ops::{Deref, DerefMut},
 };
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+};
 
 struct Socks5UdpSpecifiedBuffer {
     inner: Vec<u8>,
@@ -57,20 +60,27 @@ impl DerefMut for Socks5UdpSpecifiedBuffer {
 pub struct Socks5UdpStream {
     server_udp_socket: UdpSocket,
     client_udp_addr: Option<SocketAddr>,
+    signal_reset: oneshot::Receiver<()>,
 }
 
 pub struct Socks5UdpRecvStream<'a> {
     server_udp_socket: &'a UdpSocket,
     client_udp_addr: Option<SocketAddr>,
     addr_tx: Option<oneshot::Sender<SocketAddr>>,
+    signal_reset: &'a mut oneshot::Receiver<()>,
 }
 
 impl<'a> Socks5UdpRecvStream<'a> {
-    fn new(server_udp_socket: &'a UdpSocket, addr_tx: oneshot::Sender<SocketAddr>) -> Self {
+    fn new(
+        server_udp_socket: &'a UdpSocket,
+        addr_tx: oneshot::Sender<SocketAddr>,
+        signal_reset: &'a mut oneshot::Receiver<()>,
+    ) -> Self {
         Self {
             server_udp_socket,
             client_udp_addr: None,
             addr_tx: Some(addr_tx),
+            signal_reset,
         }
     }
 }
@@ -94,17 +104,21 @@ impl<'a> Socks5UdpSendStream<'a> {
 }
 
 impl Socks5UdpStream {
-    pub fn new(server_udp_socket: UdpSocket) -> Self {
+    pub fn new(
+        server_udp_socket: UdpSocket,
+        stream_reset_signal_rx: oneshot::Receiver<()>,
+    ) -> Self {
         Self {
             server_udp_socket,
             client_udp_addr: None,
+            signal_reset: stream_reset_signal_rx,
         }
     }
 
-    pub fn split<'a>(&'a self) -> (Socks5UdpRecvStream<'a>, Socks5UdpSendStream<'a>) {
+    pub fn split<'a>(&'a mut self) -> (Socks5UdpRecvStream<'a>, Socks5UdpSendStream<'a>) {
         let (addr_tx, addr_rx) = oneshot::channel();
         (
-            Socks5UdpRecvStream::new(&self.server_udp_socket, addr_tx),
+            Socks5UdpRecvStream::new(&self.server_udp_socket, addr_tx, &mut self.signal_reset),
             Socks5UdpSendStream::new(&self.server_udp_socket, addr_rx),
         )
     }
@@ -212,31 +226,38 @@ pub trait UdpRead {
     ) -> Poll<std::io::Result<crate::utils::MixAddrType>>;
 }
 
-// +----+------+------+----------+----------+----------+
-// |RSV | FRAG | ATYP | DST.ADDR | DST.PORT |   DATA   |
-// +----+------+------+----------+----------+----------+
-// | 2  |  1   |  1   | Variable |    2     | Variable |
-// +----+------+------+----------+----------+----------+
-
-// The fields in the UDP request header are:
-
-//     o  RSV  Reserved X'0000'
-//     o  FRAG    Current fragment number
-//     o  ATYP    address type of following addresses:
-//        o  IP V4 address: X'01'
-//        o  DOMAINNAME: X'03'
-//        o  IP V6 address: X'04'
-//     o  DST.ADDR       desired destination address
-//     o  DST.PORT       desired destination port
-//     o  DATA     user data
 impl<'a> UdpRead for Socks5UdpRecvStream<'a> {
+    /// ```not_rust
+    /// +----+------+------+----------+----------+----------+
+    /// |RSV | FRAG | ATYP | DST.ADDR | DST.PORT |   DATA   |
+    /// +----+------+------+----------+----------+----------+
+    /// | 2  |  1   |  1   | Variable |    2     | Variable |
+    /// +----+------+------+----------+----------+----------+
+    /// The fields in the UDP request header are:
+    ///      o  RSV  Reserved X'0000'
+    ///      o  FRAG    Current fragment number
+    ///      o  ATYP    address type of following addresses:
+    ///          o  IP V4 address: X'01'
+    ///          o  DOMAINNAME: X'03'
+    ///          o  IP V6 address: X'04'
+    ///      o  DST.ADDR       desired destination address
+    ///      o  DST.PORT       desired destination port
+    ///      o  DATA     user data
+    /// ```
     fn poll_proxy_stream_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut UdpRelayBuffer,
     ) -> Poll<std::io::Result<MixAddrType>> {
         let mut buf_inner = buf.as_read_buf();
         let ptr = buf_inner.filled().as_ptr();
+
+        crate::try_recv!(
+            oneshot,
+            self.signal_reset,
+            return Poll::Ready(Ok(MixAddrType::None))
+        );
+
         match ready!(self.poll_read(cx, &mut buf_inner)) {
             Ok(_) => {
                 // Ensure the pointer does not change from under us

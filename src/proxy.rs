@@ -18,7 +18,7 @@ use tracing::*;
 
 pub enum ConnectionRequest<TcpRequest, UdpRequest> {
     TCP(TcpRequest),
-    UDP((UdpRequest, TcpStream)),
+    UDP(UdpRequest),
 }
 
 macro_rules! create_forward_through_quic {
@@ -51,12 +51,11 @@ macro_rules! create_forward_through_quic {
                         },
                     }
                 }
-                UDP((udp, mut control)) => {
+                UDP(mut udp) => {
                     // todo!("udp packet 0");
                     trojan_connect_udp(&mut out_write, password_hash).await?;
                     let (mut in_read, mut in_write) = udp.split();
                     info!("[udp] => {:?}", req.addr());
-                    let mut dummy = [0; 2];
                     select! {
                         _ = tokio::io::copy(&mut out_read, &mut in_write) => {
                             debug!("relaying upload end");
@@ -66,9 +65,6 @@ macro_rules! create_forward_through_quic {
                         },
                         _ = upper_shutdown.recv() => {
                             debug!("shutdown signal received");
-                        },
-                        _ = control.read(&mut dummy) => {
-                            debug!("udp shutdown");
                         },
                     }
                 }
@@ -82,12 +78,16 @@ macro_rules! create_forward_through_quic {
 create_forward_through_quic!(forward_http_through_quic, HttpRequest);
 // create_forward_through_quic!(forward_socks5_through_quic, Socks5Request);
 
-macro_rules! try_shutdown {
+#[macro_export]
+macro_rules! try_recv {
     ($T:tt, $instance:expr) => {
+        try_recv!($T, $instance, break)
+    };
+    ($T:tt, $instance:expr, $then_expr:expr) => {
         match $instance.try_recv() {
             Err($T::error::TryRecvError::Empty) => (),
             _ => {
-                break;
+                $then_expr;
             }
         }
     };
@@ -100,7 +100,7 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
     let addr = options.local_addr.parse::<SocketAddr>()?;
     let listener = TcpListener::bind(&addr).await?;
     loop {
-        try_shutdown!(oneshot, upper_shutdown);
+        try_recv!(oneshot, upper_shutdown);
         let (stream, _) = listener.accept().await?;
         debug!("accepted tcp: {:?}", stream);
 
@@ -120,7 +120,7 @@ async fn run_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
     let (endpoint, mut incoming) = quic_tunnel_rx(&options).await?;
     info!("listening on {}", endpoint.local_addr()?);
     while let Some(conn) = incoming.next().await {
-        try_shutdown!(oneshot, upper_shutdown);
+        try_recv!(oneshot, upper_shutdown);
         debug!("connection incoming");
         let shutdown_rx = shutdown_tx.subscribe();
         let hash_copy = options.password_hash.clone();

@@ -1,15 +1,15 @@
 use crate::{
     expect_buf_len,
     proxy::ConnectionRequest,
-    utils::{ClientTcpStream, Socks5UdpStream, MixAddrType, ParserError},
+    utils::{ClientTcpStream, MixAddrType, ParserError, Socks5UdpStream},
 };
 use anyhow::{Error, Result};
 // use futures::future;
 // use std::io::IoSlice;
 // use std::pin::Pin;
 use std::net::SocketAddr;
-use tokio::net::TcpStream;
 use tokio::{io::*, net::UdpSocket};
+use tokio::{net::TcpStream, sync::oneshot};
 use tracing::*;
 
 const SOCKS_VERSION_INDEX: usize = 0;
@@ -51,7 +51,10 @@ impl Socks5Request {
         // unsafe { str::from_utf8_unchecked(&self.extracted_request[start..end]) }
     }
 
-    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ConnectionRequest<ClientTcpStream, Socks5UdpStream>> {
+    pub async fn accept(
+        &mut self,
+        mut inbound: TcpStream,
+    ) -> Result<ConnectionRequest<ClientTcpStream, Socks5UdpStream>> {
         let mut buffer = Vec::with_capacity(200);
         loop {
             let read = inbound.read_buf(&mut buffer).await?;
@@ -99,8 +102,16 @@ impl Socks5Request {
             let server_udp_socket = UdpSocket::bind(SocketAddr::new(local_ip, 0)).await?;
             MixAddrType::init_from(&server_udp_socket.local_addr()?).write_buf(&mut buf);
             inbound.write_all(&buf).await?;
-            let udp_stream = Socks5UdpStream::new(server_udp_socket);
-            Ok(ConnectionRequest::UDP((udp_stream, inbound)))
+            let (stream_reset_signal_tx, stream_reset_signal_rx) = oneshot::channel();
+
+            tokio::spawn(async move {
+                let mut dummy = [0u8; 3];
+                let _ = inbound.read(&mut dummy).await;
+                let _ = stream_reset_signal_tx.send(());
+            });
+
+            let udp_stream = Socks5UdpStream::new(server_udp_socket, stream_reset_signal_rx);
+            Ok(ConnectionRequest::UDP(udp_stream))
         }
     }
 
