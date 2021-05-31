@@ -1433,6 +1433,7 @@ dependencies = [
  "directories",
  "err-derive",
  "futures",
+ "pin-project-lite",
  "quinn",
  "quinn-proto",
  "rcgen",

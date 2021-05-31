@@ -216,7 +216,7 @@ impl MixAddrType {
     }
 
     pub fn from_encoded<T: CursoredBuffer>(cursored_buf: &mut T) -> Result<MixAddrType, ParserError> {
-        let buf = cursored_buf.as_bytes();
+        let buf = cursored_buf.chunk();
         Self::from_encoded_bytes(buf).map(|(addr, len)| {
             cursored_buf.advance(len);
             addr

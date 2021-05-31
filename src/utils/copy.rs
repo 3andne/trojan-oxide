@@ -1,9 +1,6 @@
 use futures::ready;
 
-use super::{
-    client_udp_stream::{UdpRead, UdpWrite},
-    CursoredBuffer, MixAddrType, UdpRelayBuffer,
-};
+use super::{CursoredBuffer, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
 use std::pin::Pin;
 use std::task::Poll;
 use std::{future::Future, u64};
@@ -55,7 +52,7 @@ where
 
             let x = ready!(Pin::new(&mut *me.writer).poll_proxy_stream_write(
                 cx,
-                &me.buf.as_bytes(),
+                &me.buf.chunk(),
                 me.addr.as_ref().unwrap()
             ))?;
 
@@ -66,12 +63,14 @@ where
             me.buf.advance(x);
 
             if !me.buf.has_remaining() {
-                debug!("udp packet not finished in one write");
                 me.addr = None;
                 unsafe {
                     me.buf.reset();
                 }
+            } else {
+                debug!("udp packet not sent entirely in one write");
             }
+
             me.amt += x as u64;
         }
     }

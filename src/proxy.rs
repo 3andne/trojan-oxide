@@ -15,6 +15,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::sync::{broadcast, oneshot};
 use tracing::*;
+use std::future::Future;
 
 pub enum ConnectionRequest<TcpRequest, UdpRequest> {
     TCP(TcpRequest),

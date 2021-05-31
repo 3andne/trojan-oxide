@@ -1,4 +1,4 @@
-use super::{CursoredBuffer, MixAddrType, UdpRelayBuffer};
+use super::{CursoredBuffer, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
 // use bytes::{Buf, BufMut};
 use futures::ready;
 use std::pin::Pin;
@@ -13,6 +13,7 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
 };
+use tracing::warn;
 
 struct Socks5UdpSpecifiedBuffer {
     inner: Vec<u8>,
@@ -218,14 +219,6 @@ impl<'a> AsyncWrite for Socks5UdpSendStream<'a> {
     }
 }
 
-pub trait UdpRead {
-    fn poll_proxy_stream_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut UdpRelayBuffer,
-    ) -> Poll<std::io::Result<crate::utils::MixAddrType>>;
-}
-
 impl<'a> UdpRead for Socks5UdpRecvStream<'a> {
     /// ```not_rust
     /// +----+------+------+----------+----------+----------+
@@ -283,18 +276,9 @@ impl<'a> UdpRead for Socks5UdpRecvStream<'a> {
     }
 }
 
-pub trait UdpWrite {
-    fn poll_proxy_stream_write(
-        self: &mut Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-        addr: &MixAddrType,
-    ) -> Poll<std::io::Result<usize>>;
-}
-
 impl<'a> UdpWrite for Socks5UdpSendStream<'a> {
     fn poll_proxy_stream_write(
-        self: &mut Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
         addr: &MixAddrType,
@@ -303,10 +287,18 @@ impl<'a> UdpWrite for Socks5UdpSendStream<'a> {
             addr.write_buf(&mut self.buffer);
             self.buffer.extend_from_slice(buf);
         }
-        let res = self.poll_write_optioned(cx, None);
-        if res.is_ready() {
-            self.buffer.reset();
+
+        // if we're not sending the entire buffer, we resend it
+        match self.poll_write_optioned(cx, None) {
+            Poll::Ready(Ok(x)) if x != self.buffer.len() => {
+                warn!("Socks5UdpSendStream didn't send the entire buffer");
+                Poll::Pending
+            }
+            res @ Poll::Ready(_) => {
+                self.buffer.reset();
+                res
+            }
+            res => res,
         }
-        res
     }
 }

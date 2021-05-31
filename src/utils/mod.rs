@@ -1,5 +1,6 @@
 mod client_tcp_stream;
 mod client_udp_stream;
+mod server_udp_stream;
 mod copy;
 mod mix_addr;
 
@@ -8,6 +9,8 @@ pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
 pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream};
 pub use mix_addr::MixAddrType;
 use tokio::io::ReadBuf;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
@@ -44,36 +47,39 @@ macro_rules! expect_buf_len {
 }
 
 pub trait CursoredBuffer {
-    fn as_bytes(&self) -> &[u8];
+    fn chunk(&self) -> &[u8];
     fn advance(&mut self, len: usize);
-}
-
-impl CursoredBuffer for std::io::Cursor<&[u8]> {
-    fn as_bytes(&self) -> &[u8] {
-        *self.get_ref()
-    }
-
-    fn advance(&mut self, len: usize) {
-        assert!(
-            self.get_ref().len() as u64 >= self.position() + len as u64,
-            "Cursor<&[u8]> was about to set a larger position than it's length"
-        );
-        self.set_position(self.position() + len as u64);
+    fn remaining(&self) -> usize {
+        self.chunk().len()
     }
 }
 
-impl<'a> CursoredBuffer for tokio::io::ReadBuf<'a> {
-    fn as_bytes(&self) -> &[u8] {
-        self.filled()
-    }
+// impl CursoredBuffer for std::io::Cursor<&[u8]> {
+//     fn as_bytes(&self) -> &[u8] {
+//         &self.get_ref()[self.position() as usize..]
+//     }
 
-    fn advance(&mut self, len: usize) {
-        self.advance(len);
-    }
-}
+//     fn advance(&mut self, len: usize) {
+//         assert!(
+//             self.get_ref().len() as u64 >= self.position() + len as u64,
+//             "Cursor<&[u8]> was about to set a larger position than it's length"
+//         );
+//         self.set_position(self.position() + len as u64);
+//     }
+// }
+
+// impl<'a> CursoredBuffer for tokio::io::ReadBuf<'a> {
+//     fn as_bytes(&self) -> &[u8] {
+//         self.filled()
+//     }
+
+//     fn advance(&mut self, len: usize) {
+//         self.advance(len);
+//     }
+// }
 
 impl<'a> CursoredBuffer for (&'a mut usize, &Vec<u8>) {
-    fn as_bytes(&self) -> &[u8] {
+    fn chunk(&self) -> &[u8] {
         &self.1[*self.0..]
     }
 
@@ -118,7 +124,7 @@ impl<'a> UdpRelayBuffer {
 }
 
 impl<'a> CursoredBuffer for UdpRelayBuffer {
-    fn as_bytes(&self) -> &[u8] {
+    fn chunk(&self) -> &[u8] {
         &self.buf[self.cursor..]
     }
 
@@ -129,4 +135,21 @@ impl<'a> CursoredBuffer for UdpRelayBuffer {
         );
         self.cursor += len;
     }
+}
+
+pub trait UdpRead {
+    fn poll_proxy_stream_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut UdpRelayBuffer,
+    ) -> Poll<std::io::Result<crate::utils::MixAddrType>>;
+}
+
+pub trait UdpWrite {
+    fn poll_proxy_stream_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+        addr: &MixAddrType,
+    ) -> Poll<std::io::Result<usize>>;
 }
