@@ -3,7 +3,7 @@ use anyhow::Result;
 // use tracing::*;
 use crate::{
     expect_buf_len,
-    utils::{transmute_u16s_to_u8s, ParserError, CursoredBuffer},
+    utils::{transmute_u16s_to_u8s, CursoredBuffer, ExtendableFromSlice, ParserError},
 };
 use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -128,7 +128,7 @@ impl MixAddrType {
         }
     }
 
-    pub fn write_buf(&self, buf: &mut Vec<u8>) {
+    pub fn write_buf<T: ExtendableFromSlice>(&self, buf: &mut T) {
         use MixAddrType::*;
         match self {
             Hostname((host, port)) => {
@@ -137,14 +137,14 @@ impl MixAddrType {
                 buf.extend_from_slice(&port.to_be_bytes());
             }
             V4((ip, port)) => {
-                buf.push(0x01);
+                buf.extend_from_slice(&[0x01]);
                 buf.extend_from_slice(ip);
                 buf.extend_from_slice(&port.to_be_bytes());
             }
             V6((ip, port)) => {
                 let mut v6_addr_u8 = [0u8; 16];
                 transmute_u16s_to_u8s(ip, &mut v6_addr_u8);
-                buf.push(0x04);
+                buf.extend_from_slice(&[0x04]);
                 buf.extend_from_slice(&v6_addr_u8);
                 buf.extend_from_slice(&port.to_be_bytes());
             }
@@ -155,29 +155,31 @@ impl MixAddrType {
         }
     }
 
-    //     The SOCKS request is formed as follows:
+    ///```not_rust
+    ///     The SOCKS request is formed as follows:
+    ///
+    ///     +----+-----+-------+------+----------+----------+
+    ///     |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+    ///     +----+-----+-------+------+----------+----------+
+    ///     | 1  |  1  | X'00' |  1   | Variable |    2     |
+    ///     +----+-----+-------+------+----------+----------+
 
-    //     +----+-----+-------+------+----------+----------+
-    //     |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
-    //     +----+-----+-------+------+----------+----------+
-    //     | 1  |  1  | X'00' |  1   | Variable |    2     |
-    //     +----+-----+-------+------+----------+----------+
+    ///  Where:
 
-    //  Where:
-
-    //       o  VER    protocol version: X'05'
-    //       o  CMD
-    //          o  CONNECT X'01'
-    //          o  BIND X'02'
-    //          o  UDP ASSOCIATE X'03'
-    //       o  RSV    RESERVED
-    //       o  ATYP   address type of following address
-    //          o  IP V4 address: X'01'
-    //          o  DOMAINNAME: X'03'
-    //          o  IP V6 address: X'04'
-    //       o  DST.ADDR       desired destination address
-    //       o  DST.PORT desired destination port in network octet
-    //          order
+    ///       o  VER    protocol version: X'05'
+    ///       o  CMD
+    ///          o  CONNECT X'01'
+    ///          o  BIND X'02'
+    ///          o  UDP ASSOCIATE X'03'
+    ///       o  RSV    RESERVED
+    ///       o  ATYP   address type of following address
+    ///          o  IP V4 address: X'01'
+    ///          o  DOMAINNAME: X'03'
+    ///          o  IP V6 address: X'04'
+    ///       o  DST.ADDR       desired destination address
+    ///       o  DST.PORT desired destination port in network octet
+    ///          order
+    ///```
     fn from_encoded_bytes(buf: &[u8]) -> Result<(MixAddrType, usize), ParserError> {
         expect_buf_len!(buf, 2);
         match buf[0] {
@@ -215,7 +217,9 @@ impl MixAddrType {
         }
     }
 
-    pub fn from_encoded<T: CursoredBuffer>(cursored_buf: &mut T) -> Result<MixAddrType, ParserError> {
+    pub fn from_encoded<T: CursoredBuffer>(
+        cursored_buf: &mut T,
+    ) -> Result<MixAddrType, ParserError> {
         let buf = cursored_buf.chunk();
         Self::from_encoded_bytes(buf).map(|(addr, len)| {
             cursored_buf.advance(len);

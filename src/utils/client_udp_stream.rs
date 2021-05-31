@@ -1,4 +1,4 @@
-use super::{CursoredBuffer, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
+use super::{CursoredBuffer, ExtendableFromSlice, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
 // use bytes::{Buf, BufMut};
 use futures::ready;
 use std::pin::Pin;
@@ -42,6 +42,12 @@ impl Socks5UdpSpecifiedBuffer {
             self.inner.len()
         );
         self.inner.len() == 3
+    }
+}
+
+impl ExtendableFromSlice for Socks5UdpSpecifiedBuffer {
+    fn extend_from_slice(&mut self, src: &[u8]) {
+        self.inner.extend_from_slice(src);
     }
 }
 

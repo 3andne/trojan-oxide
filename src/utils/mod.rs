@@ -1,16 +1,17 @@
 mod client_tcp_stream;
 mod client_udp_stream;
-mod server_udp_stream;
 mod copy;
 mod mix_addr;
+mod server_udp_stream;
 
 use bytes::BufMut;
 pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
 pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream};
 pub use mix_addr::MixAddrType;
-use tokio::io::ReadBuf;
+use std::ops::Deref;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use tokio::io::ReadBuf;
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
@@ -94,46 +95,59 @@ impl<'a> CursoredBuffer for (&'a mut usize, &Vec<u8>) {
 
 pub struct UdpRelayBuffer {
     cursor: usize,
-    buf: Vec<u8>,
+    inner: Vec<u8>,
 }
 
 impl<'a> UdpRelayBuffer {
     fn new() -> Self {
         let buf = Vec::with_capacity(2048);
-        Self { cursor: 0, buf }
+        Self {
+            cursor: 0,
+            inner: buf,
+        }
     }
 
     fn as_read_buf(&'a mut self) -> ReadBuf<'a> {
-        let dst = &mut self.buf.chunk_mut()[self.cursor..];
-        let dst = unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>]) };
-        ReadBuf::uninit(dst)
+        (self.inner).as_read_buf()
     }
 
     unsafe fn advance_mut(&mut self, cnt: usize) {
-        self.buf.advance_mut(cnt);
+        self.inner.advance_mut(cnt);
     }
 
     unsafe fn reset(&mut self) {
-        self.buf.set_len(0);
+        self.inner.set_len(0);
         self.cursor = 0;
     }
 
     fn has_remaining(&self) -> bool {
-        self.cursor < self.buf.len()
+        self.cursor < self.inner.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 }
 
 impl<'a> CursoredBuffer for UdpRelayBuffer {
     fn chunk(&self) -> &[u8] {
-        &self.buf[self.cursor..]
+        &self.inner[self.cursor..]
     }
 
     fn advance(&mut self, len: usize) {
         assert!(
-            self.buf.len() >= self.cursor + len,
+            self.inner.len() >= self.cursor + len,
             "UdpRelayBuffer was about to set a larger position than it's length"
         );
         self.cursor += len;
+    }
+}
+
+impl Deref for UdpRelayBuffer {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.chunk()
     }
 }
 
@@ -152,4 +166,32 @@ pub trait UdpWrite {
         buf: &[u8],
         addr: &MixAddrType,
     ) -> Poll<std::io::Result<usize>>;
+}
+
+pub trait VecAsReadBufExt<'a> {
+    fn as_read_buf(&'a mut self) -> ReadBuf<'a>;
+}
+
+impl<'a> VecAsReadBufExt<'a> for Vec<u8> {
+    fn as_read_buf(&'a mut self) -> ReadBuf<'a> {
+        let dst = self.chunk_mut();
+        let dst = unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>]) };
+        ReadBuf::uninit(dst)
+    }
+}
+
+pub trait ExtendableFromSlice {
+    fn extend_from_slice(&mut self, src: &[u8]);
+}
+
+impl ExtendableFromSlice for Vec<u8> {
+    fn extend_from_slice(&mut self, src: &[u8]) {
+        self.extend_from_slice(src);
+    }
+}
+
+impl ExtendableFromSlice for UdpRelayBuffer {
+    fn extend_from_slice(&mut self, src: &[u8]) {
+        self.inner.extend_from_slice(src);
+    }
 }
