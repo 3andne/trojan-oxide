@@ -1,6 +1,9 @@
 use crate::{
     expect_buf_len,
-    utils::{MixAddrType, ParserError},
+    utils::{
+        new_trojan_udp_stream, ConnectionRequest, MixAddrType, ParserError, TrojanUdpRecvStream,
+        TrojanUdpSendStream,
+    },
 };
 use anyhow::Result;
 use quinn::*;
@@ -10,6 +13,9 @@ use tracing::*;
 pub mod trojan;
 
 pub const HASH_LEN: usize = 56;
+
+pub type QuicStream = (SendStream, RecvStream);
+pub type TrojanUdpStream = (TrojanUdpSendStream, TrojanUdpRecvStream);
 
 #[derive(Default, Debug)]
 pub struct Target<'a> {
@@ -80,9 +86,13 @@ impl<'a> Target<'a> {
     /// o  DST.ADDR desired destination address
     /// o  DST.PORT desired destination port in network octet order
     /// ```
-    pub async fn accept(&mut self, in_read: &mut RecvStream) -> Result<(), ParserError> {
+    pub async fn accept(
+        &mut self,
+        mut inbound: QuicStream,
+    ) -> Result<ConnectionRequest<QuicStream, TrojanUdpStream>, ParserError> {
         loop {
-            let read = in_read
+            let read = inbound
+                .1
                 .read_buf(&mut self.buf)
                 .await
                 .map_err(|_| ParserError::Invalid)?;
@@ -105,7 +115,12 @@ impl<'a> Target<'a> {
                 return Err(ParserError::Invalid);
             }
         }
-        Ok(())
+        use ConnectionRequest::*;
+        Ok(if self.is_udp {
+            UDP(new_trojan_udp_stream(inbound.0, inbound.1))
+        } else {
+            TCP(inbound)
+        })
     }
 
     pub fn parse(&mut self) -> Result<(), ParserError> {

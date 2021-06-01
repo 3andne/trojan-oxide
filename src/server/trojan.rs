@@ -1,4 +1,4 @@
-use crate::{server::*, utils::ParserError};
+use crate::{server::*, utils::ConnectionRequest};
 use anyhow::{Error, Result};
 use futures::{StreamExt, TryFutureExt};
 use quinn::*;
@@ -108,49 +108,48 @@ async fn handle_quic_outbound(
     mut upper_shutdown: broadcast::Receiver<()>,
     password_hash: Arc<String>,
 ) -> Result<()> {
-    let (mut in_write, mut in_read) = stream;
-    // let mut buffer = Vec::with_capacity(128);
     let mut target = Target::new(password_hash.as_bytes());
-    match target.accept(&mut in_read).await {
-        Ok(_) => {
+    use ConnectionRequest::*;
+    match target.accept(stream).await {
+        Ok(TCP((mut in_write, mut in_read))) => {
+            let mut outbound = if target.host.is_ip() {
+                TcpStream::connect(target.host.to_socket_addrs()).await?
+            } else {
+                TcpStream::connect(target.host.host_repr()).await?
+            };
+            debug!("outbound connected: {:?}", outbound);
+
+            if target.cursor < target.buf.len() {
+                debug!(
+                    "remaining packet: {:?}",
+                    String::from_utf8(target.buf[target.cursor..].to_vec())
+                );
+                let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
+                outbound.write_buf(&mut t).await?;
+                outbound.flush().await?;
+            }
+
+            let (mut out_read, mut out_write) = outbound.split();
+
+            debug!("server start relaying");
+            select! {
+                _ = tokio::io::copy(&mut out_read, &mut in_write) => {
+                    debug!("server relaying upload end");
+                },
+                _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+                    debug!("server relaying download end");
+                },
+                _ = upper_shutdown.recv() => {
+                    debug!("server shutdown signal received");
+                },
+            }
+        }
+        Ok(UDP((mut in_write, mut in_read))) => {
             todo!()
         }
         Err(_) => {
             todo!()
         }
-    }
-    debug!("outbound trying to connect");
-
-    let mut outbound = if target.host.is_ip() {
-        TcpStream::connect(target.host.to_socket_addrs()).await?
-    } else {
-        TcpStream::connect(target.host.host_repr()).await?
-    };
-    debug!("outbound connected: {:?}", outbound);
-
-    if target.cursor < target.buf.len() {
-        debug!(
-            "remaining packet: {:?}",
-            String::from_utf8(target.buf[target.cursor..].to_vec())
-        );
-        let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
-        outbound.write_buf(&mut t).await?;
-        outbound.flush().await?;
-    }
-
-    let (mut out_read, mut out_write) = outbound.split();
-
-    debug!("server start relaying");
-    select! {
-        _ = tokio::io::copy(&mut out_read, &mut in_write) => {
-            debug!("server relaying upload end");
-        },
-        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-            debug!("server relaying download end");
-        },
-        _ = upper_shutdown.recv() => {
-            debug!("server shutdown signal received");
-        },
     }
 
     Ok(())

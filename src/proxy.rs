@@ -3,27 +3,23 @@ use crate::{
     client::{http::*, socks5::*},
     server::trojan::*,
     tunnel::quic::*,
-    utils::{ClientTcpStream, Socks5UdpStream},
+    utils::{ClientTcpStream, Socks5UdpStream, new_trojan_udp_stream, copy_udp, ConnectionRequest},
 };
 use anyhow::Result;
 use futures::StreamExt;
 use quinn::*;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
+// use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::sync::{broadcast, oneshot};
 use tracing::*;
-use std::future::Future;
-
-pub enum ConnectionRequest<TcpRequest, UdpRequest> {
-    TCP(TcpRequest),
-    UDP(UdpRequest),
-}
+// use std::future::Future;
 
 macro_rules! create_forward_through_quic {
     ($fn_name:ident, $request_type:ident) => {
+        #[allow(dead_code)]
         async fn $fn_name(
             stream: TcpStream,
             mut upper_shutdown: broadcast::Receiver<()>,
@@ -42,10 +38,10 @@ macro_rules! create_forward_through_quic {
                     let (mut in_read, mut in_write) = stream.split();
                     select! {
                         _ = tokio::io::copy(&mut out_read, &mut in_write) => {
-                            debug!("relaying upload end");
+                            debug!("tcp relaying upload end");
                         },
                         _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                            debug!("relaying download end");
+                            debug!("tcp relaying download end");
                         },
                         _ = upper_shutdown.recv() => {
                             debug!("shutdown signal received");
@@ -53,16 +49,16 @@ macro_rules! create_forward_through_quic {
                     }
                 }
                 UDP(mut udp) => {
-                    // todo!("udp packet 0");
                     trojan_connect_udp(&mut out_write, password_hash).await?;
-                    let (mut in_read, mut in_write) = udp.split();
+                    let (mut in_write, mut in_read) = udp.split();
+                    let (mut out_write, mut out_read) = new_trojan_udp_stream(out_write, out_read);
                     info!("[udp] => {:?}", req.addr());
                     select! {
-                        _ = tokio::io::copy(&mut out_read, &mut in_write) => {
-                            debug!("relaying upload end");
+                        _ = copy_udp(&mut out_read, &mut in_write) => {
+                            debug!("udp relaying upload end");
                         },
-                        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                            debug!("relaying download end");
+                        _ = copy_udp(&mut in_read, &mut out_write) => {
+                            debug!("udp relaying download end");
                         },
                         _ = upper_shutdown.recv() => {
                             debug!("shutdown signal received");
@@ -77,7 +73,7 @@ macro_rules! create_forward_through_quic {
 }
 
 create_forward_through_quic!(forward_http_through_quic, HttpRequest);
-// create_forward_through_quic!(forward_socks5_through_quic, Socks5Request);
+create_forward_through_quic!(forward_socks5_through_quic, Socks5Request);
 
 #[macro_export]
 macro_rules! try_recv {

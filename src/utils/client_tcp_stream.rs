@@ -1,10 +1,10 @@
+use std::net::SocketAddr;
 use std::{pin::Pin, task::Poll};
-use tokio::{io::AsyncReadExt, net::{
+use tokio::io::AsyncRead;
+use tokio::net::{
     tcp::{ReadHalf, WriteHalf},
     TcpStream,
-}};
-use std::net::SocketAddr;
-use tokio::io::{AsyncRead};
+};
 
 pub struct ClientTcpStream {
     pub http_request_extension: Option<Vec<u8>>,

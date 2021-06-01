@@ -1,5 +1,5 @@
 use crate::{
-    proxy::ConnectionRequest,
+    utils::ConnectionRequest,
     utils::{ClientTcpStream, Socks5UdpStream, MixAddrType, ParserError},
 };
 use anyhow::{Error, Result};

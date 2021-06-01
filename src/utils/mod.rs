@@ -2,12 +2,15 @@ mod client_tcp_stream;
 mod client_udp_stream;
 mod copy;
 mod mix_addr;
+mod trojan_udp_stream;
 mod server_udp_stream;
 
 use bytes::BufMut;
 pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
 pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream};
 pub use mix_addr::MixAddrType;
+pub use trojan_udp_stream::{TrojanUdpSendStream, TrojanUdpRecvStream, new_trojan_udp_stream};
+pub use copy::copy_udp;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -127,6 +130,20 @@ impl<'a> UdpRelayBuffer {
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
+
+    fn pump(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let data_len = self.remaining();
+        for i in 0..data_len {
+            self.inner[i] = self.inner[i + self.cursor];
+        }
+        unsafe {
+            self.inner.set_len(data_len);
+        }
+        self.cursor = 0;
+    }
 }
 
 impl<'a> CursoredBuffer for UdpRelayBuffer {
@@ -194,4 +211,9 @@ impl ExtendableFromSlice for UdpRelayBuffer {
     fn extend_from_slice(&mut self, src: &[u8]) {
         self.inner.extend_from_slice(src);
     }
+}
+
+pub enum ConnectionRequest<TcpRequest, UdpRequest> {
+    TCP(TcpRequest),
+    UDP(UdpRequest),
 }

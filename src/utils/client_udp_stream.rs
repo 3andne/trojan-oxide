@@ -1,5 +1,4 @@
 use super::{CursoredBuffer, ExtendableFromSlice, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
-// use bytes::{Buf, BufMut};
 use futures::ready;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -7,12 +6,9 @@ use std::{
     net::SocketAddr,
     ops::{Deref, DerefMut},
 };
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net::TcpStream,
-};
 use tracing::warn;
 
 struct Socks5UdpSpecifiedBuffer {
@@ -122,11 +118,11 @@ impl Socks5UdpStream {
         }
     }
 
-    pub fn split<'a>(&'a mut self) -> (Socks5UdpRecvStream<'a>, Socks5UdpSendStream<'a>) {
+    pub fn split<'a>(&'a mut self) -> (Socks5UdpSendStream<'a>, Socks5UdpRecvStream<'a>) {
         let (addr_tx, addr_rx) = oneshot::channel();
         (
-            Socks5UdpRecvStream::new(&self.server_udp_socket, addr_tx, &mut self.signal_reset),
             Socks5UdpSendStream::new(&self.server_udp_socket, addr_rx),
+            Socks5UdpRecvStream::new(&self.server_udp_socket, addr_tx, &mut self.signal_reset),
         )
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     expect_buf_len,
-    proxy::ConnectionRequest,
+    utils::ConnectionRequest,
     utils::{ClientTcpStream, MixAddrType, ParserError, Socks5UdpStream},
 };
 use anyhow::{Error, Result};
