@@ -111,7 +111,7 @@ impl<'a> UdpRelayBuffer {
     }
 
     fn as_read_buf(&'a mut self) -> ReadBuf<'a> {
-        (self.inner).as_read_buf()
+        self.inner.as_read_buf()
     }
 
     unsafe fn advance_mut(&mut self, cnt: usize) {
@@ -216,4 +216,8 @@ impl ExtendableFromSlice for UdpRelayBuffer {
 pub enum ConnectionRequest<TcpRequest, UdpRequest> {
     TCP(TcpRequest),
     UDP(UdpRequest),
+}
+
+pub struct ResolveAddr {
+    
 }
