@@ -109,7 +109,21 @@ impl<'a> UdpRead for ServerUdpRecvStream<'a> {
         cx: &mut Context<'_>,
         buf: &mut UdpRelayBuffer,
     ) -> Poll<std::io::Result<MixAddrType>> {
-        let res = self.inner.poll_recv(cx, buf);
+        let mut buf_inner = buf.as_read_buf();
+        let ptr = buf_inner.filled().as_ptr();
 
+        let _ = ready!(self.inner.poll_recv_from(cx, &mut buf_inner))?;
+
+        // Ensure the pointer does not change from under us
+        assert_eq!(ptr, buf_inner.filled().as_ptr());
+        let n = buf_inner.filled().len();
+
+        // Safety: This is guaranteed to be the number of initialized (and read)
+        // bytes due to the invariants provided by `ReadBuf::filled`.
+        unsafe {
+            buf.advance_mut(n);
+        }
+
+        Poll::Ready(Ok(MixAddrType::new_null()))
     }
 }

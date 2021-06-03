@@ -4,7 +4,7 @@ use futures::{StreamExt, TryFutureExt};
 use quinn::*;
 use std::sync::Arc;
 use tokio::{io::*, select};
-use tokio::{net::TcpStream, sync::broadcast};
+use tokio::{net::{TcpStream, UdpSocket}, sync::broadcast};
 
 pub async fn trojan_connect_udp<A>(outbound: &mut A, password: Arc<String>) -> Result<()>
 where
@@ -145,6 +145,8 @@ async fn handle_quic_outbound(
             }
         }
         Ok(UDP((mut in_write, mut in_read))) => {
+            // in_write.
+            // let outbound = UdpSocket::bind(addr)
             todo!()
         }
         Err(_) => {

@@ -233,4 +233,8 @@ impl MixAddrType {
             SocketAddr::V6(v6) => Self::V6((v6.ip().segments(), v6.port())),
         }
     }
+
+    pub fn new_null() -> Self {
+        Self::V4(([0, 0, 0, 0], 0))
+    }
 }
