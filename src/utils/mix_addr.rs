@@ -1,6 +1,5 @@
 use anyhow::Result;
 
-// use tracing::*;
 use crate::{
     expect_buf_len,
     utils::{transmute_u16s_to_u8s, CursoredBuffer, ExtendableFromSlice, ParserError},
@@ -9,6 +8,7 @@ use std::{
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     str::FromStr,
 };
+use tracing::*;
 #[derive(Debug, Clone)]
 pub enum MixAddrType {
     V4(([u8; 4], u16)),
@@ -56,7 +56,7 @@ impl MixAddrType {
             V4(_) => 1 + 4 + 2,
             V6(_) => 1 + 16 + 2,
             MixAddrType::None => panic!("encoded_len() unexpected: MixAddrType::None"),
-            EncodedSocks(_) => unimplemented!(),
+            EncodedSocks(v) => v.len(),
         }
     }
 
@@ -71,6 +71,10 @@ impl MixAddrType {
     }
 
     pub fn from_http_header(is_https: bool, buf: &[u8]) -> Result<Self, ParserError> {
+        debug!(
+            "from_http_header: entered, buf: {:?}",
+            std::str::from_utf8(buf)
+        );
         let end = buf.len();
         let mut port_idx = end;
         let mut port = 0u16;
@@ -80,14 +84,23 @@ impl MixAddrType {
                 break;
             }
         }
+        debug!("from_http_header: port_idx {}", port_idx);
 
-        if port_idx + 1 == end {
-            return Err(ParserError::Invalid);
+        if port_idx == 0 {
+            return Err(ParserError::Invalid(
+                "MixAddrType::from_http_header empty host name",
+            ));
+        } else if port_idx + 1 == end {
+            return Err(ParserError::Invalid(
+                "MixAddrType::from_http_header port_idx + 1 == end",
+            ));
         } else if port_idx == end {
-            if is_https {
+            if !is_https {
                 port = 80;
             } else {
-                return Err(ParserError::Invalid);
+                return Err(ParserError::Invalid(
+                    "MixAddrType::from_http_header port_idx == end",
+                ));
             }
         } else {
             for i in (port_idx + 1)..end {
@@ -95,32 +108,49 @@ impl MixAddrType {
                 if di >= b'0' && di <= b'9' {
                     port = port * 10 + (di - b'0') as u16;
                 } else {
-                    return Err(ParserError::Invalid);
+                    return Err(ParserError::Invalid(
+                        "MixAddrType::from_http_header invalid characters",
+                    ));
                 }
             }
         }
 
-        let last = buf[buf.len() - 1];
+        debug!("from_http_header: port {}", port);
+        let addr = &buf[0..port_idx];
+        let last = addr[addr.len() - 1];
         if last == b']' {
             // IPv6: `[real_IPv6_addr]`
-            let str_buf = std::str::from_utf8(buf).map_err(|_| ParserError::Invalid)?;
+            debug!("from_http_header: IPv6");
+            let str_buf = std::str::from_utf8(addr).map_err(|_| {
+                ParserError::Invalid("MixAddrType::from_http_header IPv6 Utf8Error")
+            })?;
             let v6_addr_u16 = SocketAddrV6::from_str(str_buf)
-                .map_err(|_| ParserError::Invalid)?
+                .map_err(|_| {
+                    ParserError::Invalid("MixAddrType::from_http_header IPv6 AddressParseError")
+                })?
                 .ip()
                 .segments();
             Ok(Self::V6((v6_addr_u16, port)))
         } else if last <= b'z' && last >= b'a' || last <= b'Z' && last >= b'A' {
             // Hostname: ends with alphabetic characters
+            debug!("from_http_header: Hostname");
             Ok(Self::Hostname((
-                String::from_utf8(buf.to_vec()).map_err(|_| ParserError::Invalid)?,
+                String::from_utf8(addr.to_vec()).map_err(|_| {
+                    ParserError::Invalid("MixAddrType::from_http_header Hostname Utf8Error")
+                })?,
                 port,
             )))
         } else {
             // IPv4: ends with digit characters
-            let str_buf = std::str::from_utf8(buf).map_err(|_| ParserError::Invalid)?;
+            debug!("from_http_header: IPv4");
+            let str_buf = std::str::from_utf8(addr).map_err(|_| {
+                ParserError::Invalid("MixAddrType::from_http_header IPv4 Utf8Error")
+            })?;
             Ok(Self::V4((
                 SocketAddrV4::from_str(str_buf)
-                    .map_err(|_| ParserError::Invalid)?
+                    .map_err(|_| {
+                        ParserError::Invalid("MixAddrType::from_http_header IPv4 AddressParseError")
+                    })?
                     .ip()
                     .octets(),
                 port,
@@ -181,11 +211,13 @@ impl MixAddrType {
     ///          order
     ///```
     fn from_encoded_bytes(buf: &[u8]) -> Result<(MixAddrType, usize), ParserError> {
+        debug!("MixAddrType::from_encoded_bytes buf: {:?}", buf);
         expect_buf_len!(buf, 2);
         match buf[0] {
             // Field ATYP
             0x01 => {
                 // IPv4
+                debug!("IPv4");
                 expect_buf_len!(buf, 1 + 4 + 2); // cmd + ipv4 + port
                 let ip = [buf[1], buf[2], buf[3], buf[4]];
                 let port = u16::from_be_bytes([buf[5], buf[6]]);
@@ -193,15 +225,18 @@ impl MixAddrType {
             }
             0x03 => {
                 // Domain Name
+                debug!("Domain Name");
                 let host_len = buf[1] as usize;
                 expect_buf_len!(buf, 1 + 1 + host_len + 2); // cmd + host_len + host(host_len bytes) + port
-                let host = String::from_utf8(buf[2..2 + host_len].to_vec())
-                    .map_err(|_| ParserError::Invalid)?;
+                let host = String::from_utf8(buf[2..2 + host_len].to_vec()).map_err(|_| {
+                    ParserError::Invalid("MixAddrType::from_encoded_bytes Domain Name Utf8Error")
+                })?;
                 let port = u16::from_be_bytes([buf[2 + host_len], buf[2 + host_len + 1]]);
                 Ok((MixAddrType::Hostname((host, port)), 1 + 1 + host_len + 2))
             }
             0x04 => {
                 // IPv6
+                debug!("IPv6");
                 expect_buf_len!(buf, 1 + 16 + 2); // cmd + ipv6u8(16 bytes) + port
                 let v6u8 = &buf[1..1 + 16];
                 let mut v6u16 = [0u16; 8];
@@ -212,7 +247,9 @@ impl MixAddrType {
                 Ok((MixAddrType::V6((v6u16, port)), 1 + 16 + 2))
             }
             _ => {
-                return Err(ParserError::Invalid);
+                return Err(ParserError::Invalid(
+                    "MixAddrType::from_encoded_bytes invalid command type",
+                ));
             }
         }
     }

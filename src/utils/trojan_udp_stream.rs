@@ -10,6 +10,7 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::io::{AsyncRead, AsyncWrite};
+use tracing::*;
 
 pin_project! {
     pub struct TrojanUdpSendStream {
@@ -26,6 +27,10 @@ impl TrojanUdpSendStream {
             buffer: UdpRelayBuffer::new(),
         }
     }
+
+    // pub fn local_addr(&self) {
+    //     self.inner.
+    // }
 }
 
 impl UdpWrite for TrojanUdpSendStream {
@@ -119,10 +124,12 @@ impl UdpRead for TrojanUdpRecvStream {
                         Ok(addr) => {
                             *me.addr_buf = addr;
                         }
-                        Err(ParserError::Incomplete) => {
+                        Err(ParserError::Incomplete(msg)) => {
+                            error!("TrojanUdpRecvStream::poll_proxy_stream_read {}", msg);
                             return Poll::Pending;
                         }
-                        Err(ParserError::Invalid) => {
+                        Err(ParserError::Invalid(msg)) => {
+                            error!("TrojanUdpRecvStream::poll_proxy_stream_read {}", msg);
                             return Poll::Ready(Err(std::io::ErrorKind::Other.into()));
                         }
                     }

@@ -43,6 +43,7 @@ impl<'a> AsyncRead for ClientTcpRecvStream<'a> {
             let http_packet0 = self.http_request_extension.as_ref().unwrap();
             buf.put_slice(&http_packet0);
             self.http_request_extension = &None;
+            return Poll::Ready(Ok(()));
         }
 
         let reader = Pin::new(&mut self.inner);

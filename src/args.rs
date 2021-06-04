@@ -46,10 +46,10 @@ fn password_to_hash(s: &str) -> Arc<String> {
 #[derive(StructOpt, Debug)]
 #[structopt(name = "basic")]
 pub struct Opt {
-    #[structopt(short = "hp", long = "http_port", default_value = "8888", parse(from_str = parse_addr))]
+    #[structopt(short = "h", long = "http_port", default_value = "8888", parse(from_str = parse_addr))]
     pub local_http_addr: String,
 
-    #[structopt(short = "sp", long = "socks5_port", default_value = "8889", parse(from_str = parse_addr))]
+    #[structopt(short = "5", long = "socks5_port", default_value = "8889", parse(from_str = parse_addr))]
     pub local_socks5_addr: String,
 
     #[structopt(short = "l", long, default_value = "info", parse(from_str = parse_log_level))]
@@ -61,7 +61,7 @@ pub struct Opt {
     #[structopt(short = "u", long, default_value = "localhost")]
     pub proxy_url: String,
 
-    #[structopt(short = "x", long, default_value = "8889")]
+    #[structopt(short = "x", long, default_value = "9999")]
     pub proxy_port: String,
 
     #[structopt(short, long)]

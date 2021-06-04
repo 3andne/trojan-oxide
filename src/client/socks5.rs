@@ -4,6 +4,7 @@ use crate::{
     utils::{ClientTcpStream, MixAddrType, ParserError, Socks5UdpStream},
 };
 use anyhow::{Error, Result};
+use bytes::BufMut;
 // use futures::future;
 // use std::io::IoSlice;
 // use std::pin::Pin;
@@ -41,14 +42,7 @@ impl Socks5Request {
     }
 
     pub fn addr(&self) -> &MixAddrType {
-        todo!()
-        // let start = if self.extracted_request[0] == 0x03 {
-        //     2
-        // } else {
-        //     1
-        // };
-        // let end = self.extracted_request.len() - 2;
-        // unsafe { str::from_utf8_unchecked(&self.extracted_request[start..end]) }
+        &self.addr
     }
 
     pub async fn accept(
@@ -78,13 +72,15 @@ impl Socks5Request {
                             }
                         }
                     }
-                    Err(ParserError::Invalid) => {
-                        return Err(Error::new(ParserError::Invalid));
+                    Err(e @ ParserError::Invalid(_)) => {
+                        return Err(Error::new(e));
                     }
                     _ => (),
                 }
             } else {
-                return Err(Error::new(ParserError::Invalid));
+                return Err(Error::new(ParserError::Invalid(
+                    "Socks5Request::accept unable to accept before EOF",
+                )));
             }
         }
 
@@ -121,7 +117,9 @@ impl Socks5Request {
             P1ClientHello => {
                 expect_buf_len!(buf, 2);
                 if buf[SOCKS_VERSION_INDEX] != 5 {
-                    return Err(ParserError::Invalid); // Only support socks v5
+                    return Err(ParserError::Invalid(
+                        "Socks5Request::parse only support socks v5",
+                    ));
                 }
                 let num = buf[NUM_SUPPORTED_AUTH_METHOD_INDEX];
 
@@ -133,12 +131,14 @@ impl Socks5Request {
                         return Ok(());
                     }
                 }
-                return Err(ParserError::Invalid);
+                return Err(ParserError::Invalid("Socks5Request::parse method invalid"));
             }
             P2ClientRequest => {
                 expect_buf_len!(buf, 5);
                 if buf[SOCKS_VERSION_INDEX] != 5 {
-                    return Err(ParserError::Invalid); // Only support socks v5
+                    return Err(ParserError::Invalid(
+                        "Socks5Request::parse only support socks v5",
+                    ));
                 }
 
                 match buf[CONNECTION_TYPE_INDEX] {
@@ -149,7 +149,9 @@ impl Socks5Request {
                         self.is_udp = true;
                     }
                     _ => {
-                        return Err(ParserError::Invalid); // Only support socks v5
+                        return Err(ParserError::Invalid(
+                            "Socks5Request::parse invalid connection type",
+                        ));
                     }
                 }
 
@@ -167,13 +169,15 @@ impl Socks5Request {
                         16
                     }
                     _ => {
-                        return Err(ParserError::Invalid);
+                        return Err(ParserError::Invalid(
+                            "Socks5Request::parse invalid addr type",
+                        ));
                     }
                 };
 
                 expect_buf_len!(buf, 4 + field_5_len + 2);
                 let mut extracted_request = Vec::with_capacity(2 + field_5_len + 2);
-                extracted_request[0] = if self.is_udp { 0x03 } else { 0x01 };
+                // extracted_request.push(if self.is_udp { 0x03 } else { 0x01 });
                 extracted_request.extend_from_slice(
                     &buf[ADDR_TYPE_INDEX..ADDR_TYPE_INDEX + 1 + field_5_len + 2],
                 );

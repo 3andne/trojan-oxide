@@ -1,6 +1,6 @@
 use crate::{
     utils::ConnectionRequest,
-    utils::{ClientTcpStream, Socks5UdpStream, MixAddrType, ParserError},
+    utils::{ClientTcpStream, MixAddrType, ParserError, Socks5UdpStream},
 };
 use anyhow::{Error, Result};
 // use futures::future;
@@ -34,7 +34,7 @@ impl HttpRequest {
 
     fn set_stream_type(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
         if buf.len() < 4 {
-            return Err(ParserError::Incomplete);
+            return Err(ParserError::Incomplete("HttpRequest::set_stream_type"));
         }
 
         if &buf[..4] == b"GET " {
@@ -44,7 +44,7 @@ impl HttpRequest {
         }
 
         if buf.len() < 8 {
-            return Err(ParserError::Incomplete);
+            return Err(ParserError::Incomplete("HttpRequest::set_stream_type"));
         }
 
         if &buf[..8] == b"CONNECT " {
@@ -53,7 +53,7 @@ impl HttpRequest {
             return Ok(());
         }
 
-        return Err(ParserError::Invalid);
+        return Err(ParserError::Invalid("HttpRequest::set_stream_type"));
     }
 
     fn set_host(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
@@ -67,7 +67,7 @@ impl HttpRequest {
                     self.cursor += 7;
                 }
             } else {
-                return Err(ParserError::Incomplete);
+                return Err(ParserError::Incomplete("HttpRequest::set_host"));
             }
         }
 
@@ -78,7 +78,7 @@ impl HttpRequest {
         }
 
         if end == buf.len() {
-            return Err(ParserError::Incomplete);
+            return Err(ParserError::Incomplete("HttpRequest::set_host"));
         }
 
         self.addr = MixAddrType::from_http_header(self.is_https, &buf[start..end])?;
@@ -94,10 +94,16 @@ impl HttpRequest {
         debug!("stream is https: {}", self.is_https);
 
         if self.addr.is_none() {
-            self.set_host(buf)?;
+            match self.set_host(buf) {
+                Ok(_) => {
+                    debug!("stream target host: {:?}", self.addr);
+                }
+                err @ Err(_) => {
+                    debug!("stream target host err: {:?}", err);
+                    return err;
+                }
+            }
         }
-
-        debug!("stream target host: {:?}", self.addr);
 
         // `integrity` check
         if &buf[buf.len() - 4..] == b"\r\n\r\n" {
@@ -112,10 +118,13 @@ impl HttpRequest {
         unsafe {
             buf.set_len(4);
         }
-        Err(ParserError::Incomplete)
+        Err(ParserError::Incomplete("HttpRequest::parse"))
     }
 
-    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ConnectionRequest<ClientTcpStream, Socks5UdpStream>> {
+    pub async fn accept(
+        &mut self,
+        mut inbound: TcpStream,
+    ) -> Result<ConnectionRequest<ClientTcpStream, Socks5UdpStream>> {
         let mut buffer = Vec::with_capacity(200);
         loop {
             let read = inbound.read_buf(&mut buffer).await?;
@@ -125,13 +134,15 @@ impl HttpRequest {
                         debug!("http request parsed");
                         break;
                     }
-                    Err(ParserError::Invalid) => {
-                        return Err(Error::new(ParserError::Invalid));
+                    Err(e @ ParserError::Invalid(_)) => {
+                        return Err(Error::new(e));
                     }
                     _ => (),
                 }
             } else {
-                return Err(Error::new(ParserError::Invalid));
+                return Err(Error::new(ParserError::Invalid(
+                    "HttpRequest::accept unable to accept before EOF",
+                )));
             }
         }
 

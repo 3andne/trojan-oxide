@@ -36,14 +36,16 @@ impl<'a> Target<'a> {
 
     fn verify(&mut self) -> Result<(), ParserError> {
         if self.buf.len() < HASH_LEN {
-            return Err(ParserError::Incomplete);
+            return Err(ParserError::Incomplete(
+                "Target::verify self.buf.len() < HASH_LEN",
+            ));
         }
 
         if &self.buf[..HASH_LEN] == self.password_hash {
             self.cursor = HASH_LEN + 2;
             Ok(())
         } else {
-            Err(ParserError::Invalid)
+            Err(ParserError::Invalid("Target::verify hash invalid"))
         }
     }
 
@@ -52,9 +54,18 @@ impl<'a> Target<'a> {
         self.is_udp = match self.buf[HASH_LEN + 2] {
             0x01 => false,
             0x03 => true,
-            _ => return Err(ParserError::Invalid),
+            _ => {
+                return Err(ParserError::Invalid(
+                    "Target::verify invalid connection type",
+                ))
+            }
         };
-        self.cursor += 1;
+
+        unsafe {
+            // This is so buggy
+            self.cursor = HASH_LEN + 3;
+        }
+
         self.host = MixAddrType::from_encoded(&mut (&mut self.cursor, &self.buf))?;
         Ok(())
     }
@@ -95,15 +106,15 @@ impl<'a> Target<'a> {
                 .1
                 .read_buf(&mut self.buf)
                 .await
-                .map_err(|_| ParserError::Invalid)?;
+                .map_err(|_| ParserError::Invalid("Target::accept failed to read"))?;
             if read != 0 {
                 match self.parse() {
-                    Err(ParserError::Invalid) => {
-                        debug!("invalid");
-                        return Err(ParserError::Invalid);
+                    Err(err @ ParserError::Invalid(_)) => {
+                        error!("Target::accept failed: {:?}", err);
+                        return Err(err);
                     }
-                    Err(ParserError::Incomplete) => {
-                        debug!("Incomplete");
+                    Err(err @ ParserError::Incomplete(_)) => {
+                        error!("Target::accept failed: {:?}", err);
                         continue;
                     }
                     Ok(()) => {
@@ -112,7 +123,7 @@ impl<'a> Target<'a> {
                     }
                 }
             } else {
-                return Err(ParserError::Invalid);
+                return Err(ParserError::Invalid("Target::accept unexpected EOF"));
             }
         }
         use ConnectionRequest::*;
@@ -146,7 +157,7 @@ impl<'a> Target<'a> {
             self.cursor += 2;
             Ok(())
         } else {
-            Err(ParserError::Invalid)
+            Err(ParserError::Invalid("Target::accept expecting CRLF"))
         }
     }
 }

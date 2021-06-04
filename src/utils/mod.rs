@@ -19,10 +19,10 @@ pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUd
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
-    #[error(display = "Incomplete")]
-    Incomplete,
-    #[error(display = "Invalid")]
-    Invalid,
+    #[error(display = "ParserError Incomplete: {:?}", _0)]
+    Incomplete(&'static str),
+    #[error(display = "ParserError Invalid: {:?}", _0)]
+    Invalid(&'static str),
 }
 
 pub fn transmute_u16s_to_u8s(a: &[u16], b: &mut [u8]) {
@@ -40,7 +40,7 @@ pub fn transmute_u16s_to_u8s(a: &[u16], b: &mut [u8]) {
 macro_rules! expect_buf_len {
     ($buf:expr, $len:expr) => {
         if $buf.len() < $len {
-            return Err(ParserError::Incomplete);
+            return Err(ParserError::Incomplete(stringify!($len)));
         }
     };
     ($buf:expr, $len:expr, $mark:expr) => {
