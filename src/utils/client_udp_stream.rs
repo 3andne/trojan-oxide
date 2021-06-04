@@ -157,7 +157,7 @@ impl<'a> AsyncRead for Socks5UdpRecvStream<'a> {
                 }
             }
         } else {
-            if !self.client_udp_addr.map(|v| v == addr).unwrap() {
+            if self.client_udp_addr.unwrap() != addr {
                 return Poll::Ready(Err(std::io::ErrorKind::Interrupted.into()));
             }
         }

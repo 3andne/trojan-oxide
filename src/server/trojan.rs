@@ -1,10 +1,15 @@
-use crate::{server::*, utils::ConnectionRequest};
-use anyhow::{Error, Result};
+use crate::{
+    server::*,
+    utils::{copy_udp, ConnectionRequest, ServerUdpStream},
+};
+use anyhow::Result;
 use futures::{StreamExt, TryFutureExt};
-use quinn::*;
 use std::sync::Arc;
 use tokio::{io::*, select};
-use tokio::{net::{TcpStream, UdpSocket}, sync::broadcast};
+use tokio::{
+    net::{TcpStream, UdpSocket},
+    sync::broadcast,
+};
 
 pub async fn trojan_connect_udp<A>(outbound: &mut A, password: Arc<String>) -> Result<()>
 where
@@ -145,9 +150,19 @@ async fn handle_quic_outbound(
             }
         }
         Ok(UDP((mut in_write, mut in_read))) => {
-            // in_write.
-            // let outbound = UdpSocket::bind(addr)
-            todo!()
+            let outbound = UdpSocket::bind(":::0").await?;
+            info!("[udp] {:?} =>", outbound.local_addr());
+            let mut udp_stream = ServerUdpStream::new(outbound);
+            let (mut out_write, mut out_read) = udp_stream.split();
+
+            select! {
+                _ = copy_udp(&mut out_read, &mut in_write) => {
+                    debug!("udp relaying upload end");
+                },
+                _ = copy_udp(&mut in_read, &mut out_write) => {
+                    debug!("udp relaying download end");
+                },
+            }
         }
         Err(_) => {
             todo!()

@@ -3,23 +3,20 @@ use crate::{
     client::{http::*, socks5::*},
     server::trojan::*,
     tunnel::quic::*,
-    utils::{ClientTcpStream, Socks5UdpStream, new_trojan_udp_stream, copy_udp, ConnectionRequest},
+    utils::{copy_udp, new_trojan_udp_stream, ConnectionRequest},
 };
 use anyhow::Result;
 use futures::StreamExt;
 use quinn::*;
 use std::net::SocketAddr;
 use std::sync::Arc;
-// use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::sync::{broadcast, oneshot};
 use tracing::*;
-// use std::future::Future;
 
 macro_rules! create_forward_through_quic {
     ($fn_name:ident, $request_type:ident) => {
-        #[allow(dead_code)]
         async fn $fn_name(
             stream: TcpStream,
             mut upper_shutdown: broadcast::Receiver<()>,
@@ -94,19 +91,35 @@ macro_rules! try_recv {
 async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
     let mut endpoint = EndpointManager::new(&options).await?;
-    let addr = options.local_addr.parse::<SocketAddr>()?;
-    let listener = TcpListener::bind(&addr).await?;
+    let http_addr = options.local_http_addr.parse::<SocketAddr>()?;
+    let http_listener = TcpListener::bind(&http_addr).await?;
+
+    let socks5_addr = options.local_socks5_addr.parse::<SocketAddr>()?;
+    let socks5_listener = TcpListener::bind(&socks5_addr).await?;
     loop {
         try_recv!(oneshot, upper_shutdown);
-        let (stream, _) = listener.accept().await?;
-        debug!("accepted tcp: {:?}", stream);
-
-        let tunnel = endpoint.connect().await?;
-        let shutdown_rx = shutdown_tx.subscribe();
-        let hash_copy = options.password_hash.clone();
-        tokio::spawn(async move {
-            let _ = forward_http_through_quic(stream, shutdown_rx, tunnel, hash_copy).await;
-        });
+        select! {
+            acc = http_listener.accept() => {
+                let (stream, _) = acc?;
+                debug!("accepted http: {:?}", stream);
+                let tunnel = endpoint.connect().await?;
+                let shutdown_rx = shutdown_tx.subscribe();
+                let hash_copy = options.password_hash.clone();
+                tokio::spawn(async move {
+                    let _ = forward_http_through_quic(stream, shutdown_rx, tunnel, hash_copy).await;
+                });
+            },
+            acc = socks5_listener.accept() => {
+                let (stream, _) = acc?;
+                debug!("accepted socks5: {:?}", stream);
+                let tunnel = endpoint.connect().await?;
+                let shutdown_rx = shutdown_tx.subscribe();
+                let hash_copy = options.password_hash.clone();
+                tokio::spawn(async move {
+                    let _ = forward_socks5_through_quic(stream, shutdown_rx, tunnel, hash_copy).await;
+                });
+            },
+        };
     }
     Ok(())
 }

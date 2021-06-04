@@ -1,9 +1,9 @@
+use crate::server::HASH_LEN;
 use sha2::{Digest, Sha224};
 use std::fmt::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use structopt::StructOpt;
-use crate::server::HASH_LEN;
 
 fn parse_log_level(l: &str) -> tracing::Level {
     match &l.to_lowercase()[..] {
@@ -46,8 +46,11 @@ fn password_to_hash(s: &str) -> Arc<String> {
 #[derive(StructOpt, Debug)]
 #[structopt(name = "basic")]
 pub struct Opt {
-    #[structopt(short = "p", long = "port", default_value = "8888", parse(from_str = parse_addr))]
-    pub local_addr: String,
+    #[structopt(short = "hp", long = "http_port", default_value = "8888", parse(from_str = parse_addr))]
+    pub local_http_addr: String,
+
+    #[structopt(short = "sp", long = "socks5_port", default_value = "8889", parse(from_str = parse_addr))]
+    pub local_socks5_addr: String,
 
     #[structopt(short = "l", long, default_value = "info", parse(from_str = parse_log_level))]
     pub log_level: tracing::Level,

@@ -1,20 +1,12 @@
-use super::{
-    CursoredBuffer, ExtendableFromSlice, MixAddrType, ParserError, UdpRead, UdpRelayBuffer,
-    UdpWrite,
-};
+use super::{MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
 use futures::{ready, Future};
-use quinn::*;
 use std::net::SocketAddr;
 use std::vec;
 use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net::UdpSocket,
-    task::JoinHandle,
-};
+use tokio::{net::UdpSocket, task::JoinHandle};
 
 use tokio::task::spawn_blocking;
 
@@ -23,6 +15,10 @@ pub struct ServerUdpStream {
 }
 
 impl ServerUdpStream {
+    pub fn new(inner: UdpSocket) -> Self {
+        Self { inner }
+    }
+
     pub fn split(&mut self) -> (ServerUdpSendStream, ServerUdpRecvStream) {
         (
             ServerUdpSendStream {
@@ -88,15 +84,6 @@ enum ResolveAddr {
     Pending(JoinHandle<std::io::Result<vec::IntoIter<SocketAddr>>>),
     Ready(SocketAddr),
     None,
-}
-
-impl ResolveAddr {
-    fn is_none(&self) -> bool {
-        match self {
-            ResolveAddr::None => true,
-            _ => false,
-        }
-    }
 }
 
 pub struct ServerUdpRecvStream<'a> {
