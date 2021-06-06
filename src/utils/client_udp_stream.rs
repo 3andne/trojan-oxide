@@ -9,8 +9,9 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
-use tracing::warn;
+use tracing::{debug, warn};
 
+#[derive(Debug)]
 struct Socks5UdpSpecifiedBuffer {
     inner: Vec<u8>,
 }
@@ -66,6 +67,7 @@ pub struct Socks5UdpStream {
     signal_reset: oneshot::Receiver<()>,
 }
 
+#[derive(Debug)]
 pub struct Socks5UdpRecvStream<'a> {
     server_udp_socket: &'a UdpSocket,
     client_udp_addr: Option<SocketAddr>,
@@ -88,6 +90,7 @@ impl<'a> Socks5UdpRecvStream<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct Socks5UdpSendStream<'a> {
     server_udp_socket: &'a UdpSocket,
     client_udp_addr: Option<SocketAddr>,
@@ -244,6 +247,7 @@ impl<'a> UdpRead for Socks5UdpRecvStream<'a> {
         cx: &mut Context<'_>,
         buf: &mut UdpRelayBuffer,
     ) -> Poll<std::io::Result<MixAddrType>> {
+        debug!("Socks5UdpRecvStream::poll_proxy_stream_read()");
         let mut buf_inner = buf.as_read_buf();
         let ptr = buf_inner.filled().as_ptr();
 
@@ -269,6 +273,10 @@ impl<'a> UdpRead for Socks5UdpRecvStream<'a> {
                     buf.advance_mut(n);
                 }
                 buf.advance(3);
+                debug!(
+                    "Socks5UdpRecvStream::poll_proxy_stream_read() buf {:?}",
+                    buf
+                );
                 Poll::Ready(
                     MixAddrType::from_encoded(buf).map_err(|_| std::io::ErrorKind::Other.into()),
                 )
@@ -285,22 +293,31 @@ impl<'a> UdpWrite for Socks5UdpSendStream<'a> {
         buf: &[u8],
         addr: &MixAddrType,
     ) -> Poll<std::io::Result<usize>> {
-        if self.buffer.is_empty() {
+        let just_filled_buf = if self.buffer.is_empty() {
             addr.write_buf(&mut self.buffer);
             self.buffer.extend_from_slice(buf);
+            true
+        } else {
+            false
+        };
+
+        // only if we write the whole buf in one write we reset the buffer
+        // to accept new data.
+        match self.poll_write_optioned(cx, None)? {
+            Poll::Ready(real_written_amt) => {
+                if real_written_amt == self.buffer.len() {
+                    self.buffer.reset();
+                } else {
+                    warn!("Socks5UdpSendStream didn't send the entire buffer");
+                }
+            }
+            _ => (),
         }
 
-        // if we're not sending the entire buffer, we resend it
-        match self.poll_write_optioned(cx, None) {
-            Poll::Ready(Ok(x)) if x != self.buffer.len() => {
-                warn!("Socks5UdpSendStream didn't send the entire buffer");
-                Poll::Pending
-            }
-            res @ Poll::Ready(_) => {
-                self.buffer.reset();
-                res
-            }
-            res => res,
+        if just_filled_buf {
+            Poll::Ready(Ok(buf.len()))
+        } else {
+            Poll::Pending
         }
     }
 }

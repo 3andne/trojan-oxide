@@ -48,7 +48,8 @@ macro_rules! create_forward_through_quic {
                 UDP(mut udp) => {
                     trojan_connect_udp(&mut out_write, password_hash).await?;
                     let (mut in_write, mut in_read) = udp.split();
-                    let (mut out_write, mut out_read) = new_trojan_udp_stream(out_write, out_read);
+                    let (mut out_write, mut out_read) =
+                        new_trojan_udp_stream(out_write, out_read, None);
                     info!("[udp] => {:?}", req.addr());
                     select! {
                         _ = copy_udp(&mut out_read, &mut in_write) => {

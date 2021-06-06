@@ -14,7 +14,7 @@ pub use server_udp_stream::{ServerUdpRecvStream, ServerUdpSendStream, ServerUdpS
 use std::ops::Deref;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::io::ReadBuf;
+use tokio::io::{AsyncRead, ReadBuf};
 pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream};
 
 #[derive(Debug, err_derive::Error)]
@@ -59,30 +59,6 @@ pub trait CursoredBuffer {
     }
 }
 
-// impl CursoredBuffer for std::io::Cursor<&[u8]> {
-//     fn as_bytes(&self) -> &[u8] {
-//         &self.get_ref()[self.position() as usize..]
-//     }
-
-//     fn advance(&mut self, len: usize) {
-//         assert!(
-//             self.get_ref().len() as u64 >= self.position() + len as u64,
-//             "Cursor<&[u8]> was about to set a larger position than it's length"
-//         );
-//         self.set_position(self.position() + len as u64);
-//     }
-// }
-
-// impl<'a> CursoredBuffer for tokio::io::ReadBuf<'a> {
-//     fn as_bytes(&self) -> &[u8] {
-//         self.filled()
-//     }
-
-//     fn advance(&mut self, len: usize) {
-//         self.advance(len);
-//     }
-// }
-
 impl<'a> CursoredBuffer for (&'a mut usize, &Vec<u8>) {
     fn chunk(&self) -> &[u8] {
         &self.1[*self.0..]
@@ -97,6 +73,7 @@ impl<'a> CursoredBuffer for (&'a mut usize, &Vec<u8>) {
     }
 }
 
+#[derive(Debug)]
 pub struct UdpRelayBuffer {
     cursor: usize,
     inner: Vec<u8>,
@@ -155,7 +132,10 @@ impl<'a> CursoredBuffer for UdpRelayBuffer {
     fn advance(&mut self, len: usize) {
         assert!(
             self.inner.len() >= self.cursor + len,
-            "UdpRelayBuffer was about to set a larger position than it's length"
+            "UdpRelayBuffer was about to set a larger position({}+{}) than it's length({})",
+            self.cursor,
+            len,
+            self.inner.len()
         );
         self.cursor += len;
     }
@@ -217,4 +197,40 @@ impl ExtendableFromSlice for UdpRelayBuffer {
 pub enum ConnectionRequest<TcpRequest, UdpRequest> {
     TCP(TcpRequest),
     UDP(UdpRequest),
+}
+
+#[derive(Debug)]
+pub struct BufferedRecv<T> {
+    buffered_request: Option<Vec<u8>>,
+    inner: T,
+}
+
+impl<T> BufferedRecv<T> {
+    pub fn new(inner: T, buffered_request: Option<Vec<u8>>) -> Self {
+        Self {
+            inner,
+            buffered_request,
+        }
+    }
+}
+
+impl<T> AsyncRead for BufferedRecv<T>
+where
+    T: AsyncRead + Unpin,
+{
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if self.buffered_request.is_some() {
+            let buffered_request = self.buffered_request.as_ref().unwrap();
+            buf.put_slice(&buffered_request);
+            self.buffered_request = None;
+            return Poll::Ready(Ok(()));
+        }
+
+        let reader = Pin::new(&mut self.inner);
+        reader.poll_read(cx, buf)
+    }
 }

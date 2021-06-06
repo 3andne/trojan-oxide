@@ -151,17 +151,16 @@ async fn handle_quic_outbound(
             }
         }
         Ok(UDP((mut in_write, mut in_read))) => {
-            let outbound = UdpSocket::bind(":::0").await?;
+            let outbound = UdpSocket::bind("[::]:0").await?;
             info!("[udp] {:?} =>", outbound.local_addr());
             let mut udp_stream = ServerUdpStream::new(outbound);
             let (mut out_write, mut out_read) = udp_stream.split();
-
             select! {
-                _ = copy_udp(&mut out_read, &mut in_write) => {
-                    debug!("udp relaying upload end");
+                res = copy_udp(&mut out_read, &mut in_write) => {
+                    debug!("udp relaying download end: {:?}", res);
                 },
-                _ = copy_udp(&mut in_read, &mut out_write) => {
-                    debug!("udp relaying download end");
+                res = copy_udp(&mut in_read, &mut out_write) => {
+                    debug!("udp relaying upload end: {:?}", res);
                 },
             }
         }

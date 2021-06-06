@@ -4,10 +4,6 @@ use crate::{
     utils::{ClientTcpStream, MixAddrType, ParserError, Socks5UdpStream},
 };
 use anyhow::{Error, Result};
-use bytes::BufMut;
-// use futures::future;
-// use std::io::IoSlice;
-// use std::pin::Pin;
 use std::net::SocketAddr;
 use tokio::{io::*, net::UdpSocket};
 use tokio::{net::TcpStream, sync::oneshot};
@@ -18,8 +14,8 @@ const NUM_SUPPORTED_AUTH_METHOD_INDEX: usize = 1;
 const CONNECTION_TYPE_INDEX: usize = 1;
 const ADDR_TYPE_INDEX: usize = 3;
 const LEN_OF_ADDR_INDEX: usize = 4;
-const Phase1ServerReply: [u8; 2] = [0x05, 0x00];
-const Phase2ServerReply: [u8; 3] = [0x05, 0x00, 0x00];
+const PHASE1_SERVER_REPLY: [u8; 2] = [0x05, 0x00];
+const PHASE2_SERVER_REPLY: [u8; 3] = [0x05, 0x00, 0x00];
 
 pub struct Socks5Request {
     phase: Sock5ParsePhase,
@@ -58,7 +54,7 @@ impl Socks5Request {
                         use Sock5ParsePhase::*;
                         match self.phase {
                             P1ClientHello => {
-                                inbound.write_all(&Phase1ServerReply).await?;
+                                inbound.write_all(&PHASE1_SERVER_REPLY).await?;
                                 debug!("socks5 Phase 1 parsed");
                                 self.phase = P2ClientRequest;
                                 unsafe {
@@ -85,7 +81,7 @@ impl Socks5Request {
         }
 
         let mut buf = Vec::with_capacity(3 + 1 + 16 + 2);
-        buf.extend_from_slice(&Phase2ServerReply);
+        buf.extend_from_slice(&PHASE2_SERVER_REPLY);
         if !self.is_udp {
             MixAddrType::init_from(&inbound.local_addr()?).write_buf(&mut buf);
             inbound.write_all(&buf).await?;

@@ -114,7 +114,7 @@ impl<'a> Target<'a> {
                         return Err(err);
                     }
                     Err(err @ ParserError::Incomplete(_)) => {
-                        error!("Target::accept failed: {:?}", err);
+                        info!("Target::accept failed: {:?}", err);
                         continue;
                     }
                     Ok(()) => {
@@ -127,8 +127,13 @@ impl<'a> Target<'a> {
             }
         }
         use ConnectionRequest::*;
+        let buffered_request = if self.buf.len() == self.cursor {
+            None
+        } else {
+            Some(Vec::from(&self.buf[self.cursor..]))
+        };
         Ok(if self.is_udp {
-            UDP(new_trojan_udp_stream(inbound.0, inbound.1))
+            UDP(new_trojan_udp_stream(inbound.0, inbound.1, buffered_request))
         } else {
             TCP(inbound)
         })
