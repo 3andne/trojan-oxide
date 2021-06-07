@@ -114,7 +114,7 @@ impl<'a> Target<'a> {
                         return Err(err);
                     }
                     Err(err @ ParserError::Incomplete(_)) => {
-                        info!("Target::accept failed: {:?}", err);
+                        debug!("Target::accept failed: {:?}", err);
                         continue;
                     }
                     Ok(()) => {

@@ -1442,6 +1442,7 @@ dependencies = [
  "directories",
  "err-derive",
  "futures",
+ "lazy_static",
  "pin-project-lite",
  "quinn",
  "quinn-proto",

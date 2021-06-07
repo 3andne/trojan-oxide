@@ -4,12 +4,18 @@ use crate::{
 };
 use anyhow::Result;
 use futures::{StreamExt, TryFutureExt};
+use lazy_static::lazy_static;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::{io::*, select};
 use tokio::{
     net::{TcpStream, UdpSocket},
     sync::broadcast,
 };
+
+lazy_static! {
+    static ref CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+}
 
 pub async fn trojan_connect_udp<A>(outbound: &mut A, password: Arc<String>) -> Result<()>
 where
@@ -136,8 +142,8 @@ async fn handle_quic_outbound(
             }
 
             let (mut out_read, mut out_write) = outbound.split();
-
-            debug!("server start relaying");
+            let conn_id = CONNECTION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            info!("[tcp][{}]start relaying", conn_id);
             select! {
                 _ = tokio::io::copy(&mut out_read, &mut in_write) => {
                     debug!("server relaying upload end");
@@ -149,6 +155,7 @@ async fn handle_quic_outbound(
                     debug!("server shutdown signal received");
                 },
             }
+            info!("[tcp][{}]end relaying", conn_id);
         }
         Ok(UDP((mut in_write, mut in_read))) => {
             let outbound = UdpSocket::bind("[::]:0").await?;

@@ -7,13 +7,19 @@ use crate::{
 };
 use anyhow::Result;
 use futures::StreamExt;
+use lazy_static::lazy_static;
 use quinn::*;
-use std::net::SocketAddr;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::{net::SocketAddr, sync::atomic::Ordering};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::sync::{broadcast, oneshot};
 use tracing::*;
+
+lazy_static! {
+    static ref CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+}
 
 macro_rules! create_forward_through_quic {
     ($fn_name:ident, $request_type:ident) => {
@@ -26,24 +32,31 @@ macro_rules! create_forward_through_quic {
             let mut req = $request_type::new();
             let (mut out_write, mut out_read) = tunnel;
             let conn_req = req.accept(stream).await?;
+            let conn_id = CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
 
             use ConnectionRequest::*;
             match conn_req {
                 TCP(mut stream) => {
                     trojan_connect_tcp(req.addr(), &mut out_write, password_hash).await?;
-                    info!("[tcp]{:?} => {:?}", stream.peer_addr()?, req.addr());
+                    info!(
+                        "[tcp][{}]{:?} => {:?}",
+                        conn_id,
+                        stream.peer_addr()?,
+                        req.addr()
+                    );
                     let (mut in_read, mut in_write) = stream.split();
                     select! {
                         _ = tokio::io::copy(&mut out_read, &mut in_write) => {
-                            debug!("tcp relaying upload end");
+                            debug!("tcp relaying download end");
                         },
                         _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                            debug!("tcp relaying download end");
+                            debug!("tcp relaying upload end");
                         },
                         _ = upper_shutdown.recv() => {
                             debug!("shutdown signal received");
                         },
                     }
+                    info!("[end][tcp][{}]", conn_id);
                 }
                 UDP(mut udp) => {
                     trojan_connect_udp(&mut out_write, password_hash).await?;

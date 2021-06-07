@@ -84,6 +84,8 @@ async fn new_builder(options: &Opt) -> Result<EndpointBuilder> {
 
     let transport_cfg = Arc::get_mut(&mut cfg.transport).unwrap();
     transport_cfg.max_idle_timeout(None)?;
+    transport_cfg.persistent_congestion_threshold(6);
+    transport_cfg.packet_threshold(4);
 
     builder.default_client_config(cfg);
 
@@ -113,12 +115,12 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
     Ok(())
 }
 
-// pub async fn quic_tunnel_tx(options: &Opt) ->  {}
-
 pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.max_idle_timeout(None)?;
-    // transport_config.max_concurrent_uni_streams(0).unwrap();
+    transport_config.persistent_congestion_threshold(6);
+    transport_config.packet_threshold(4);
+
     let mut server_config = quinn::ServerConfig::default();
     server_config.transport = Arc::new(transport_config);
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
