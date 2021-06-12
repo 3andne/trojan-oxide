@@ -171,8 +171,8 @@ async fn handle_quic_outbound(
                 },
             }
         }
-        Err(_) => {
-            todo!()
+        Err(e) => {
+            info!("invalid connection: {}", e);
         }
     }
 
