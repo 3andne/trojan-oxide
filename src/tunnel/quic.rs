@@ -126,7 +126,7 @@ pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
     server_config.protocols(ALPN_QUIC_HTTP);
 
-    server_config.use_stateless_retry(true);
+    // server_config.use_stateless_retry(true);
     if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
         debug!("private key path {:?}, cert_path {:?}", key_path, cert_path);
         let key = fs::read(key_path)
