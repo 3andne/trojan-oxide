@@ -197,6 +197,7 @@ impl ExtendableFromSlice for UdpRelayBuffer {
 pub enum ConnectionRequest<TcpRequest, UdpRequest> {
     TCP(TcpRequest),
     UDP(UdpRequest),
+    ECHO(TcpRequest),
 }
 
 #[derive(Debug)]

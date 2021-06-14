@@ -23,7 +23,7 @@ pub struct Target<'a> {
     cursor: usize,
     password_hash: &'a [u8],
     buf: Vec<u8>,
-    is_udp: bool,
+    cmd_code: u8,
 }
 
 impl<'a> Target<'a> {
@@ -51,22 +51,24 @@ impl<'a> Target<'a> {
 
     fn set_host_and_port(&mut self) -> Result<(), ParserError> {
         expect_buf_len!(self.buf, HASH_LEN + 5); // HASH + \r\n + cmd(2 bytes) + host_len(1 byte, only valid when address is hostname)
-        self.is_udp = match self.buf[HASH_LEN + 2] {
-            0x01 => false,
-            0x03 => true,
-            _ => {
-                return Err(ParserError::Invalid(
-                    "Target::verify invalid connection type",
-                ))
-            }
-        };
 
         unsafe {
             // This is so buggy
             self.cursor = HASH_LEN + 3;
         }
 
-        self.host = MixAddrType::from_encoded(&mut (&mut self.cursor, &self.buf))?;
+        self.cmd_code = self.buf[HASH_LEN + 2];
+        match self.cmd_code {
+            0x01 | 0x03 => {
+                self.host = MixAddrType::from_encoded(&mut (&mut self.cursor, &self.buf))?;
+            }
+            0xff => (),
+            _ => {
+                return Err(ParserError::Invalid(
+                    "Target::verify invalid connection type",
+                ))
+            }
+        };
         Ok(())
     }
 
@@ -90,6 +92,7 @@ impl<'a> Target<'a> {
     /// o  CMD
     ///     o  CONNECT X'01'
     ///     o  UDP ASSOCIATE X'03'
+    ///     o  PROBING X'FF'
     /// o  ATYP address type of following address
     ///     o  IP V4 address: X'01'
     ///     o  DOMAINNAME: X'03'
@@ -132,10 +135,15 @@ impl<'a> Target<'a> {
         } else {
             Some(Vec::from(&self.buf[self.cursor..]))
         };
-        Ok(if self.is_udp {
-            UDP(new_trojan_udp_stream(inbound.0, inbound.1, buffered_request))
-        } else {
-            TCP(inbound)
+        Ok(match self.cmd_code {
+            0x03 => UDP(new_trojan_udp_stream(
+                inbound.0,
+                inbound.1,
+                buffered_request,
+            )),
+            0x01 => TCP(inbound),
+            0xff => ECHO(inbound),
+            _ => unreachable!(),
         })
     }
 

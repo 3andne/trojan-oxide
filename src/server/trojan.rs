@@ -171,6 +171,18 @@ async fn handle_quic_outbound(
                 },
             }
         }
+        Ok(ECHO((mut in_write, mut in_read))) => {
+            info!("[echo]start relaying");
+            select! {
+                _ = tokio::io::copy(&mut in_read, &mut in_write) => {
+                    debug!("server relaying upload end");
+                },
+                _ = upper_shutdown.recv() => {
+                    debug!("server shutdown signal received");
+                },
+            }
+            info!("[echo]end relaying");
+        }
         Err(e) => {
             info!("invalid connection: {}", e);
         }

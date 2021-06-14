@@ -9,7 +9,7 @@ use anyhow::Result;
 use futures::StreamExt;
 use lazy_static::lazy_static;
 use quinn::*;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
 use std::{net::SocketAddr, sync::atomic::Ordering};
 use tokio::net::{TcpListener, TcpStream};
@@ -19,6 +19,7 @@ use tracing::*;
 
 lazy_static! {
     static ref CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    static ref QUIC_TUNNEL_RESET: AtomicBool = AtomicBool::new(false);
 }
 
 macro_rules! create_forward_through_quic {
@@ -46,11 +47,11 @@ macro_rules! create_forward_through_quic {
                     );
                     let (mut in_read, mut in_write) = stream.split();
                     select! {
-                        _ = tokio::io::copy(&mut out_read, &mut in_write) => {
-                            debug!("tcp relaying download end");
+                        res = tokio::io::copy(&mut out_read, &mut in_write) => {
+                            debug!("tcp relaying download end, {:?}", res);
                         },
-                        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                            debug!("tcp relaying upload end");
+                        res = tokio::io::copy(&mut in_read, &mut out_write) => {
+                            debug!("tcp relaying upload end, {:?}", res);
                         },
                         _ = upper_shutdown.recv() => {
                             debug!("shutdown signal received");
@@ -65,17 +66,18 @@ macro_rules! create_forward_through_quic {
                         new_trojan_udp_stream(out_write, out_read, None);
                     info!("[udp] => {:?}", req.addr());
                     select! {
-                        _ = copy_udp(&mut out_read, &mut in_write) => {
-                            debug!("udp relaying upload end");
+                        res = copy_udp(&mut out_read, &mut in_write) => {
+                            debug!("udp relaying upload end, {:?}", res);
                         },
-                        _ = copy_udp(&mut in_read, &mut out_write) => {
-                            debug!("udp relaying download end");
+                        res = copy_udp(&mut in_read, &mut out_write) => {
+                            debug!("udp relaying download end, {:?}", res);
                         },
                         _ = upper_shutdown.recv() => {
                             debug!("shutdown signal received");
                         },
                     }
                 }
+                ECHO(_) => panic!("unreachable"),
             }
 
             Ok(())
@@ -105,6 +107,7 @@ macro_rules! try_recv {
 async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
     let mut endpoint = EndpointManager::new(&options).await?;
+    endpoint.init().await?;
     let http_addr = options.local_http_addr.parse::<SocketAddr>()?;
     let http_listener = TcpListener::bind(&http_addr).await?;
 

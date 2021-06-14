@@ -1,20 +1,39 @@
 use crate::args::Opt;
 use anyhow::*;
+use lazy_static::lazy_static;
 use quinn::*;
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
+use std::{
+    net::{SocketAddr, ToSocketAddrs},
+    sync::atomic::Ordering::SeqCst,
+};
+use tokio::sync::mpsc;
+use tokio::time::timeout;
 use tokio::{fs, io};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    select,
+};
 use tracing::*;
 use webpki_roots;
 
 #[allow(dead_code)]
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
+const ECHO_PHRASE: &str = "echo";
+
+lazy_static! {
+    static ref IS_CONNECTION_OPENED: AtomicBool = AtomicBool::new(false);
+}
 
 pub struct EndpointManager {
     inner: Endpoint,
     connection: Option<Connection>,
     remote: SocketAddr,
     remote_url: String,
+    password: Arc<String>,
+    echo_tx: Option<mpsc::Sender<()>>,
 }
 
 impl EndpointManager {
@@ -29,30 +48,75 @@ impl EndpointManager {
             .unwrap();
         let remote_url = options.proxy_url.clone();
 
+        let password = options.password_hash.clone();
+
         Ok(Self {
             inner,
             connection: None,
             remote,
             remote_url,
+            password,
+            echo_tx: None,
         })
     }
 
-    pub async fn connect(&mut self) -> Result<(SendStream, RecvStream)> {
-        match self.connection {
-            Some(ref conn) => match conn.open_bi().await {
-                Ok(x) => {
-                    return Ok(x);
-                }
-                _ => (),
-            },
-            _ => (),
+    pub async fn init(&mut self) -> Result<()> {
+        assert!(self.connection.is_none());
+        self.new_connection().await
+    }
+
+    async fn echo(&mut self) -> Result<bool> {
+        if self.echo_tx.as_ref().unwrap().is_closed() {
+            self.echo_tx = None;
         }
 
-        info!(
-            "[building tunnel] => {} at {}",
-            self.remote_url, self.remote
-        );
+        if self.echo_tx.is_none() {
+            let mut echo_stream = self.connection.as_ref().unwrap().open_bi().await?;
+            let buf = [self.password.as_bytes(), &[0xff]].concat();
+            echo_stream.0.write_all(&buf).await?;
+            let (echo_tx, mut echo_rx) = mpsc::channel::<()>(1);
+            self.echo_tx = Some(echo_tx);
+            tokio::spawn(async move {
+                let (mut write, mut read) = echo_stream;
 
+                let mut buf = [0u8; ECHO_PHRASE.len()];
+                loop {
+                    let _ = echo_rx.recv().await;
+                    if write.write_all(ECHO_PHRASE.as_bytes()).await.is_err() {
+                        return;
+                    }
+
+                    match timeout(Duration::from_secs(2), read.read_exact(&mut buf)).await {
+                        Ok(Ok(_)) => (),
+                        _ => {
+                            info!("[echo] connection reset detected");
+                            IS_CONNECTION_OPENED.store(false, SeqCst);
+                            echo_rx.close();
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+
+        let _ = self.echo_tx.as_mut().unwrap().try_send(());
+
+        Ok(IS_CONNECTION_OPENED.load(SeqCst))
+    }
+
+    pub async fn connect(&mut self) -> Result<(SendStream, RecvStream)> {
+        if !self.echo().await? {
+            info!("[connect] connection retry");
+            self.new_connection().await?;
+        }
+
+        info!("[connect] => {} at {}", self.remote_url, self.remote);
+
+        let new_tunnel = self.connection.as_ref().unwrap().open_bi().await?;
+        Ok(new_tunnel)
+    }
+
+    async fn new_connection(&mut self) -> Result<()> {
         let new_conn = self
             .inner
             .connect(&self.remote, &self.remote_url)?
@@ -62,10 +126,9 @@ impl EndpointManager {
         let quinn::NewConnection {
             connection: conn, ..
         } = new_conn;
-
-        let new_tunnel = conn.open_bi().await?;
         self.connection = Some(conn);
-        Ok(new_tunnel)
+        IS_CONNECTION_OPENED.store(true, SeqCst);
+        Ok(())
     }
 }
 
