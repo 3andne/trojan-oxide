@@ -173,6 +173,15 @@ async fn handle_quic_outbound(
         }
         Ok(ECHO((mut in_write, mut in_read))) => {
             info!("[echo]start relaying");
+            if target.cursor < target.buf.len() {
+                debug!(
+                    "remaining packet: {:?}",
+                    String::from_utf8(target.buf[target.cursor..].to_vec())
+                );
+                let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
+                in_write.write_buf(&mut t).await?;
+                in_write.flush().await?;
+            }
             select! {
                 _ = tokio::io::copy(&mut in_read, &mut in_write) => {
                     debug!("server relaying upload end");

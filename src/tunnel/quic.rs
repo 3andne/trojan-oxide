@@ -66,13 +66,17 @@ impl EndpointManager {
     }
 
     async fn echo(&mut self) -> Result<bool> {
-        if self.echo_tx.as_ref().unwrap().is_closed() {
+        if self.echo_tx.is_some() && self.echo_tx.as_ref().unwrap().is_closed() {
             self.echo_tx = None;
         }
 
         if self.echo_tx.is_none() {
             let mut echo_stream = self.connection.as_ref().unwrap().open_bi().await?;
-            let buf = [self.password.as_bytes(), &[0xff]].concat();
+            let buf = [
+                self.password.as_bytes(),
+                &[b'\r', b'\n', 0xff, b'\r', b'\n'],
+            ]
+            .concat();
             echo_stream.0.write_all(&buf).await?;
             let (echo_tx, mut echo_rx) = mpsc::channel::<()>(1);
             self.echo_tx = Some(echo_tx);
@@ -88,8 +92,8 @@ impl EndpointManager {
 
                     match timeout(Duration::from_secs(2), read.read_exact(&mut buf)).await {
                         Ok(Ok(_)) => (),
-                        _ => {
-                            info!("[echo] connection reset detected");
+                        err => {
+                            info!("[echo] connection reset detected: {:?}, buf {:?}", err, buf);
                             IS_CONNECTION_OPENED.store(false, SeqCst);
                             echo_rx.close();
                             return;
