@@ -50,7 +50,7 @@ where
     buf.extend_from_slice(&[b'\r', b'\n', if udp { 0x03 } else { 0x01 }]);
     addr.write_buf(&mut buf);
     buf.extend_from_slice(&[b'\r', b'\n']);
-    debug!("trojan_connect: writing {:?}", buf);
+    trace!("trojan_connect: writing {:?}", buf);
     outbound.write_all(&buf).await?;
     // not using the following code because of quinn's bug.
     // let packet0 = [

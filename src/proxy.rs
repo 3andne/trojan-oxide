@@ -97,6 +97,7 @@ macro_rules! try_recv {
         match $instance.try_recv() {
             Err($T::error::TryRecvError::Empty) => (),
             _ => {
+                tracing::info!("{} received", stringify!($instance));
                 $then_expr;
             }
         }
@@ -178,7 +179,9 @@ pub async fn build_tunnel(ctrl_c: impl std::future::Future, options: Opt) -> Res
                     Err(err) => {
                         error!("server quit due to {:?}", err);
                     }
-                    _ => {}
+                    ok => {
+                        info!("server end: {:?}", ok);
+                    }
                 }
             }
         }
@@ -193,7 +196,10 @@ pub async fn build_tunnel(ctrl_c: impl std::future::Future, options: Opt) -> Res
                     Err(err) => {
                         error!("client quit due to {:?}", err);
                     }
-                    _ => {}
+                    ok => {
+                        info!("client end: {:?}", ok);
+
+                    }
                 }
             }
         }

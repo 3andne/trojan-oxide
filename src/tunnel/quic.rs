@@ -86,12 +86,27 @@ impl EndpointManager {
                 let mut buf = [0u8; ECHO_PHRASE.len()];
                 loop {
                     let _ = echo_rx.recv().await;
-                    if write.write_all(ECHO_PHRASE.as_bytes()).await.is_err() {
-                        return;
+                    match timeout(
+                        Duration::from_secs(2),
+                        write.write_all(ECHO_PHRASE.as_bytes()),
+                    )
+                    .await
+                    {
+                        Ok(Ok(_)) => {
+                            debug!("echo written");
+                        }
+                        err => {
+                            info!("[echo] connection reset detected: {:?}, buf {:?}", err, buf);
+                            IS_CONNECTION_OPENED.store(false, SeqCst);
+                            echo_rx.close();
+                            return;
+                        }
                     }
 
                     match timeout(Duration::from_secs(2), read.read_exact(&mut buf)).await {
-                        Ok(Ok(_)) => (),
+                        Ok(Ok(_)) => {
+                            debug!("echo received");
+                        }
                         err => {
                             info!("[echo] connection reset detected: {:?}, buf {:?}", err, buf);
                             IS_CONNECTION_OPENED.store(false, SeqCst);
@@ -114,7 +129,7 @@ impl EndpointManager {
             self.new_connection().await?;
         }
 
-        info!("[connect] => {} at {}", self.remote_url, self.remote);
+        info!("[connect] requesting");
 
         let new_tunnel = self.connection.as_ref().unwrap().open_bi().await?;
         Ok(new_tunnel)
