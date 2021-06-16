@@ -20,7 +20,6 @@ async fn main() -> Result<()> {
     let collector = tracing_subscriber::fmt().with_max_level(opt.log_level).finish();
 
     let _ = tracing::subscriber::set_global_default(collector);
-
     let _ = proxy::build_tunnel(tokio::signal::ctrl_c(), opt).await;
     Ok(())
 }

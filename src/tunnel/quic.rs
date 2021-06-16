@@ -96,7 +96,7 @@ impl EndpointManager {
                             debug!("echo written");
                         }
                         err => {
-                            info!("[echo] connection reset detected: {:?}, buf {:?}", err, buf);
+                            info!("[echo][send] connection reset detected: {:?}, buf {:?}", err, buf);
                             IS_CONNECTION_OPENED.store(false, SeqCst);
                             echo_rx.close();
                             return;
@@ -108,7 +108,7 @@ impl EndpointManager {
                             debug!("echo received");
                         }
                         err => {
-                            info!("[echo] connection reset detected: {:?}, buf {:?}", err, buf);
+                            info!("[echo][recv] connection reset detected: {:?}, buf {:?}", err, buf);
                             IS_CONNECTION_OPENED.store(false, SeqCst);
                             echo_rx.close();
                             return;

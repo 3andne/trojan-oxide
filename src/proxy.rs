@@ -12,9 +12,13 @@ use quinn::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
 use std::{net::SocketAddr, sync::atomic::Ordering};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::io::stdin;
 use tokio::select;
 use tokio::sync::{broadcast, oneshot};
+use tokio::{
+    io::AsyncReadExt,
+    net::{TcpListener, TcpStream},
+};
 use tracing::*;
 
 lazy_static! {
@@ -110,10 +114,12 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
     let mut endpoint = EndpointManager::new(&options).await?;
     endpoint.init().await?;
     let http_addr = options.local_http_addr.parse::<SocketAddr>()?;
-    let http_listener = TcpListener::bind(&http_addr).await?;
-
+    let mut http_listener = TcpListener::bind(&http_addr).await?;
     let socks5_addr = options.local_socks5_addr.parse::<SocketAddr>()?;
-    let socks5_listener = TcpListener::bind(&socks5_addr).await?;
+    let mut socks5_listener = TcpListener::bind(&socks5_addr).await?;
+
+    let mut debug_text = stdin();
+    let mut debug_buffer = Vec::with_capacity(50);
     loop {
         try_recv!(oneshot, upper_shutdown);
         select! {
@@ -137,6 +143,31 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
                     let _ = forward_socks5_through_quic(stream, shutdown_rx, tunnel, hash_copy).await;
                 });
             },
+            num_read = debug_text.read_buf(&mut debug_buffer) => {
+                let num = num_read?;
+                match &debug_buffer[..num] {
+                    b"skip\n" => {
+                        info!("[stdin]skip");
+                    },
+                    b"rebind\n" => {
+                        info!("[stdin]rebind");
+                        http_listener = TcpListener::bind(&"0.0.0.0:0").await?;
+                        http_listener = TcpListener::bind(&http_addr).await?;
+                        socks5_listener = TcpListener::bind(&"0.0.0.0:0").await?;
+                        socks5_listener = TcpListener::bind(&socks5_addr).await?;
+                    }
+                    b"quit\n" => {
+                        info!("[stdin]quit");
+                        break;
+                    }
+                    _ => {
+                        info!("[stdin]default");
+                    },
+                }
+                unsafe {
+                    debug_buffer.set_len(0);
+                }
+            }
         };
     }
     Ok(())
