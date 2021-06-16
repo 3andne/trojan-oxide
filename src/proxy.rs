@@ -18,6 +18,7 @@ use tokio::sync::{broadcast, oneshot};
 use tokio::{
     io::AsyncReadExt,
     net::{TcpListener, TcpStream},
+    time::{timeout, Duration, Instant},
 };
 use tracing::*;
 
@@ -112,7 +113,6 @@ macro_rules! try_recv {
 async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
     let mut endpoint = EndpointManager::new(&options).await?;
-    endpoint.init().await?;
     let http_addr = options.local_http_addr.parse::<SocketAddr>()?;
     let mut http_listener = TcpListener::bind(&http_addr).await?;
     let socks5_addr = options.local_socks5_addr.parse::<SocketAddr>()?;
@@ -126,7 +126,7 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
             acc = http_listener.accept() => {
                 let (stream, _) = acc?;
                 debug!("accepted http: {:?}", stream);
-                let tunnel = endpoint.connect().await?;
+                let tunnel = timeout(Duration::from_secs(2), endpoint.connect()).await??;
                 let shutdown_rx = shutdown_tx.subscribe();
                 let hash_copy = options.password_hash.clone();
                 tokio::spawn(async move {
@@ -136,7 +136,7 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
             acc = socks5_listener.accept() => {
                 let (stream, _) = acc?;
                 debug!("accepted socks5: {:?}", stream);
-                let tunnel = endpoint.connect().await?;
+                let tunnel = timeout(Duration::from_secs(2), endpoint.connect()).await??;
                 let shutdown_rx = shutdown_tx.subscribe();
                 let hash_copy = options.password_hash.clone();
                 tokio::spawn(async move {
