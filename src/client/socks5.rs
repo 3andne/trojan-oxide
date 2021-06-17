@@ -150,34 +150,10 @@ impl Socks5Request {
                         ));
                     }
                 }
-
-                let field_5_len = match buf[ADDR_TYPE_INDEX] {
-                    0x01 => {
-                        // IPv4
-                        4
-                    }
-                    0x03 => {
-                        // Domain name
-                        1 + buf[LEN_OF_ADDR_INDEX] as usize
-                    }
-                    0x04 => {
-                        // IPv6
-                        16
-                    }
-                    _ => {
-                        return Err(ParserError::Invalid(
-                            "Socks5Request::parse invalid addr type",
-                        ));
-                    }
-                };
-
-                expect_buf_len!(buf, 4 + field_5_len + 2);
-                let mut extracted_request = Vec::with_capacity(2 + field_5_len + 2);
-                // extracted_request.push(if self.is_udp { 0x03 } else { 0x01 });
-                extracted_request.extend_from_slice(
-                    &buf[ADDR_TYPE_INDEX..ADDR_TYPE_INDEX + 1 + field_5_len + 2],
-                );
-                self.addr = MixAddrType::EncodedSocks(extracted_request);
+                
+                self.addr = MixAddrType::from_encoded_bytes(
+                    &buf[ADDR_TYPE_INDEX..],
+                )?.0;
 
                 return Ok(());
             }

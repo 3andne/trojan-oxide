@@ -2,7 +2,6 @@ use crate::args::Opt;
 use anyhow::*;
 use lazy_static::lazy_static;
 use quinn::*;
-use tokio::time::sleep;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,6 +10,7 @@ use std::{
     sync::atomic::Ordering::SeqCst,
 };
 use tokio::sync::mpsc;
+use tokio::time::sleep;
 use tokio::time::timeout;
 use tokio::{fs, io};
 use tracing::*;
@@ -20,7 +20,7 @@ use webpki_roots;
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 const ECHO_PHRASE: &str = "echo";
 const MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
-const MAX_CONCURRENT_BIDI_STREAMS: usize = 10;
+const MAX_CONCURRENT_BIDI_STREAMS: usize = 30;
 
 lazy_static! {
     static ref IS_CONNECTION_OPENED: AtomicBool = AtomicBool::new(false);
@@ -112,10 +112,9 @@ impl EndpointManager {
             .await?
             .bind(&"[::]:0".parse().unwrap())?;
         let remote = (options.proxy_url.to_owned() + ":" + &options.proxy_port)
-            .to_socket_addrs()
-            .unwrap()
+            .to_socket_addrs()?
             .next()
-            .unwrap();
+            .ok_or(anyhow!("EndpointManager no valid addr"))?;
         let remote_url = options.proxy_url.clone();
 
         let password = options.password_hash.clone();
@@ -172,7 +171,7 @@ impl EndpointManager {
 
     pub async fn connect(&mut self) -> Result<(SendStream, RecvStream)> {
         if !self.connection.has_remaining() || !self.echo().await? {
-            info!("[connect] connection retry");
+            debug!("[connect] re-connecting");
             self.new_connection().await?;
         }
 

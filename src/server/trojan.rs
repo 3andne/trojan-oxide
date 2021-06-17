@@ -155,7 +155,7 @@ async fn handle_quic_outbound(
                     debug!("server shutdown signal received");
                 },
             }
-            info!("[tcp][{}]end relaying", conn_id);
+            debug!("[tcp][{}]end relaying", conn_id);
         }
         Ok(UDP((mut in_write, mut in_read))) => {
             let outbound = UdpSocket::bind("[::]:0").await?;

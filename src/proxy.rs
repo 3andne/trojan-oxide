@@ -12,13 +12,11 @@ use quinn::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
 use std::{net::SocketAddr, sync::atomic::Ordering};
-use tokio::io::stdin;
 use tokio::select;
 use tokio::sync::{broadcast, oneshot};
 use tokio::{
-    io::AsyncReadExt,
     net::{TcpListener, TcpStream},
-    time::{timeout, Duration, Instant},
+    time::{timeout, Duration},
 };
 use tracing::*;
 
@@ -62,7 +60,7 @@ macro_rules! create_forward_through_quic {
                             debug!("shutdown signal received");
                         },
                     }
-                    info!("[end][tcp][{}]", conn_id);
+                    debug!("[end][tcp][{}]", conn_id);
                 }
                 UDP(mut udp) => {
                     trojan_connect_udp(&mut out_write, password_hash).await?;
@@ -109,24 +107,40 @@ macro_rules! try_recv {
     };
 }
 
+macro_rules! or_else {
+    ($res:expr, $else_expr:expr) => {
+        match $res {
+            Ok(res) => res,
+            Err(e) => {
+                info!("{} failed due to {:?}", stringify!($res), e);
+                $else_expr
+            }
+        }
+    };
+}
+
 // todo: refactor into Client class
 async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
     let mut endpoint = EndpointManager::new(&options).await?;
     let http_addr = options.local_http_addr.parse::<SocketAddr>()?;
-    let mut http_listener = TcpListener::bind(&http_addr).await?;
+    let http_listener = TcpListener::bind(&http_addr).await?;
     let socks5_addr = options.local_socks5_addr.parse::<SocketAddr>()?;
-    let mut socks5_listener = TcpListener::bind(&socks5_addr).await?;
+    let socks5_listener = TcpListener::bind(&socks5_addr).await?;
 
-    let mut debug_text = stdin();
-    let mut debug_buffer = Vec::with_capacity(50);
     loop {
         try_recv!(oneshot, upper_shutdown);
         select! {
             acc = http_listener.accept() => {
                 let (stream, _) = acc?;
                 debug!("accepted http: {:?}", stream);
-                let tunnel = timeout(Duration::from_secs(2), endpoint.connect()).await??;
+                let tunnel = or_else!(
+                    or_else!(timeout(Duration::from_secs(2), endpoint.connect()).await, continue),
+                    {
+                        endpoint = or_else!(EndpointManager::new(&options).await, continue);
+                        continue;
+                    }
+                );
                 let shutdown_rx = shutdown_tx.subscribe();
                 let hash_copy = options.password_hash.clone();
                 tokio::spawn(async move {
@@ -136,38 +150,19 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
             acc = socks5_listener.accept() => {
                 let (stream, _) = acc?;
                 debug!("accepted socks5: {:?}", stream);
-                let tunnel = timeout(Duration::from_secs(2), endpoint.connect()).await??;
+                let tunnel = or_else!(
+                    or_else!(timeout(Duration::from_secs(2), endpoint.connect()).await, continue),
+                    {
+                        endpoint = or_else!(EndpointManager::new(&options).await, continue);
+                        continue;
+                    }
+                );
                 let shutdown_rx = shutdown_tx.subscribe();
                 let hash_copy = options.password_hash.clone();
                 tokio::spawn(async move {
                     let _ = forward_socks5_through_quic(stream, shutdown_rx, tunnel, hash_copy).await;
                 });
             },
-            num_read = debug_text.read_buf(&mut debug_buffer) => {
-                let num = num_read?;
-                match &debug_buffer[..num] {
-                    b"skip\n" => {
-                        info!("[stdin]skip");
-                    },
-                    b"rebind\n" => {
-                        info!("[stdin]rebind");
-                        http_listener = TcpListener::bind(&"0.0.0.0:0").await?;
-                        http_listener = TcpListener::bind(&http_addr).await?;
-                        socks5_listener = TcpListener::bind(&"0.0.0.0:0").await?;
-                        socks5_listener = TcpListener::bind(&socks5_addr).await?;
-                    }
-                    b"quit\n" => {
-                        info!("[stdin]quit");
-                        break;
-                    }
-                    _ => {
-                        info!("[stdin]default");
-                    },
-                }
-                unsafe {
-                    debug_buffer.set_len(0);
-                }
-            }
         };
     }
     Ok(())

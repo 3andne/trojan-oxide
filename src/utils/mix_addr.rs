@@ -210,7 +210,7 @@ impl MixAddrType {
     ///       o  DST.PORT desired destination port in network octet
     ///          order
     ///```
-    fn from_encoded_bytes(buf: &[u8]) -> Result<(MixAddrType, usize), ParserError> {
+    pub fn from_encoded_bytes(buf: &[u8]) -> Result<(MixAddrType, usize), ParserError> {
         debug!("MixAddrType::from_encoded_bytes buf: {:?}", buf);
         expect_buf_len!(buf, 2);
         match buf[0] {
