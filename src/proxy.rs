@@ -107,7 +107,7 @@ macro_rules! try_recv {
     };
 }
 
-macro_rules! or_else {
+macro_rules! do_ {
     ($res:expr, $else_expr:expr) => {
         match $res {
             Ok(res) => res,
@@ -134,10 +134,11 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
             acc = http_listener.accept() => {
                 let (stream, _) = acc?;
                 debug!("accepted http: {:?}", stream);
-                let tunnel = or_else!(
-                    or_else!(timeout(Duration::from_secs(2), endpoint.connect()).await, continue),
+                let tunnel = do_!(
+                    do_!(timeout(Duration::from_secs(2), endpoint.connect()).await, continue),
                     {
-                        endpoint = or_else!(EndpointManager::new(&options).await, continue);
+                        endpoint = do_!(do_!(timeout(Duration::from_secs(2), EndpointManager::new(&options)).await, continue),
+                        continue);
                         continue;
                     }
                 );
@@ -150,10 +151,10 @@ async fn run_client(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
             acc = socks5_listener.accept() => {
                 let (stream, _) = acc?;
                 debug!("accepted socks5: {:?}", stream);
-                let tunnel = or_else!(
-                    or_else!(timeout(Duration::from_secs(2), endpoint.connect()).await, continue),
+                let tunnel = do_!(
+                    do_!(timeout(Duration::from_secs(2), endpoint.connect()).await, continue),
                     {
-                        endpoint = or_else!(EndpointManager::new(&options).await, continue);
+                        endpoint = do_!(EndpointManager::new(&options).await, continue);
                         continue;
                     }
                 );
