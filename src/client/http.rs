@@ -28,8 +28,8 @@ impl HttpRequest {
         }
     }
 
-    pub fn addr(&self) -> &MixAddrType {
-        &self.addr
+    pub fn addr(self) -> MixAddrType {
+        self.addr
     }
 
     fn set_stream_type(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {

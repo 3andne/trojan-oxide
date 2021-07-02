@@ -43,7 +43,7 @@ fn password_to_hash(s: &str) -> Arc<String> {
     Arc::new(s)
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "basic")]
 pub struct Opt {
     #[structopt(short = "h", long = "http_port", default_value = "8888", parse(from_str = parse_addr))]

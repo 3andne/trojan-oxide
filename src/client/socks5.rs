@@ -37,8 +37,8 @@ impl Socks5Request {
         }
     }
 
-    pub fn addr(&self) -> &MixAddrType {
-        &self.addr
+    pub fn addr(self) -> MixAddrType {
+        self.addr
     }
 
     pub async fn accept(
@@ -150,10 +150,8 @@ impl Socks5Request {
                         ));
                     }
                 }
-                
-                self.addr = MixAddrType::from_encoded_bytes(
-                    &buf[ADDR_TYPE_INDEX..],
-                )?.0;
+
+                self.addr = MixAddrType::from_encoded_bytes(&buf[ADDR_TYPE_INDEX..])?.0;
 
                 return Ok(());
             }
