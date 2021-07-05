@@ -217,6 +217,6 @@ pub fn new_trojan_udp_stream<R, W>(
 ) -> (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>) {
     (
         TrojanUdpSendStream::new(write),
-        TrojanUdpRecvStream::new(BufferedRecv::<R>::new(read, buffered_request)),
+        TrojanUdpRecvStream::new(BufferedRecv::new(read, buffered_request)),
     )
 }

@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use crate::{
     expect_buf_len,
     utils::{
@@ -7,14 +9,15 @@ use crate::{
 };
 use anyhow::Result;
 use quinn::*;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWrite};
 use tracing::*;
 
 pub mod trojan;
+pub mod trojan_stream;
 
 pub const HASH_LEN: usize = 56;
-
-pub type QuicStream = (SendStream, RecvStream);
+#[derive(Debug)]
+pub struct QuicStream(RecvStream, SendStream);
 pub type TrojanUdpStream<W, R> = (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>);
 
 #[derive(Default, Debug)]
@@ -24,12 +27,15 @@ pub struct Target<'a> {
     password_hash: &'a [u8],
     buf: Vec<u8>,
     cmd_code: u8,
+    // phantom: std::marker::PhantomData<I>,
 }
 
+use trojan_stream::SplitableToAsyncReadWrite;
 impl<'a> Target<'a> {
     pub fn new(password_hash: &[u8]) -> Target {
         Target {
             password_hash,
+            // phantom: std::marker::PhantomData {},
             ..Default::default()
         }
     }
@@ -100,14 +106,17 @@ impl<'a> Target<'a> {
     /// o  DST.ADDR desired destination address
     /// o  DST.PORT desired destination port in network octet order
     /// ```
-    pub async fn accept(
+    // pub async fn accept(
+    //     &mut self,
+    //     mut inbound: QuicStream,
+    // ) -> Result<ConnectionRequest<QuicStream, TrojanUdpStream<SendStream, RecvStream>>, ParserError>
+    pub async fn accept<I: SplitableToAsyncReadWrite + Debug + Unpin>(
         &mut self,
-        mut inbound: QuicStream,
-    ) -> Result<ConnectionRequest<QuicStream, TrojanUdpStream<SendStream, RecvStream>>, ParserError>
-    {
+        inbound: I,
+    ) -> Result<ConnectionRequest<(I::W, I::R), TrojanUdpStream<I::W, I::R>>, ParserError> {
+        let (mut read_half, write_half) = inbound.split();
         loop {
-            let read = inbound
-                .1
+            let read = read_half
                 .read_buf(&mut self.buf)
                 .await
                 .map_err(|_| ParserError::Invalid("Target::accept failed to read"))?;
@@ -136,14 +145,15 @@ impl<'a> Target<'a> {
         } else {
             Some(Vec::from(&self.buf[self.cursor..]))
         };
+
         Ok(match self.cmd_code {
             0x03 => UDP(new_trojan_udp_stream(
-                inbound.0,
-                inbound.1,
+                write_half,
+                read_half,
                 buffered_request,
             )),
-            0x01 => TCP(inbound),
-            0xff => ECHO(inbound),
+            0x01 => TCP((write_half, read_half)),
+            0xff => ECHO((write_half, read_half)),
             _ => unreachable!(),
         })
     }

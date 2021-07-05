@@ -14,7 +14,6 @@ pub enum MixAddrType {
     V4(([u8; 4], u16)),
     V6(([u16; 8], u16)),
     Hostname((String, u16)),
-    EncodedSocks(Vec<u8>),
     None,
 }
 
@@ -56,7 +55,6 @@ impl MixAddrType {
             V4(_) => 1 + 4 + 2,
             V6(_) => 1 + 16 + 2,
             MixAddrType::None => panic!("encoded_len() unexpected: MixAddrType::None"),
-            EncodedSocks(v) => v.len(),
         }
     }
 
@@ -179,9 +177,6 @@ impl MixAddrType {
                 buf.extend_from_slice(&port.to_be_bytes());
             }
             MixAddrType::None => panic!("as_bytes() unexpected: MixAddrType::None"),
-            EncodedSocks(en) => {
-                buf.extend_from_slice(en);
-            }
         }
     }
 

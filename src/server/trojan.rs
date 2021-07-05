@@ -12,6 +12,7 @@ use tokio::{
     net::{TcpStream, UdpSocket},
     sync::broadcast,
 };
+use tokio_rustls::TlsAcceptor;
 
 lazy_static! {
     static ref CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -112,25 +113,39 @@ pub async fn handle_quic_connection(
             Err(e) => {
                 return Err(anyhow::Error::new(e));
             }
-            Ok(s) => s,
+            Ok(s) => QuicStream::new(s),
         };
         let shutdown = shutdown_tx.subscribe();
         let pass_copy = password_hash.clone();
-        tokio::spawn(
-            handle_quic_outbound(stream, shutdown, pass_copy).map_err(|e| {
-                debug!("handle_quic_outbound quit due to {:?}", e);
-                e
-            }),
-        );
+        tokio::spawn(handle_outbound(stream, shutdown, pass_copy).map_err(|e| {
+            debug!("handle_quic_outbound quit due to {:?}", e);
+            e
+        }));
     }
     Ok(())
 }
 
-async fn handle_quic_outbound(
-    stream: (SendStream, RecvStream),
-    mut upper_shutdown: broadcast::Receiver<()>,
+pub async fn handle_tcp_tls_connection(
+    stream: TcpStream,
+    acceptor: TlsAcceptor,
+    upper_shutdown: broadcast::Receiver<()>,
     password_hash: Arc<String>,
 ) -> Result<()> {
+    let stream = acceptor.accept(stream).await?;
+    handle_outbound(stream, upper_shutdown, password_hash)
+        .await
+        .unwrap_or_else(move |e| error!("connection failed: {reason}", reason = e.to_string()));
+    Ok(())
+}
+
+pub async fn handle_outbound<I>(
+    stream: I,
+    mut upper_shutdown: broadcast::Receiver<()>,
+    password_hash: Arc<String>,
+) -> Result<()>
+where
+    I: SplitableToAsyncReadWrite + Debug + Unpin,
+{
     let mut target = Target::new(password_hash.as_bytes());
     use ConnectionRequest::*;
     match target.accept(stream).await {

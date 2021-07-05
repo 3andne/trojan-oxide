@@ -1,14 +1,11 @@
-use crate::args::Opt;
+use crate::{args::Opt, tunnel::get_server_local_addr};
 use anyhow::*;
 use lazy_static::lazy_static;
 use quinn::*;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{
-    net::{SocketAddr, ToSocketAddrs},
-    sync::atomic::Ordering::SeqCst,
-};
+use std::{net::SocketAddr, sync::atomic::Ordering::SeqCst};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep;
 use tokio::time::timeout;
@@ -313,11 +310,7 @@ pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut endpoint = quinn::Endpoint::builder();
     endpoint.listen(server_config.build());
 
-    let server_addr = ("0.0.0.0:".to_owned() + &options.proxy_port)
-        .to_socket_addrs()
-        .unwrap()
-        .next()
-        .unwrap();
+    let server_addr = get_server_local_addr(options);
     Ok(endpoint.bind(&server_addr)?)
 }
 

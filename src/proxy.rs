@@ -2,7 +2,7 @@ use crate::{
     args::Opt,
     client::{http::*, socks5::*},
     server::trojan::*,
-    tunnel::{quic::*, tcp_tls::*},
+    tunnel::{get_server_local_addr, quic::*, tcp_tls::*},
     utils::{
         relay_tcp, relay_udp, ClientServerConnection, ClientTcpStream, ConnectionMode,
         ConnectionRequest, MixAddrType, Socks5UdpStream,
@@ -24,6 +24,7 @@ use tokio::{
     select,
     sync::{broadcast, oneshot},
 };
+use tokio_rustls::TlsAcceptor;
 use tracing::*;
 
 lazy_static! {
@@ -200,8 +201,7 @@ async fn run_client(upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Resu
     Ok(())
 }
 
-// todo: refactor into Server class
-async fn run_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
+async fn run_quic_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
     let (endpoint, mut incoming) = quic_tunnel_rx(&options).await?;
     info!("listening on {}", endpoint.local_addr()?);
@@ -210,7 +210,13 @@ async fn run_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
         debug!("connection incoming");
         let shutdown_rx = shutdown_tx.subscribe();
         let hash_copy = options.password_hash.clone();
-        let quinn::NewConnection { bi_streams, .. } = conn.await?;
+        let quinn::NewConnection { bi_streams, .. } = match conn.await {
+            Ok(new_conn) => new_conn,
+            Err(e) => {
+                error!("error while awaiting connection {:?}", e);
+                continue;
+            }
+        };
         debug!("connected");
         tokio::spawn(async move {
             handle_quic_connection(bi_streams, shutdown_rx, hash_copy)
@@ -220,6 +226,38 @@ async fn run_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> 
                 });
         });
     }
+    Ok(())
+}
+
+async fn run_tcp_tls_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
+    let (shutdown_tx, _) = broadcast::channel(1);
+    let config = tls_server_config(&options).await?;
+    let acceptor = TlsAcceptor::from(Arc::new(config));
+    let addr = get_server_local_addr(&options);
+    let listener = TcpListener::bind(&addr).await?;
+    loop {
+        try_recv!(oneshot, upper_shutdown);
+        let (stream, _peer_addr) = listener.accept().await?;
+        let acceptor_copy = acceptor.clone();
+        let shutdown_rx = shutdown_tx.subscribe();
+        let hash_copy = options.password_hash.clone();
+        tokio::spawn(handle_tcp_tls_connection(
+            stream,
+            acceptor_copy,
+            shutdown_rx,
+            hash_copy,
+        ));
+    }
+    Ok(())
+}
+
+// todo: refactor into Server class
+async fn run_server(upper_shutdown: oneshot::Receiver<()>, options: Opt) -> Result<()> {
+    let (_shutdown_tx1, shutdown_rx1) = oneshot::channel();
+    let (_shutdown_tx2, shutdown_rx2) = oneshot::channel();
+    tokio::spawn(run_quic_server(shutdown_rx1, options.clone()));
+    tokio::spawn(run_tcp_tls_server(shutdown_rx2, options));
+    let _ = upper_shutdown.await;
     Ok(())
 }
 
