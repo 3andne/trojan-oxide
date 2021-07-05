@@ -1,13 +1,224 @@
 use crate::args::Opt;
 use anyhow::*;
+use lazy_static::lazy_static;
 use quinn::*;
-use std::net::ToSocketAddrs;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
+use std::{
+    net::{SocketAddr, ToSocketAddrs},
+    sync::atomic::Ordering::SeqCst,
+};
+use tokio::sync::mpsc;
+use tokio::time::sleep;
+use tokio::time::timeout;
 use tokio::{fs, io};
 use tracing::*;
+use webpki_roots;
 
 #[allow(dead_code)]
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
+const ECHO_PHRASE: &str = "echo";
+const MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+const MAX_CONCURRENT_BIDI_STREAMS: usize = 30;
+
+lazy_static! {
+    static ref IS_CONNECTION_OPENED: AtomicBool = AtomicBool::new(false);
+}
+
+#[derive(Default)]
+struct QuicConnectionWrapper {
+    connection: Option<Connection>,
+    concurrent_streams_counter: usize,
+}
+
+impl QuicConnectionWrapper {
+    pub fn refresh(&mut self, conn: Connection) {
+        self.connection = Some(conn);
+        self.concurrent_streams_counter = 0;
+    }
+
+    pub fn open_bi(&mut self) -> Option<OpenBi> {
+        if self.has_remaining() {
+            self.concurrent_streams_counter += 1;
+            Some(self.connection.as_ref().unwrap().open_bi())
+        } else {
+            None
+        }
+    }
+
+    pub fn has_remaining(&self) -> bool {
+        self.concurrent_streams_counter < MAX_CONCURRENT_BIDI_STREAMS
+    }
+}
+
+async fn new_echo_task(echo_stream: (SendStream, RecvStream), mut echo_rx: mpsc::Receiver<()>) {
+    let (mut write, mut read) = echo_stream;
+
+    let mut buf = [0u8; ECHO_PHRASE.len()];
+    loop {
+        let _ = echo_rx.recv().await;
+        match timeout(
+            Duration::from_secs(2),
+            write.write_all(ECHO_PHRASE.as_bytes()),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {
+                debug!("echo written");
+            }
+            other => {
+                info!(
+                    "[echo][send] connection reset detected: {:?}, buf {:?}",
+                    other, buf
+                );
+                IS_CONNECTION_OPENED.store(false, SeqCst);
+                echo_rx.close();
+                return;
+            }
+        }
+
+        match timeout(Duration::from_secs(2), read.read_exact(&mut buf)).await {
+            Ok(Ok(_)) => {
+                debug!("echo received");
+            }
+            other => {
+                info!(
+                    "[echo][recv] connection reset detected: {:?}, buf {:?}",
+                    other, buf
+                );
+                IS_CONNECTION_OPENED.store(false, SeqCst);
+                echo_rx.close();
+                return;
+            }
+        }
+
+        sleep(Duration::from_secs(5)).await;
+    }
+}
+
+pub struct EndpointManager {
+    inner: Endpoint,
+    connection: QuicConnectionWrapper,
+    remote: SocketAddr,
+    remote_url: String,
+    password: Arc<String>,
+    echo_tx: Option<mpsc::Sender<()>>,
+}
+
+impl EndpointManager {
+    pub async fn new(options: &Opt) -> Result<Self> {
+        let (inner, _) = new_builder(options)
+            .await?
+            .bind(&"[::]:0".parse().unwrap())?;
+        let remote = (options.proxy_url.to_owned() + ":" + &options.proxy_port)
+            .to_socket_addrs()?
+            .next()
+            .ok_or(anyhow!("EndpointManager no valid addr"))?;
+        let remote_url = options.proxy_url.clone();
+
+        let password = options.password_hash.clone();
+
+        let mut _self = Self {
+            inner,
+            connection: QuicConnectionWrapper::default(),
+            remote,
+            remote_url,
+            password,
+            echo_tx: None,
+        };
+
+        _self.new_connection().await?;
+
+        Ok(_self)
+    }
+
+    fn echo_task_status(&self) -> bool {
+        match self.echo_tx {
+            Some(ref tx) => {
+                if tx.is_closed() {
+                    false
+                } else {
+                    true
+                }
+            }
+            None => false,
+        }
+    }
+
+    async fn echo(&mut self) -> Result<bool> {
+        if !self.echo_task_status() {
+            let mut echo_stream = match self.connection.open_bi() {
+                Some(bi) => bi,
+                None => return Ok(false),
+            }
+            .await?;
+            let buf = [
+                self.password.as_bytes(),
+                &[b'\r', b'\n', 0xff, b'\r', b'\n'],
+            ]
+            .concat();
+            echo_stream.0.write_all(&buf).await?;
+            let (echo_tx, echo_rx) = mpsc::channel::<()>(1);
+            self.echo_tx = Some(echo_tx);
+            tokio::spawn(new_echo_task(echo_stream, echo_rx));
+        }
+
+        let _ = self.echo_tx.as_mut().unwrap().try_send(());
+
+        Ok(IS_CONNECTION_OPENED.load(SeqCst))
+    }
+
+    pub async fn connect(&mut self) -> Result<(SendStream, RecvStream)> {
+        if !self.connection.has_remaining() || !self.echo().await? {
+            debug!("[connect] re-connecting");
+            self.new_connection().await?;
+        }
+
+        debug!("[connect] connection request");
+        let new_tunnel = self.connection.open_bi().unwrap().await?;
+        Ok(new_tunnel)
+    }
+
+    async fn new_connection(&mut self) -> Result<()> {
+        let new_conn = self
+            .inner
+            .connect(&self.remote, &self.remote_url)?
+            .await
+            .map_err(|e| anyhow!("failed to connect: {}", e))?;
+
+        let quinn::NewConnection {
+            connection: conn, ..
+        } = new_conn;
+        self.connection.refresh(conn);
+        IS_CONNECTION_OPENED.store(true, SeqCst);
+        Ok(())
+    }
+}
+
+async fn new_builder(options: &Opt) -> Result<EndpointBuilder> {
+    let mut builder = quinn::Endpoint::builder();
+    let mut client_config = quinn::ClientConfigBuilder::default();
+    client_config.protocols(ALPN_QUIC_HTTP);
+
+    load_cert(options, &mut client_config).await?;
+
+    let mut cfg = client_config.build();
+    let tls_cfg = Arc::get_mut(&mut cfg.crypto).unwrap();
+    tls_cfg
+        .root_store
+        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+
+    let transport_cfg = Arc::get_mut(&mut cfg.transport).unwrap();
+    transport_cfg.max_idle_timeout(Some(MAX_IDLE_TIMEOUT))?;
+    transport_cfg.persistent_congestion_threshold(6);
+    transport_cfg.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS as u64)?;
+    transport_cfg.packet_threshold(4);
+
+    builder.default_client_config(cfg);
+
+    Ok(builder)
+}
 
 async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Result<()> {
     if let Some(ca_path) = &options.ca {
@@ -32,57 +243,21 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
     Ok(())
 }
 
-pub async fn quic_tunnel_tx(options: &Opt) -> Result<Connection> {
-    trace!("0");
-    let remote = (options.proxy_url.to_owned() + ":" + &options.proxy_port)
-        .to_socket_addrs()
-        .unwrap()
-        .next()
-        .unwrap();
-    trace!("1");
-    let mut endpoint = quinn::Endpoint::builder();
-    let mut client_config = quinn::ClientConfigBuilder::default();
-    client_config.protocols(ALPN_QUIC_HTTP);
-
-    load_cert(options, &mut client_config).await?;
-    trace!("2");
-
-    let mut cfg = client_config.build();
-    let tls_cfg: &mut rustls::ClientConfig = Arc::get_mut(&mut cfg.crypto).unwrap();
-    tls_cfg
-        .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-
-    endpoint.default_client_config(cfg);
-
-    let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
-
-    let host = options.proxy_url.as_str();
-
-    eprintln!("connecting to {} at {}", host, remote);
-    let new_conn = endpoint
-        .connect(&remote, &host)?
-        .await
-        .map_err(|e| anyhow!("failed to connect: {}", e))?;
-
-    let quinn::NewConnection {
-        connection: conn, ..
-    } = new_conn;
-    Ok(conn)
-}
-
 pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
-    let transport_config = quinn::TransportConfig::default();
-    // transport_config.max_concurrent_uni_streams(0).unwrap();
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.max_idle_timeout(Some(MAX_IDLE_TIMEOUT))?;
+    transport_config.persistent_congestion_threshold(6);
+    transport_config.packet_threshold(4);
+    transport_config.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS as u64)?;
+
     let mut server_config = quinn::ServerConfig::default();
     server_config.transport = Arc::new(transport_config);
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
     server_config.protocols(ALPN_QUIC_HTTP);
 
-    server_config.use_stateless_retry(true);
-
+    // server_config.use_stateless_retry(true);
     if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
-        trace!("private key path {:?}, cert_path {:?}", key_path, cert_path);
+        debug!("private key path {:?}, cert_path {:?}", key_path, cert_path);
         let key = fs::read(key_path)
             .await
             .context("failed to read private key")?;

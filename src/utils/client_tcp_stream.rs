@@ -1,0 +1,27 @@
+use crate::utils::BufferedRecv;
+use std::net::SocketAddr;
+use tokio::net::{
+    tcp::{ReadHalf, WriteHalf},
+    TcpStream,
+};
+
+pub struct ClientTcpStream {
+    pub http_request_extension: Option<Vec<u8>>,
+    pub inner: TcpStream,
+}
+
+pub type ClientTcpRecvStream<'a> = BufferedRecv<ReadHalf<'a>>;
+
+impl ClientTcpStream {
+    pub fn split(&mut self) -> (ClientTcpRecvStream, WriteHalf) {
+        let (read, write) = self.inner.split();
+        (
+            ClientTcpRecvStream::new(read, self.http_request_extension.take()),
+            write,
+        )
+    }
+
+    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
+        self.inner.peer_addr()
+    }
+}

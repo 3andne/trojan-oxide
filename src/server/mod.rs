@@ -1,33 +1,29 @@
-use crate::utils::MixAddrType;
-use crate::utils::ParserError;
+use crate::{
+    expect_buf_len,
+    utils::{
+        new_trojan_udp_stream, ConnectionRequest, MixAddrType, ParserError, TrojanUdpRecvStream,
+        TrojanUdpSendStream,
+    },
+};
 use anyhow::Result;
+use quinn::*;
+use tokio::io::AsyncReadExt;
 use tracing::*;
 
 pub mod trojan;
 
 pub const HASH_LEN: usize = 56;
 
+pub type QuicStream = (SendStream, RecvStream);
+pub type TrojanUdpStream = (TrojanUdpSendStream, TrojanUdpRecvStream);
+
 #[derive(Default, Debug)]
 pub struct Target<'a> {
     host: MixAddrType,
-    port: u16,
     cursor: usize,
-    host_len: usize,
     password_hash: &'a [u8],
-}
-
-macro_rules! expect_buf_len {
-    ($buf:expr, $len:expr) => {
-        if $buf.len() < $len {
-            return Err(ParserError::Incomplete);
-        }
-    };
-    ($buf:expr, $len:expr, $mark:expr) => {
-        if $buf.len() < $len {
-            trace!("expect_buf_len {}", $mark);
-            return Err(ParserError::Incomplete);
-        }
-    };
+    buf: Vec<u8>,
+    cmd_code: u8,
 }
 
 impl<'a> Target<'a> {
@@ -38,91 +34,143 @@ impl<'a> Target<'a> {
         }
     }
 
-    fn verify(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
-        if buf.len() < HASH_LEN {
-            return Err(ParserError::Incomplete);
+    fn verify(&mut self) -> Result<(), ParserError> {
+        if self.buf.len() < HASH_LEN {
+            return Err(ParserError::Incomplete(
+                "Target::verify self.buf.len() < HASH_LEN",
+            ));
         }
 
-        if &buf[..HASH_LEN] == self.password_hash {
+        if &self.buf[..HASH_LEN] == self.password_hash {
             self.cursor = HASH_LEN + 2;
             Ok(())
         } else {
-            Err(ParserError::Invalid)
+            Err(ParserError::Invalid("Target::verify hash invalid"))
         }
     }
 
-    fn set_host_and_port(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
-        expect_buf_len!(buf, HASH_LEN + 5, 1); // HASH + \r\n + cmd(2 bytes) + host_len(1 byte, only valid when address is hostname)
+    fn set_host_and_port(&mut self) -> Result<(), ParserError> {
+        expect_buf_len!(self.buf, HASH_LEN + 5); // HASH + \r\n + cmd(2 bytes) + host_len(1 byte, only valid when address is hostname)
 
-        match buf[HASH_LEN + 3] {
-            1 => {
-                expect_buf_len!(buf, HASH_LEN + 4 + 4 + 2, 2); // HASH + \r\n + cmd + ipv4 + port
-                let ip = [
-                    buf[HASH_LEN + 4],
-                    buf[HASH_LEN + 5],
-                    buf[HASH_LEN + 6],
-                    buf[HASH_LEN + 7],
-                ];
-                self.host = MixAddrType::V4(ip);
-                self.port = u16::from_be_bytes([buf[HASH_LEN + 8], buf[HASH_LEN + 9]]);
-                self.cursor = HASH_LEN + 10;
-            }
-            3 => {
-                self.host_len = buf[HASH_LEN + 4] as usize;
-                // HASH + \r\n + cmd + host_len + host(host_len bytes) + port
-                expect_buf_len!(buf, HASH_LEN + 5 + self.host_len + 2, 3);
-                self.host = MixAddrType::Hostname(
-                    String::from_utf8(buf[HASH_LEN + 5..HASH_LEN + 5 + self.host_len].to_vec())
-                        .map_err(|_| ParserError::Invalid)?,
-                );
-                self.cursor = HASH_LEN + 5 + self.host_len;
-                self.port = u16::from_be_bytes([buf[self.cursor], buf[self.cursor + 1]]);
-                self.cursor += 2;
-            }
-            4 => {
-                // HASH + \r\n + cmd + ipv6u8(16 bytes) + port
-                expect_buf_len!(buf, HASH_LEN + 4 + 16 + 2, 4);
-                let v6u8 = &buf[HASH_LEN + 4..HASH_LEN + 4 + 16];
-                let mut v6u16 = [0u16; 8];
-                for i in 0..8 {
-                    v6u16[i] = u16::from_be_bytes([v6u8[i], v6u8[i + 1]]);
-                }
-                self.host = MixAddrType::V6u16(v6u16);
-                self.port = u16::from_be_bytes([buf[HASH_LEN + 20], buf[HASH_LEN + 21]]);
-                self.cursor = HASH_LEN + 22;
-            }
-            _ => {
-                return Err(ParserError::Invalid);
-            }
+        unsafe {
+            // This is so buggy
+            self.cursor = HASH_LEN + 3;
         }
 
+        self.cmd_code = self.buf[HASH_LEN + 2];
+        match self.cmd_code {
+            0x01 | 0x03 => {
+                self.host = MixAddrType::from_encoded(&mut (&mut self.cursor, &self.buf))?;
+            }
+            0xff => (),
+            _ => {
+                return Err(ParserError::Invalid(
+                    "Target::verify invalid connection type",
+                ))
+            }
+        };
         Ok(())
     }
 
-    pub fn parse(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
-        trace!(
+    /// ```not_rust
+    /// +-----------------------+---------+----------------+---------+----------+
+    /// | hex(SHA224(password)) |  CRLF   | Trojan Request |  CRLF   | Payload  |
+    /// +-----------------------+---------+----------------+---------+----------+
+    /// |          56           | X'0D0A' |    Variable    | X'0D0A' | Variable |
+    /// +-----------------------+---------+----------------+---------+----------+
+    ///
+    /// where Trojan Request is a SOCKS5-like request:
+    ///
+    /// +-----+------+----------+----------+
+    /// | CMD | ATYP | DST.ADDR | DST.PORT |
+    /// +-----+------+----------+----------+
+    /// |  1  |  1   | Variable |    2     |
+    /// +-----+------+----------+----------+
+    ///
+    /// where:
+    ///
+    /// o  CMD
+    ///     o  CONNECT X'01'
+    ///     o  UDP ASSOCIATE X'03'
+    ///     o  PROBING X'FF'
+    /// o  ATYP address type of following address
+    ///     o  IP V4 address: X'01'
+    ///     o  DOMAINNAME: X'03'
+    ///     o  IP V6 address: X'04'
+    /// o  DST.ADDR desired destination address
+    /// o  DST.PORT desired destination port in network octet order
+    /// ```
+    pub async fn accept(
+        &mut self,
+        mut inbound: QuicStream,
+    ) -> Result<ConnectionRequest<QuicStream, TrojanUdpStream>, ParserError> {
+        loop {
+            let read = inbound
+                .1
+                .read_buf(&mut self.buf)
+                .await
+                .map_err(|_| ParserError::Invalid("Target::accept failed to read"))?;
+            if read != 0 {
+                match self.parse() {
+                    Err(err @ ParserError::Invalid(_)) => {
+                        error!("Target::accept failed: {:?}", err);
+                        return Err(err);
+                    }
+                    Err(err @ ParserError::Incomplete(_)) => {
+                        debug!("Target::accept failed: {:?}", err);
+                        continue;
+                    }
+                    Ok(()) => {
+                        debug!("Ok");
+                        break;
+                    }
+                }
+            } else {
+                return Err(ParserError::Invalid("Target::accept unexpected EOF"));
+            }
+        }
+        use ConnectionRequest::*;
+        let buffered_request = if self.buf.len() == self.cursor {
+            None
+        } else {
+            Some(Vec::from(&self.buf[self.cursor..]))
+        };
+        Ok(match self.cmd_code {
+            0x03 => UDP(new_trojan_udp_stream(
+                inbound.0,
+                inbound.1,
+                buffered_request,
+            )),
+            0x01 => TCP(inbound),
+            0xff => ECHO(inbound),
+            _ => unreachable!(),
+        })
+    }
+
+    pub fn parse(&mut self) -> Result<(), ParserError> {
+        debug!(
             "parse begin, cursor {}, buffer({}): {:?}",
             self.cursor,
-            buf.len(),
-            &buf[self.cursor..]
+            self.buf.len(),
+            &self.buf[self.cursor..]
         );
         if self.cursor == 0 {
-            self.verify(buf)?;
-            trace!("verified");
+            self.verify()?;
+            debug!("verified");
         }
 
         if self.host.is_none() {
-            self.set_host_and_port(buf)?;
+            self.set_host_and_port()?;
         }
 
-        trace!("target: {:?}", self);
+        debug!("target: {:?}", self);
 
-        expect_buf_len!(buf, self.cursor + 2);
-        if &buf[self.cursor..self.cursor + 2] == b"\r\n" {
+        expect_buf_len!(self.buf, self.cursor + 2);
+        if &self.buf[self.cursor..self.cursor + 2] == b"\r\n" {
             self.cursor += 2;
             Ok(())
         } else {
-            Err(ParserError::Invalid)
+            Err(ParserError::Invalid("Target::accept expecting CRLF"))
         }
     }
 }
