@@ -13,7 +13,7 @@ use tokio_rustls::{
 };
 
 use tokio_rustls::rustls::internal::pemfile::{certs, rsa_private_keys};
-use tokio_rustls::rustls::{Certificate, NoClientAuth, PrivateKey, ServerConfig};
+use tokio_rustls::rustls::{Certificate, NoClientAuth, PrivateKey, ServerConfig, Ticketer};
 
 pub async fn tls_client_config() -> ClientConfig {
     let mut config = ClientConfig::new();
@@ -57,5 +57,6 @@ pub async fn tls_server_config(options: &Opt) -> Result<ServerConfig> {
     config
         .set_single_cert(certs, keys.remove(0))
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    config.ticketer = Ticketer::new();
     Ok(config)
 }
