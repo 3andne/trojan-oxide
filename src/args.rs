@@ -1,6 +1,7 @@
-use crate::server::HASH_LEN;
+use crate::{server::HASH_LEN, utils::ConnectionMode};
 use sha2::{Digest, Sha224};
 use std::fmt::Write;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use structopt::StructOpt;
@@ -14,6 +15,22 @@ fn parse_log_level(l: &str) -> tracing::Level {
         "trace" => tracing::Level::TRACE,
         _ => tracing::Level::INFO,
     }
+}
+
+fn parse_connection_mode(l: &str) -> ConnectionMode {
+    match &l.to_lowercase()[..] {
+        "tcp-tls" => ConnectionMode::TcpTLS,
+        "t" => ConnectionMode::TcpTLS,
+        "tcp" => ConnectionMode::TcpTLS,
+        "tcp_tls" => ConnectionMode::TcpTLS,
+        "quic" => ConnectionMode::Quic,
+        "q" => ConnectionMode::Quic,
+        _ => ConnectionMode::Quic,
+    }
+}
+
+fn parse_remote_addr(_: &str) -> SocketAddr {
+    ([0, 0, 0, 0], 0).into()
 }
 
 fn parse_addr(l: &str) -> String {
@@ -64,6 +81,9 @@ pub struct Opt {
     #[structopt(short = "x", long, default_value = "9999")]
     pub proxy_port: String,
 
+    #[structopt(default_value = "", parse(from_str = parse_remote_addr))]
+    pub remote_socket_addr: SocketAddr,
+
     #[structopt(short, long)]
     pub server: bool,
 
@@ -80,4 +100,7 @@ pub struct Opt {
 
     #[structopt(short = "w", long, parse(from_str = password_to_hash))]
     pub password_hash: Arc<String>,
+
+    #[structopt(short = "m", long, default_value = "quic", parse(from_str = parse_connection_mode))]
+    pub connection_mode: ConnectionMode,
 }

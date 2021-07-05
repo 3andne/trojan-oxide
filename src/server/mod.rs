@@ -15,7 +15,7 @@ pub mod trojan;
 pub const HASH_LEN: usize = 56;
 
 pub type QuicStream = (SendStream, RecvStream);
-pub type TrojanUdpStream = (TrojanUdpSendStream, TrojanUdpRecvStream);
+pub type TrojanUdpStream<W, R> = (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>);
 
 #[derive(Default, Debug)]
 pub struct Target<'a> {
@@ -103,7 +103,8 @@ impl<'a> Target<'a> {
     pub async fn accept(
         &mut self,
         mut inbound: QuicStream,
-    ) -> Result<ConnectionRequest<QuicStream, TrojanUdpStream>, ParserError> {
+    ) -> Result<ConnectionRequest<QuicStream, TrojanUdpStream<SendStream, RecvStream>>, ParserError>
+    {
         loop {
             let read = inbound
                 .1

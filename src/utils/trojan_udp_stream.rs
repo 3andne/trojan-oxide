@@ -4,7 +4,6 @@ use super::{
 };
 use futures::ready;
 use pin_project_lite::pin_project;
-use quinn::*;
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -14,15 +13,16 @@ use tracing::*;
 
 pin_project! {
     #[derive(Debug)]
-    pub struct TrojanUdpSendStream {
+    pub struct TrojanUdpSendStream<W> {
         #[pin]
-        inner: SendStream,
+        // inner: SendStream,
+        inner: W,
         buffer: UdpRelayBuffer
     }
 }
 
-impl TrojanUdpSendStream {
-    pub fn new(inner: SendStream) -> Self {
+impl<W> TrojanUdpSendStream<W> {
+    pub fn new(inner: W) -> Self {
         Self {
             inner,
             buffer: UdpRelayBuffer::new(),
@@ -30,7 +30,7 @@ impl TrojanUdpSendStream {
     }
 }
 
-impl UdpWrite for TrojanUdpSendStream {
+impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
     /// ```not_rust
     /// +------+----------+----------+--------+---------+----------+
     /// | ATYP | DST.ADDR | DST.PORT | Length |  CRLF   | Payload  |
@@ -99,21 +99,21 @@ impl UdpWrite for TrojanUdpSendStream {
     }
 }
 
-pub type BufferedQuicRecvStream = BufferedRecv<RecvStream>;
+// pub type BufferedQuicRecvStream = BufferedRecv<RecvStream>;
 
 pin_project! {
     #[derive(Debug)]
-    pub struct TrojanUdpRecvStream {
+    pub struct TrojanUdpRecvStream<R> {
         #[pin]
-        inner: BufferedQuicRecvStream,
+        inner: BufferedRecv<R>,
         buffer: UdpRelayBuffer,
         expecting: Option<usize>,
         addr_buf: MixAddrType,
     }
 }
 
-impl TrojanUdpRecvStream {
-    pub fn new(inner: BufferedQuicRecvStream) -> Self {
+impl<R> TrojanUdpRecvStream<R> {
+    pub fn new(inner: BufferedRecv<R>) -> Self {
         Self {
             inner,
             buffer: UdpRelayBuffer::new(),
@@ -123,7 +123,7 @@ impl TrojanUdpRecvStream {
     }
 }
 
-impl UdpRead for TrojanUdpRecvStream {
+impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
     /// ```not_rust
     /// +------+----------+----------+--------+---------+----------+
     /// | ATYP | DST.ADDR | DST.PORT | Length |  CRLF   | Payload  |
@@ -210,13 +210,13 @@ impl UdpRead for TrojanUdpRecvStream {
     }
 }
 
-pub fn new_trojan_udp_stream(
-    write: SendStream,
-    read: RecvStream,
+pub fn new_trojan_udp_stream<R, W>(
+    write: W,
+    read: R,
     buffered_request: Option<Vec<u8>>,
-) -> (TrojanUdpSendStream, TrojanUdpRecvStream) {
+) -> (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>) {
     (
         TrojanUdpSendStream::new(write),
-        TrojanUdpRecvStream::new(BufferedQuicRecvStream::new(read, buffered_request)),
+        TrojanUdpRecvStream::new(BufferedRecv::<R>::new(read, buffered_request)),
     )
 }

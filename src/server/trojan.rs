@@ -1,6 +1,6 @@
 use crate::{
     server::*,
-    utils::{copy_udp, ConnectionRequest, ServerUdpStream},
+    utils::{copy_udp, ClientServerConnection, ConnectionRequest, ServerUdpStream},
 };
 use anyhow::Result;
 use futures::{StreamExt, TryFutureExt};
@@ -17,23 +17,34 @@ lazy_static! {
     static ref CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 }
 
-pub async fn trojan_connect_udp<A>(outbound: &mut A, password: Arc<String>) -> Result<()>
-where
-    A: AsyncWrite + Unpin + ?Sized,
-{
+pub async fn trojan_connect_udp(
+    outbound: &mut ClientServerConnection,
+    password: Arc<String>,
+) -> Result<()> {
     let addr = MixAddrType::V4(([0, 0, 0, 0], 0));
-    trojan_connect(true, &addr, outbound, password).await
+    match outbound {
+        ClientServerConnection::Quic((out_write, _)) => {
+            trojan_connect(true, &addr, out_write, password).await
+        }
+        ClientServerConnection::TcpTLS(out_write) => {
+            trojan_connect(true, &addr, out_write, password).await
+        }
+    }
 }
 
-pub async fn trojan_connect_tcp<A>(
+pub async fn trojan_connect_tcp(
     addr: &MixAddrType,
-    outbound: &mut A,
+    outbound: &mut ClientServerConnection,
     password: Arc<String>,
-) -> Result<()>
-where
-    A: AsyncWrite + Unpin + ?Sized,
-{
-    trojan_connect(false, addr, outbound, password).await
+) -> Result<()> {
+    match outbound {
+        ClientServerConnection::Quic((out_write, _)) => {
+            trojan_connect(false, addr, out_write, password).await
+        }
+        ClientServerConnection::TcpTLS(out_write) => {
+            trojan_connect(false, addr, out_write, password).await
+        }
+    }
 }
 
 async fn trojan_connect<A>(
@@ -131,6 +142,7 @@ async fn handle_quic_outbound(
             };
             debug!("outbound connected: {:?}", outbound);
 
+            // todo: refactor with BufferedRecv
             if target.cursor < target.buf.len() {
                 debug!(
                     "remaining packet: {:?}",

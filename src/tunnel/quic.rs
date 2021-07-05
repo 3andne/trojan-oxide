@@ -9,7 +9,7 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
     sync::atomic::Ordering::SeqCst,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep;
 use tokio::time::timeout;
 use tokio::{fs, io};
@@ -111,10 +111,7 @@ impl EndpointManager {
         let (inner, _) = new_builder(options)
             .await?
             .bind(&"[::]:0".parse().unwrap())?;
-        let remote = (options.proxy_url.to_owned() + ":" + &options.proxy_port)
-            .to_socket_addrs()?
-            .next()
-            .ok_or(anyhow!("EndpointManager no valid addr"))?;
+        let remote = options.remote_socket_addr;
         let remote_url = options.proxy_url.clone();
 
         let password = options.password_hash.clone();
@@ -181,11 +178,13 @@ impl EndpointManager {
     }
 
     async fn new_connection(&mut self) -> Result<()> {
-        let new_conn = self
-            .inner
-            .connect(&self.remote, &self.remote_url)?
-            .await
-            .map_err(|e| anyhow!("failed to connect: {}", e))?;
+        let new_conn = timeout(
+            Duration::from_secs(2),
+            self.inner.connect(&self.remote, &self.remote_url)?,
+        )
+        .await
+        .map_err(|e| Error::new(e))?
+        .map_err(|e| Error::new(e))?;
 
         let quinn::NewConnection {
             connection: conn, ..
@@ -320,4 +319,32 @@ pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
         .next()
         .unwrap();
     Ok(endpoint.bind(&server_addr)?)
+}
+
+macro_rules! break_none {
+    ($options:expr) => {
+        match $options {
+            None => {
+                break;
+            }
+            Some(x) => x,
+        }
+    };
+}
+
+pub async fn quic_connection_daemon(
+    options: Opt,
+    mut task_rx: mpsc::Receiver<oneshot::Sender<Result<(SendStream, RecvStream)>>>,
+) -> Result<()> {
+    debug!("quic_connection_daemon enter");
+    let mut endpoint = EndpointManager::new(&options)
+        .await
+        .expect("EndpointManager::new");
+
+    loop {
+        let _ = break_none!(task_rx.recv().await).send(endpoint.connect().await);
+    }
+    debug!("quic_connection_daemon leave");
+
+    Ok(())
 }

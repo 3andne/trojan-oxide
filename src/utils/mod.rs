@@ -1,3 +1,4 @@
+mod data_transfer;
 mod client_tcp_stream;
 mod client_udp_stream;
 mod copy;
@@ -11,11 +12,16 @@ pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpS
 pub use copy::copy_udp;
 pub use mix_addr::MixAddrType;
 pub use server_udp_stream::{ServerUdpRecvStream, ServerUdpSendStream, ServerUdpStream};
+pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream};
+pub use data_transfer::{relay_tcp, relay_udp};
+
+use quinn::*;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, ReadBuf};
-pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream};
+use tokio::net::TcpStream;
+use tokio_rustls::client::TlsStream;
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
@@ -234,4 +240,15 @@ where
         let reader = Pin::new(&mut self.inner);
         reader.poll_read(cx, buf)
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum ConnectionMode {
+    TcpTLS,
+    Quic,
+}
+
+pub enum ClientServerConnection {
+    Quic((SendStream, RecvStream)),
+    TcpTLS(TlsStream<TcpStream>),
 }
