@@ -29,6 +29,7 @@ pin-project-lite = "0.2.7"
 lazy_static = "1.4.0"
 tokio-rustls = "0.22.0"
 rustls-native-certs = "*"
+trust-dns-resolver = "*"
 
 [dev-dependencies]
 criterion = "0.3"

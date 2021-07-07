@@ -2,12 +2,17 @@ use crate::{
     server::*,
     utils::{copy_udp, ClientServerConnection, ConnectionRequest, ServerUdpStream},
 };
+use anyhow::anyhow;
 use anyhow::Result;
 use futures::{StreamExt, TryFutureExt};
 use lazy_static::lazy_static;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use tokio::{io::*, select};
+use std::{net::IpAddr, sync::atomic::AtomicUsize};
+use tokio::{
+    io::*,
+    select,
+    sync::{mpsc, oneshot},
+};
 use tokio::{
     net::{TcpStream, UdpSocket},
     sync::broadcast,
@@ -89,6 +94,7 @@ pub async fn handle_quic_connection(
     mut upper_shutdown: broadcast::Receiver<()>,
     password_hash: Arc<String>,
     fallback_port: Arc<String>,
+    dns_resolve_tx: Arc<mpsc::Sender<(String, oneshot::Sender<Option<IpAddr>>)>>,
 ) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
 
@@ -120,7 +126,14 @@ pub async fn handle_quic_connection(
         let pass_copy = password_hash.clone();
         let fallback_port_clone = fallback_port.clone();
         tokio::spawn(
-            handle_outbound(stream, shutdown, pass_copy, fallback_port_clone).map_err(|e| {
+            handle_outbound(
+                stream,
+                shutdown,
+                pass_copy,
+                fallback_port_clone,
+                dns_resolve_tx.clone(),
+            )
+            .map_err(|e| {
                 debug!("handle_quic_outbound quit due to {:?}", e);
                 e
             }),
@@ -135,11 +148,18 @@ pub async fn handle_tcp_tls_connection(
     upper_shutdown: broadcast::Receiver<()>,
     password_hash: Arc<String>,
     fallback_port: Arc<String>,
+    dns_resolve_tx: Arc<mpsc::Sender<(String, oneshot::Sender<Option<IpAddr>>)>>,
 ) -> Result<()> {
     let stream = acceptor.accept(stream).await?;
-    handle_outbound(stream, upper_shutdown, password_hash, fallback_port)
-        .await
-        .unwrap_or_else(move |e| error!("connection failed: {reason}", reason = e.to_string()));
+    handle_outbound(
+        stream,
+        upper_shutdown,
+        password_hash,
+        fallback_port,
+        dns_resolve_tx,
+    )
+    .await
+    .unwrap_or_else(move |e| error!("connection failed: {reason}", reason = e.to_string()));
     Ok(())
 }
 
@@ -148,6 +168,7 @@ pub async fn handle_outbound<I>(
     mut upper_shutdown: broadcast::Receiver<()>,
     password_hash: Arc<String>,
     fallback_port: Arc<String>,
+    dns_resolve_tx: Arc<mpsc::Sender<(String, oneshot::Sender<Option<IpAddr>>)>>,
 ) -> Result<()>
 where
     I: SplitableToAsyncReadWrite + Debug + Unpin,
@@ -159,7 +180,21 @@ where
             let mut outbound = if target.host.is_ip() {
                 TcpStream::connect(target.host.to_socket_addrs()).await?
             } else {
-                TcpStream::connect(target.host.host_repr()).await?
+                let addr = match target.host {
+                    MixAddrType::Hostname((name, port)) => {
+                        let (tx, rx) = oneshot::channel();
+                        let _ = dns_resolve_tx.send((name, tx)).await?;
+                        let new_addr = rx.await?;
+                        match new_addr {
+                            Some(ip) => MixAddrType::init_from(&(ip, port).into()),
+                            None => {
+                                return Err(anyhow!("addr resolve error"));
+                            }
+                        }
+                    }
+                    _ => panic!(),
+                };
+                TcpStream::connect(addr.to_socket_addrs()).await?
             };
             debug!("outbound connected: {:?}", outbound);
 

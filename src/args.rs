@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use structopt::StructOpt;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+use std::net::IpAddr;
 
 fn parse_log_level(l: &str) -> tracing::Level {
     match &l.to_lowercase()[..] {
@@ -86,9 +89,6 @@ pub struct Opt {
     #[structopt(short = "x", long, default_value = "9999")]
     pub proxy_port: String,
 
-    #[structopt(default_value = "", parse(from_str = parse_remote_addr))]
-    pub remote_socket_addr: SocketAddr,
-
     #[structopt(short, long)]
     pub server: bool,
 
@@ -108,4 +108,11 @@ pub struct Opt {
 
     #[structopt(short = "m", long, default_value = "quic", parse(from_str = parse_connection_mode))]
     pub connection_mode: ConnectionMode,
+}
+
+#[derive(Debug, Clone)]
+pub struct TrojanContext {
+    pub options: Opt,
+    pub remote_socket_addr: SocketAddr,
+    pub dns_resolve_tx: Arc<mpsc::Sender<(String, oneshot::Sender<Option<IpAddr>>)>>,
 }

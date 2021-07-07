@@ -5,8 +5,8 @@ mod copy;
 mod mix_addr;
 mod server_udp_stream;
 mod trojan_udp_stream;
+pub mod dns_resolve;
 
-use bytes::BufMut;
 pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
 pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream};
 pub use copy::copy_udp;
@@ -22,6 +22,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
+use bytes::BufMut;
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {

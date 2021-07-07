@@ -1,4 +1,4 @@
-use crate::{args::Opt, tunnel::get_server_local_addr};
+use crate::{args::{Opt, TrojanContext}, tunnel::get_server_local_addr};
 use anyhow::*;
 use lazy_static::lazy_static;
 use quinn::*;
@@ -104,14 +104,14 @@ pub struct EndpointManager {
 }
 
 impl EndpointManager {
-    pub async fn new(options: &Opt) -> Result<Self> {
-        let (inner, _) = new_builder(options)
+    pub async fn new(context: &TrojanContext) -> Result<Self> {
+        let (inner, _) = new_builder(&context.options)
             .await?
             .bind(&"[::]:0".parse().unwrap())?;
-        let remote = options.remote_socket_addr;
-        let remote_url = options.proxy_url.clone();
+        let remote = context.remote_socket_addr;
+        let remote_url = context.options.proxy_url.clone();
 
-        let password = options.password_hash.clone();
+        let password = context.options.password_hash.clone();
 
         let mut _self = Self {
             inner,
@@ -326,11 +326,11 @@ macro_rules! break_none {
 }
 
 pub async fn quic_connection_daemon(
-    options: Opt,
+    context: TrojanContext,
     mut task_rx: mpsc::Receiver<oneshot::Sender<Result<(SendStream, RecvStream)>>>,
 ) -> Result<()> {
     debug!("quic_connection_daemon enter");
-    let mut endpoint = EndpointManager::new(&options)
+    let mut endpoint = EndpointManager::new(&context)
         .await
         .expect("EndpointManager::new");
 
