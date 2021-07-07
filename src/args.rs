@@ -3,6 +3,7 @@ use sha2::{Digest, Sha224};
 use std::fmt::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 use structopt::StructOpt;
 
@@ -60,6 +61,10 @@ fn password_to_hash(s: &str) -> Arc<String> {
     Arc::new(s)
 }
 
+fn arc_string(s: &str) -> Arc<String> {
+    Arc::new(s.to_string())
+}
+
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "basic")]
 pub struct Opt {
@@ -87,9 +92,6 @@ pub struct Opt {
     #[structopt(short, long)]
     pub server: bool,
 
-    #[structopt(short, long)]
-    pub trust: bool,
-
     /// TLS private key in PEM format
     #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
     pub key: Option<PathBuf>,
@@ -100,6 +102,9 @@ pub struct Opt {
 
     #[structopt(short = "w", long, parse(from_str = password_to_hash))]
     pub password_hash: Arc<String>,
+
+    #[structopt(short = "f", long, parse(from_str = arc_string))]
+    pub fallback_port: Arc<String>,
 
     #[structopt(short = "m", long, default_value = "quic", parse(from_str = parse_connection_mode))]
     pub connection_mode: ConnectionMode,

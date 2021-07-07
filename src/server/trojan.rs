@@ -88,6 +88,7 @@ pub async fn handle_quic_connection(
     mut streams: IncomingBiStreams,
     mut upper_shutdown: broadcast::Receiver<()>,
     password_hash: Arc<String>,
+    fallback_port: Arc<String>,
 ) -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel(1);
 
@@ -117,10 +118,13 @@ pub async fn handle_quic_connection(
         };
         let shutdown = shutdown_tx.subscribe();
         let pass_copy = password_hash.clone();
-        tokio::spawn(handle_outbound(stream, shutdown, pass_copy).map_err(|e| {
-            debug!("handle_quic_outbound quit due to {:?}", e);
-            e
-        }));
+        let fallback_port_clone = fallback_port.clone();
+        tokio::spawn(
+            handle_outbound(stream, shutdown, pass_copy, fallback_port_clone).map_err(|e| {
+                debug!("handle_quic_outbound quit due to {:?}", e);
+                e
+            }),
+        );
     }
     Ok(())
 }
@@ -130,9 +134,10 @@ pub async fn handle_tcp_tls_connection(
     acceptor: TlsAcceptor,
     upper_shutdown: broadcast::Receiver<()>,
     password_hash: Arc<String>,
+    fallback_port: Arc<String>,
 ) -> Result<()> {
     let stream = acceptor.accept(stream).await?;
-    handle_outbound(stream, upper_shutdown, password_hash)
+    handle_outbound(stream, upper_shutdown, password_hash, fallback_port)
         .await
         .unwrap_or_else(move |e| error!("connection failed: {reason}", reason = e.to_string()));
     Ok(())
@@ -142,11 +147,12 @@ pub async fn handle_outbound<I>(
     stream: I,
     mut upper_shutdown: broadcast::Receiver<()>,
     password_hash: Arc<String>,
+    fallback_port: Arc<String>,
 ) -> Result<()>
 where
     I: SplitableToAsyncReadWrite + Debug + Unpin,
 {
-    let mut target = Target::new(password_hash.as_bytes());
+    let mut target = Target::new(password_hash.as_bytes(), fallback_port);
     use ConnectionRequest::*;
     match target.accept(stream).await {
         Ok(TCP((mut in_write, mut in_read))) => {
@@ -164,7 +170,7 @@ where
                     String::from_utf8(target.buf[target.cursor..].to_vec())
                 );
                 let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
-                outbound.write_buf(&mut t).await?;
+                outbound.write_all_buf(&mut t).await?;
                 outbound.flush().await?;
             }
 

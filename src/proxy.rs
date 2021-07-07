@@ -210,6 +210,7 @@ async fn run_quic_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt
         debug!("connection incoming");
         let shutdown_rx = shutdown_tx.subscribe();
         let hash_copy = options.password_hash.clone();
+        let fallback_port = options.fallback_port.clone();
         let quinn::NewConnection { bi_streams, .. } = match conn.await {
             Ok(new_conn) => new_conn,
             Err(e) => {
@@ -219,7 +220,7 @@ async fn run_quic_server(mut upper_shutdown: oneshot::Receiver<()>, options: Opt
         };
         debug!("connected");
         tokio::spawn(async move {
-            handle_quic_connection(bi_streams, shutdown_rx, hash_copy)
+            handle_quic_connection(bi_streams, shutdown_rx, hash_copy, fallback_port)
                 .await
                 .unwrap_or_else(move |e| {
                     error!("connection failed: {reason}", reason = e.to_string())
@@ -241,11 +242,13 @@ async fn run_tcp_tls_server(mut upper_shutdown: oneshot::Receiver<()>, options: 
         let acceptor_copy = acceptor.clone();
         let shutdown_rx = shutdown_tx.subscribe();
         let hash_copy = options.password_hash.clone();
+        let fallback_port = options.fallback_port.clone();
         tokio::spawn(handle_tcp_tls_connection(
             stream,
             acceptor_copy,
             shutdown_rx,
             hash_copy,
+            fallback_port,
         ));
     }
     Ok(())

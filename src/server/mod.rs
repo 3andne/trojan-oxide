@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, io::Cursor, sync::Arc};
 
 use crate::{
     expect_buf_len,
@@ -9,7 +9,11 @@ use crate::{
 };
 use anyhow::Result;
 use quinn::*;
-use tokio::io::{AsyncReadExt, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    net::TcpStream,
+    select,
+};
 use tracing::*;
 
 pub mod trojan;
@@ -27,15 +31,15 @@ pub struct Target<'a> {
     password_hash: &'a [u8],
     buf: Vec<u8>,
     cmd_code: u8,
-    // phantom: std::marker::PhantomData<I>,
+    fallback_port: Arc<String>,
 }
 
 use trojan_stream::SplitableToAsyncReadWrite;
 impl<'a> Target<'a> {
-    pub fn new(password_hash: &[u8]) -> Target {
+    pub fn new(password_hash: &[u8], fallback_port: Arc<String>) -> Target {
         Target {
             password_hash,
-            // phantom: std::marker::PhantomData {},
+            fallback_port,
             ..Default::default()
         }
     }
@@ -106,10 +110,6 @@ impl<'a> Target<'a> {
     /// o  DST.ADDR desired destination address
     /// o  DST.PORT desired destination port in network octet order
     /// ```
-    // pub async fn accept(
-    //     &mut self,
-    //     mut inbound: QuicStream,
-    // ) -> Result<ConnectionRequest<QuicStream, TrojanUdpStream<SendStream, RecvStream>>, ParserError>
     pub async fn accept<I: SplitableToAsyncReadWrite + Debug + Unpin>(
         &mut self,
         inbound: I,
@@ -124,6 +124,7 @@ impl<'a> Target<'a> {
                 match self.parse() {
                     Err(err @ ParserError::Invalid(_)) => {
                         error!("Target::accept failed: {:?}", err);
+                        tokio::spawn(async move {});
                         return Err(err);
                     }
                     Err(err @ ParserError::Incomplete(_)) => {
@@ -184,4 +185,26 @@ impl<'a> Target<'a> {
             Err(ParserError::Invalid("Target::accept expecting CRLF"))
         }
     }
+}
+
+async fn fallback<IR: AsyncRead + Unpin, IW: AsyncWrite + Unpin>(
+    buf: Vec<u8>,
+    fallback_port: String,
+    mut in_read: IR,
+    mut in_write: IW,
+) -> Result<()> {
+    let mut outbound = TcpStream::connect("localhost:".to_owned() + fallback_port.as_str()).await?;
+    outbound.write_all_buf(&mut Cursor::new(&buf)).await?;
+
+    let (mut out_read, mut out_write) = outbound.split();
+
+    select! {
+        res = tokio::io::copy(&mut out_read, &mut in_write) => {
+            debug!("tcp relaying download end, {:?}", res);
+        },
+        res = tokio::io::copy(&mut in_read, &mut out_write) => {
+            debug!("tcp relaying upload end, {:?}", res);
+        },
+    }
+    Ok(())
 }
