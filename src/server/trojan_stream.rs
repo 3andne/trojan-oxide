@@ -6,8 +6,8 @@ use tokio_rustls::server::TlsStream;
 
 use super::QuicStream;
 pub trait SplitableToAsyncReadWrite {
-    type R: AsyncRead + Unpin + Debug;
-    type W: AsyncWrite + Unpin + Debug;
+    type R: AsyncRead + Unpin + Debug + Send + 'static;
+    type W: AsyncWrite + Unpin + Debug + Send + 'static;
 
     fn split(self) -> (Self::R, Self::W);
 }

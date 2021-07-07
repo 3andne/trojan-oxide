@@ -124,7 +124,9 @@ impl<'a> Target<'a> {
                 match self.parse() {
                     Err(err @ ParserError::Invalid(_)) => {
                         error!("Target::accept failed: {:?}", err);
-                        tokio::spawn(async move {});
+                        let mut buf = Vec::new();
+                        std::mem::swap(&mut buf, &mut self.buf);
+                        tokio::spawn(fallback(buf, self.fallback_port.clone(), read_half, write_half));
                         return Err(err);
                     }
                     Err(err @ ParserError::Incomplete(_)) => {
@@ -189,7 +191,7 @@ impl<'a> Target<'a> {
 
 async fn fallback<IR: AsyncRead + Unpin, IW: AsyncWrite + Unpin>(
     buf: Vec<u8>,
-    fallback_port: String,
+    fallback_port: Arc<String>,
     mut in_read: IR,
     mut in_write: IW,
 ) -> Result<()> {
