@@ -89,6 +89,9 @@ pub struct Opt {
     #[structopt(short = "x", long, default_value = "9999")]
     pub proxy_port: String,
 
+    #[structopt(short = "d", long, default_value = "")]
+    pub proxy_ip: String,
+
     #[structopt(short, long)]
     pub server: bool,
 
@@ -103,7 +106,7 @@ pub struct Opt {
     #[structopt(short = "w", long, parse(from_str = password_to_hash))]
     pub password_hash: Arc<String>,
 
-    #[structopt(short = "f", long, parse(from_str = arc_string))]
+    #[structopt(short = "f", long, default_value = "80", parse(from_str = arc_string))]
     pub fallback_port: Arc<String>,
 
     #[structopt(short = "m", long, default_value = "quic", parse(from_str = parse_connection_mode))]

@@ -176,7 +176,7 @@ impl EndpointManager {
 
     async fn new_connection(&mut self) -> Result<()> {
         let new_conn = timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(10),
             self.inner.connect(&self.remote, &self.remote_url)?,
         )
         .await

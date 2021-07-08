@@ -14,11 +14,9 @@ mod utils;
 
 use anyhow::anyhow;
 use anyhow::Result;
-use std::net::IpAddr;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -28,10 +26,15 @@ async fn main() -> Result<()> {
         .with_max_level(options.log_level)
         .finish();
     let (dns_resolve_task_tx, dns_resolve_task_rx) = mpsc::channel(10);
-    let remote_socket_addr = (options.proxy_url.to_owned() + ":" + options.proxy_port.as_str())
-        .to_socket_addrs()?
-        .next()
-        .ok_or(anyhow!("invalid remote address"))?;
+    let remote_socket_addr = (if options.proxy_ip.len() > 0 {
+        options.proxy_ip.to_owned()
+    } else {
+        options.proxy_url.to_owned()
+    } + ":"
+        + options.proxy_port.as_str())
+    .to_socket_addrs()?
+    .next()
+    .ok_or(anyhow!("invalid remote address"))?;
     let context = TrojanContext {
         options,
         remote_socket_addr,
