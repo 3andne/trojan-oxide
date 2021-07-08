@@ -18,7 +18,9 @@ pub async fn dns_tasks(
     //     tls_dns_name: None,
     //     trust_nx_responses: true,
     // });
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())?;
+    let mut resolver_opt = ResolverOpts::default();
+    resolver_opt.ip_strategy = LookupIpStrategy::Ipv4Only;
+    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), resolver_opt)?;
     loop {
         let (task, ret) = match incoming_tasks.recv().await {
             Some(t) => t,
