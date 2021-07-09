@@ -57,6 +57,6 @@ pub async fn tls_server_config(options: &Opt) -> Result<ServerConfig> {
     config
         .set_single_cert(certs, keys.remove(0))
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
-    config.ticketer = Ticketer::new();
+    // config.ticketer = Ticketer::new();
     Ok(config)
 }
