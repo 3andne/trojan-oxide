@@ -239,7 +239,7 @@ where
                     debug!("server relaying download end");
                 },
                 // _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                _ = copy_tcp("download".into(), &mut in_read, &mut out_write) => {
+                _ = copy_tcp("upload".into(), &mut in_read, &mut out_write) => {
                     debug!("server relaying upload end");
                 },
                 _ = upper_shutdown.recv() => {
