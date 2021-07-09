@@ -226,8 +226,8 @@ where
                     String::from_utf8(target.buf[target.cursor..].to_vec())
                 );
                 let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
-                outbound.write_all_buf(&mut t).await?;
-                outbound.flush().await?;
+                outbound.write_buf(&mut t).await?;
+                // outbound.flush().await?;
             }
 
             let (mut out_read, mut out_write) = outbound.split();

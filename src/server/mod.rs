@@ -196,7 +196,7 @@ async fn fallback<IR: AsyncRead + Unpin, IW: AsyncWrite + Unpin>(
     mut in_write: IW,
 ) -> Result<()> {
     let mut outbound = TcpStream::connect("127.0.0.1:".to_owned() + fallback_port.as_str()).await?;
-    outbound.write_all_buf(&mut Cursor::new(&buf)).await?;
+    outbound.write_buf(&mut Cursor::new(&buf)).await?;
 
     let (mut out_read, mut out_write) = outbound.split();
 
