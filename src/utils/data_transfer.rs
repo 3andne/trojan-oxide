@@ -48,34 +48,34 @@ pub async fn relay_udp(
 ) {
     let (mut in_write, mut in_read) = inbound.split();
     match outbound {
-        ClientServerConnection::Quic((out_write, out_read)) => {
-            let (mut out_write, mut out_read) = new_trojan_udp_stream(out_write, out_read, None);
-            select! {
-                res = copy_udp(&mut out_read, &mut in_write) => {
-                    debug!("tcp relaying download end, {:?}", res);
-                },
-                res = copy_udp(&mut in_read, &mut out_write) => {
-                    debug!("tcp relaying upload end, {:?}", res);
-                },
-                _ = upper_shutdown.recv() => {
-                    debug!("shutdown signal received");
-                },
-            }
-        }
-        ClientServerConnection::TcpTLS(out_tls) => {
-            let (out_read, out_write) = split(out_tls);
-            let (mut out_write, mut out_read) = new_trojan_udp_stream(out_write, out_read, None);
-            select! {
-                res = copy_udp(&mut out_read, &mut in_write) => {
-                    debug!("tcp relaying download end, {:?}", res);
-                },
-                res = copy_udp(&mut in_read, &mut out_write) => {
-                    debug!("tcp relaying upload end, {:?}", res);
-                },
-                _ = upper_shutdown.recv() => {
-                    debug!("shutdown signal received");
-                },
-            }
-        }
+        // ClientServerConnection::Quic((out_write, out_read)) => {
+        //     let outbound = new_trojan_udp_stream(outbound, None);
+        //     select! {
+        //         res = copy_udp(&mut out_read, &mut in_write) => {
+        //             debug!("tcp relaying download end, {:?}", res);
+        //         },
+        //         res = copy_udp(&mut in_read, &mut out_write) => {
+        //             debug!("tcp relaying upload end, {:?}", res);
+        //         },
+        //         _ = upper_shutdown.recv() => {
+        //             debug!("shutdown signal received");
+        //         },
+        //     }
+        // }
+        // ClientServerConnection::TcpTLS(out_tls) => {
+        //     let out_tls = new_trojan_udp_stream(out_tls, None);
+        //     select! {
+        //         res = copy_udp(&mut out_read, &mut in_write) => {
+        //             debug!("tcp relaying download end, {:?}", res);
+        //         },
+        //         res = copy_udp(&mut in_read, &mut out_write) => {
+        //             debug!("tcp relaying upload end, {:?}", res);
+        //         },
+        //         _ = upper_shutdown.recv() => {
+        //             debug!("shutdown signal received");
+        //         },
+        //     }
+        // }
+        _ => todo!(""),
     }
 }

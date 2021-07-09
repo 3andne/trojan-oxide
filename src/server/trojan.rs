@@ -9,7 +9,7 @@ use lazy_static::lazy_static;
 use std::sync::Arc;
 use std::{net::IpAddr, sync::atomic::AtomicUsize};
 use tokio::{
-    io::*,
+    io::{AsyncReadExt, AsyncWriteExt},
     select,
     sync::{mpsc, oneshot},
 };
@@ -96,7 +96,7 @@ pub async fn handle_quic_connection(
     fallback_port: Arc<String>,
     dns_resolve_tx: Arc<mpsc::Sender<(String, oneshot::Sender<Option<IpAddr>>)>>,
 ) -> Result<()> {
-    let (shutdown_tx, _) = broadcast::channel(1);
+    let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
     loop {
         let stream = select! {
@@ -125,6 +125,7 @@ pub async fn handle_quic_connection(
         let shutdown = shutdown_tx.subscribe();
         let pass_copy = password_hash.clone();
         let fallback_port_clone = fallback_port.clone();
+        // todo!();
         tokio::spawn(
             handle_outbound(
                 stream,
@@ -184,6 +185,17 @@ async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     Ok(())
 }
 
+async fn echo<R: AsyncRead + AsyncWrite + Unpin>(mut inbound: R) -> Result<()> {
+    let mut buf = Vec::with_capacity(100);
+    loop {
+        let x = inbound.read_buf(&mut buf).await?;
+        inbound.write_all_buf(&mut &buf[..x]).await?;
+        unsafe {
+            buf.set_len(0);
+        }
+    }
+}
+
 pub async fn handle_outbound<I>(
     stream: I,
     mut upper_shutdown: broadcast::Receiver<()>,
@@ -192,12 +204,12 @@ pub async fn handle_outbound<I>(
     dns_resolve_tx: Arc<mpsc::Sender<(String, oneshot::Sender<Option<IpAddr>>)>>,
 ) -> Result<()>
 where
-    I: SplitableToAsyncReadWrite + Debug + Unpin,
+    I: AsyncRead + AsyncWrite + Debug + Unpin + Send + 'static,
 {
     let mut target = Target::new(password_hash.as_bytes(), fallback_port);
     use ConnectionRequest::*;
     match target.accept(stream).await {
-        Ok(TCP((mut in_write, mut in_read))) => {
+        Ok(TCP(mut inbound)) => {
             let mut outbound = if target.host.is_ip() {
                 TcpStream::connect(target.host.to_socket_addrs()).await?
             } else {
@@ -230,17 +242,12 @@ where
                 // outbound.flush().await?;
             }
 
-            let (mut out_read, mut out_write) = outbound.split();
             let conn_id = CONNECTION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             info!("[tcp][{}]start relaying", conn_id);
             select! {
                 // _ = tokio::io::copy(&mut out_read, &mut in_write) => {
-                _ = copy_tcp("download".into(), &mut out_read, &mut in_write) => {
-                    debug!("server relaying download end");
-                },
-                // _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                _ = copy_tcp("upload".into(), &mut in_read, &mut out_write) => {
-                    debug!("server relaying upload end");
+                _ = tokio::io::copy_bidirectional(&mut outbound, &mut inbound) => {
+                    debug!("server relaying end");
                 },
                 _ = upper_shutdown.recv() => {
                     debug!("server shutdown signal received");
@@ -248,21 +255,21 @@ where
             }
             debug!("[tcp][{}]end relaying", conn_id);
         }
-        Ok(UDP((mut in_write, mut in_read))) => {
-            let outbound = UdpSocket::bind("[::]:0").await?;
-            info!("[udp] {:?} =>", outbound.local_addr());
-            let mut udp_stream = ServerUdpStream::new(outbound);
-            let (mut out_write, mut out_read) = udp_stream.split();
-            select! {
-                res = copy_udp(&mut out_read, &mut in_write) => {
-                    debug!("udp relaying download end: {:?}", res);
-                },
-                res = copy_udp(&mut in_read, &mut out_write) => {
-                    debug!("udp relaying upload end: {:?}", res);
-                },
-            }
-        }
-        Ok(ECHO((mut in_write, mut in_read))) => {
+        // Ok(UDP((mut in_write, mut in_read))) => {
+        //     let outbound = UdpSocket::bind("[::]:0").await?;
+        //     info!("[udp] {:?} =>", outbound.local_addr());
+        //     let mut udp_stream = ServerUdpStream::new(outbound);
+        //     let (mut out_write, mut out_read) = udp_stream.split();
+        //     select! {
+        //         res = copy_udp(&mut out_read, &mut in_write) => {
+        //             debug!("udp relaying download end: {:?}", res);
+        //         },
+        //         res = copy_udp(&mut in_read, &mut out_write) => {
+        //             debug!("udp relaying upload end: {:?}", res);
+        //         },
+        //     }
+        // }
+        Ok(ECHO(mut inbound)) => {
             info!("[echo]start relaying");
             if target.cursor < target.buf.len() {
                 debug!(
@@ -270,11 +277,11 @@ where
                     String::from_utf8(target.buf[target.cursor..].to_vec())
                 );
                 let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
-                in_write.write_buf(&mut t).await?;
-                in_write.flush().await?;
+                inbound.write_buf(&mut t).await?;
+                inbound.flush().await?;
             }
             select! {
-                _ = tokio::io::copy(&mut in_read, &mut in_write) => {
+                _ = echo(inbound) => {
                     debug!("server relaying upload end");
                 },
                 _ = upper_shutdown.recv() => {
@@ -286,6 +293,7 @@ where
         Err(e) => {
             info!("invalid connection: {}", e);
         }
+        _ => todo!(""),
     }
 
     Ok(())

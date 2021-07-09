@@ -13,24 +13,35 @@ use tracing::*;
 
 pin_project! {
     #[derive(Debug)]
-    pub struct TrojanUdpSendStream<W> {
+    pub struct TrojanUdpStream<RW> {
         #[pin]
-        // inner: SendStream,
-        inner: W,
-        buffer: UdpRelayBuffer
+        inner: BufferedRecv<RW>,
+        send_buffer: UdpRelayBuffer,
+        recv_buffer: UdpRelayBuffer,
+        expecting: Option<usize>,
+        addr_buf: MixAddrType,
     }
 }
 
-impl<W> TrojanUdpSendStream<W> {
-    pub fn new(inner: W) -> Self {
-        Self {
-            inner,
-            buffer: UdpRelayBuffer::new(),
-        }
-    }
-}
+// pin_project! {
+//     #[derive(Debug)]
+//     pub struct TrojanUdpSendStream<W> {
+//         #[pin]
+//         inner: W,
+//         buffer: UdpRelayBuffer
+//     }
+// }
 
-impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
+// impl<W> TrojanUdpSendStream<W> {
+//     pub fn new(inner: W) -> Self {
+//         Self {
+//             inner,
+//             buffer: UdpRelayBuffer::new(),
+//         }
+//     }
+// }
+
+impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpStream<W> {
     /// ```not_rust
     /// +------+----------+----------+--------+---------+----------+
     /// | ATYP | DST.ADDR | DST.PORT | Length |  CRLF   | Payload  |
@@ -45,47 +56,47 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
         addr: &MixAddrType,
     ) -> Poll<std::io::Result<usize>> {
         debug!("TrojanUdpSendStream::poll_proxy_stream_write()");
-        let just_filled_buf = if self.buffer.is_empty() {
-            addr.write_buf(&mut self.buffer);
+        let just_filled_buf = if self.send_buffer.is_empty() {
+            addr.write_buf(&mut self.send_buffer);
             unsafe {
-                self.buffer
+                self.send_buffer
                     .extend_from_slice(&(buf.len() as u16).to_be_bytes());
             }
-            self.buffer.extend_from_slice(&[b'\r', b'\n']);
-            self.buffer.extend_from_slice(buf);
+            self.send_buffer.extend_from_slice(&[b'\r', b'\n']);
+            self.send_buffer.extend_from_slice(buf);
             true
         } else {
             false
         };
-        let me = self.project();
+        let mut me = self.project();
 
         debug!(
             "TrojanUdpSendStream::poll_proxy_stream_write() inner {:?}",
-            me.buffer
+            me.send_buffer
         );
 
-        match me.inner.poll_write(cx, &me.buffer)? {
+        match me.inner.poll_write(cx, &me.send_buffer)? {
             Poll::Ready(x) => {
-                if x < me.buffer.remaining() {
+                if x < me.send_buffer.remaining() {
                     debug!(
-                        "TrojanUdpSendStream::poll_proxy_stream_write() x < me.buffer.remaining() inner {:?}",
-                        me.buffer
+                        "TrojanUdpSendStream::poll_proxy_stream_write() x < me.send_buffer.remaining() inner {:?}",
+                        me.send_buffer
                     );
-                    me.buffer.advance(x);
+                    me.send_buffer.advance(x);
                 } else {
                     debug!(
                         "TrojanUdpSendStream::poll_proxy_stream_write() reset buffer {:?}",
-                        me.buffer
+                        me.send_buffer
                     );
                     unsafe {
-                        me.buffer.reset();
+                        me.send_buffer.reset();
                     }
                 }
             }
             Poll::Pending => {
                 debug!(
                     "TrojanUdpSendStream::poll_proxy_stream_write() pending {:?}",
-                    me.buffer
+                    me.send_buffer
                 );
             }
             _ => todo!("understand the `pin_project` magics"),
@@ -99,31 +110,22 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
     }
 }
 
-// pub type BufferedQuicRecvStream = BufferedRecv<RecvStream>;
-
-pin_project! {
-    #[derive(Debug)]
-    pub struct TrojanUdpRecvStream<R> {
-        #[pin]
-        inner: BufferedRecv<R>,
-        buffer: UdpRelayBuffer,
-        expecting: Option<usize>,
-        addr_buf: MixAddrType,
-    }
-}
-
-impl<R> TrojanUdpRecvStream<R> {
-    pub fn new(inner: BufferedRecv<R>) -> Self {
+impl<RW> TrojanUdpStream<RW>
+where
+    RW: AsyncRead + AsyncWrite + Unpin,
+{
+    pub fn new(inner: BufferedRecv<RW>) -> Self {
         Self {
             inner,
-            buffer: UdpRelayBuffer::new(),
+            send_buffer: UdpRelayBuffer::new(),
+            recv_buffer: UdpRelayBuffer::new(),
             expecting: None,
             addr_buf: MixAddrType::None,
         }
     }
 }
 
-impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
+impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpStream<R> {
     /// ```not_rust
     /// +------+----------+----------+--------+---------+----------+
     /// | ATYP | DST.ADDR | DST.PORT | Length |  CRLF   | Payload  |
@@ -138,7 +140,7 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
     ) -> Poll<std::io::Result<MixAddrType>> {
         debug!("TrojanUdpRecvStream::poll_proxy_stream_read()");
         let me = self.project();
-        let mut buf_inner = me.buffer.as_read_buf();
+        let mut buf_inner = me.recv_buffer.as_read_buf();
         let ptr = buf_inner.filled().as_ptr();
         match ready!(me.inner.poll_read(cx, &mut buf_inner)) {
             Ok(_) => {
@@ -149,16 +151,16 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                 // Safety: This is guaranteed to be the number of initialized (and read)
                 // bytes due to the invariants provided by `ReadBuf::filled`.
                 unsafe {
-                    me.buffer.advance_mut(n);
+                    me.recv_buffer.advance_mut(n);
                 }
 
                 debug!(
                     "TrojanUdpRecvStream::poll_proxy_stream_read() buf {:?}",
-                    me.buffer
+                    me.recv_buffer
                 );
 
                 if me.addr_buf.is_none() {
-                    match MixAddrType::from_encoded(me.buffer) {
+                    match MixAddrType::from_encoded(me.recv_buffer) {
                         Ok(addr) => {
                             *me.addr_buf = addr;
                         }
@@ -180,24 +182,23 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                 }
 
                 if me.expecting.is_none() {
-                    if me.buffer.remaining() < 2 {
+                    if me.recv_buffer.remaining() < 2 {
                         return Poll::Pending;
                     }
-                    *me.expecting =
-                        Some(
-                            u16::from_be_bytes([me.buffer.chunk()[0], me.buffer.chunk()[1]])
-                                as usize,
-                        );
-                    me.buffer.advance(2);
+                    *me.expecting = Some(u16::from_be_bytes([
+                        me.recv_buffer.chunk()[0],
+                        me.recv_buffer.chunk()[1],
+                    ]) as usize);
+                    me.recv_buffer.advance(2);
 
-                    me.buffer.advance(2); // for `\r\n`
+                    me.recv_buffer.advance(2); // for `\r\n`
                 }
 
-                if me.expecting.unwrap() <= me.buffer.remaining() {
+                if me.expecting.unwrap() <= me.recv_buffer.remaining() {
                     let expecting = me.expecting.unwrap();
-                    outer_buf.extend_from_slice(&me.buffer.chunk()[..expecting]);
-                    me.buffer.advance(expecting);
-                    me.buffer.pump();
+                    outer_buf.extend_from_slice(&me.recv_buffer.chunk()[..expecting]);
+                    me.recv_buffer.advance(expecting);
+                    me.recv_buffer.pump();
                     *me.expecting = None;
                     let addr = std::mem::replace(me.addr_buf, MixAddrType::None);
                     Poll::Ready(Ok(addr))
@@ -210,13 +211,9 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
     }
 }
 
-pub fn new_trojan_udp_stream<R, W>(
-    write: W,
-    read: R,
+pub fn new_trojan_udp_stream<RW: AsyncRead + AsyncWrite + Unpin>(
+    stream: RW,
     buffered_request: Option<Vec<u8>>,
-) -> (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>) {
-    (
-        TrojanUdpSendStream::new(write),
-        TrojanUdpRecvStream::new(BufferedRecv::new(read, buffered_request)),
-    )
+) -> TrojanUdpStream<RW> {
+    TrojanUdpStream::new(BufferedRecv::new(stream, buffered_request))
 }

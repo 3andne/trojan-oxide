@@ -1,28 +1,28 @@
-mod data_transfer;
 mod client_tcp_stream;
 mod client_udp_stream;
 mod copy;
+mod data_transfer;
+pub mod dns_resolve;
 mod mix_addr;
 mod server_udp_stream;
 mod trojan_udp_stream;
-pub mod dns_resolve;
 
 pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
 pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream};
 pub use copy::copy_udp;
+pub use data_transfer::{relay_tcp, relay_udp};
 pub use mix_addr::MixAddrType;
 pub use server_udp_stream::{ServerUdpRecvStream, ServerUdpSendStream, ServerUdpStream};
-pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream};
-pub use data_transfer::{relay_tcp, relay_udp};
+pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpStream};
 
+use bytes::BufMut;
 use quinn::*;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
-use bytes::BufMut;
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
@@ -227,9 +227,9 @@ where
     T: AsyncRead + Unpin,
 {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         if self.buffered_request.is_some() {
             let buffered_request = self.buffered_request.as_ref().unwrap();
@@ -240,6 +240,30 @@ where
 
         let reader = Pin::new(&mut self.inner);
         reader.poll_read(cx, buf)
+    }
+}
+
+impl<T> AsyncWrite for BufferedRecv<T>
+where
+    T: AsyncWrite + Unpin,
+{
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 

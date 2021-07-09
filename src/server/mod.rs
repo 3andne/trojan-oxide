@@ -1,11 +1,8 @@
-use std::{fmt::Debug, io::Cursor, sync::Arc};
+use std::{fmt::Debug, io::Cursor, pin::Pin, sync::Arc};
 
 use crate::{
     expect_buf_len,
-    utils::{
-        new_trojan_udp_stream, ConnectionRequest, MixAddrType, ParserError, TrojanUdpRecvStream,
-        TrojanUdpSendStream,
-    },
+    utils::{new_trojan_udp_stream, ConnectionRequest, MixAddrType, ParserError, TrojanUdpStream},
 };
 use anyhow::Result;
 use quinn::*;
@@ -22,7 +19,46 @@ pub mod trojan_stream;
 pub const HASH_LEN: usize = 56;
 #[derive(Debug)]
 pub struct QuicStream(RecvStream, SendStream);
-pub type TrojanUdpStream<W, R> = (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>);
+
+impl QuicStream {
+    pub fn new(stream: (SendStream, RecvStream)) -> Self {
+        return Self(stream.1, stream.0);
+    }
+}
+
+impl AsyncRead for QuicStream {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for QuicStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.1).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.1).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.1).poll_shutdown(cx)
+    }
+}
 
 #[derive(Default, Debug)]
 pub struct Target<'a> {
@@ -34,7 +70,7 @@ pub struct Target<'a> {
     fallback_port: Arc<String>,
 }
 
-use trojan_stream::SplitableToAsyncReadWrite;
+// use trojan_stream::SplitableToAsyncReadWrite;
 impl<'a> Target<'a> {
     pub fn new(password_hash: &[u8], fallback_port: Arc<String>) -> Target {
         Target {
@@ -110,13 +146,15 @@ impl<'a> Target<'a> {
     /// o  DST.ADDR desired destination address
     /// o  DST.PORT desired destination port in network octet order
     /// ```
-    pub async fn accept<I: SplitableToAsyncReadWrite + Debug + Unpin>(
+    pub async fn accept<I>(
         &mut self,
-        inbound: I,
-    ) -> Result<ConnectionRequest<(I::W, I::R), TrojanUdpStream<I::W, I::R>>, ParserError> {
-        let (mut read_half, write_half) = inbound.split();
+        mut inbound: I,
+    ) -> Result<ConnectionRequest<I, TrojanUdpStream<I>>, ParserError>
+    where
+        I: AsyncRead + AsyncWrite + Debug + Unpin + Send + 'static,
+    {
         loop {
-            let read = read_half
+            let read = inbound
                 .read_buf(&mut self.buf)
                 .await
                 .map_err(|_| ParserError::Invalid("Target::accept failed to read"))?;
@@ -126,7 +164,7 @@ impl<'a> Target<'a> {
                         error!("Target::accept failed: {:?}", err);
                         let mut buf = Vec::new();
                         std::mem::swap(&mut buf, &mut self.buf);
-                        tokio::spawn(fallback(buf, self.fallback_port.clone(), read_half, write_half));
+                        tokio::spawn(fallback(buf, self.fallback_port.clone(), inbound));
                         return Err(err);
                     }
                     Err(err @ ParserError::Incomplete(_)) => {
@@ -150,13 +188,9 @@ impl<'a> Target<'a> {
         };
 
         Ok(match self.cmd_code {
-            0x03 => UDP(new_trojan_udp_stream(
-                write_half,
-                read_half,
-                buffered_request,
-            )),
-            0x01 => TCP((write_half, read_half)),
-            0xff => ECHO((write_half, read_half)),
+            0x03 => UDP(new_trojan_udp_stream(inbound, buffered_request)),
+            0x01 => TCP(inbound),
+            0xff => ECHO(inbound),
             _ => unreachable!(),
         })
     }
@@ -189,24 +223,15 @@ impl<'a> Target<'a> {
     }
 }
 
-async fn fallback<IR: AsyncRead + Unpin, IW: AsyncWrite + Unpin>(
+async fn fallback<I: AsyncRead + AsyncWrite + Unpin>(
     buf: Vec<u8>,
     fallback_port: Arc<String>,
-    mut in_read: IR,
-    mut in_write: IW,
+    mut inbound: I,
 ) -> Result<()> {
     let mut outbound = TcpStream::connect("127.0.0.1:".to_owned() + fallback_port.as_str()).await?;
     outbound.write_buf(&mut Cursor::new(&buf)).await?;
 
-    let (mut out_read, mut out_write) = outbound.split();
-
-    select! {
-        res = tokio::io::copy(&mut out_read, &mut in_write) => {
-            debug!("tcp relaying download end, {:?}", res);
-        },
-        res = tokio::io::copy(&mut in_read, &mut out_write) => {
-            debug!("tcp relaying upload end, {:?}", res);
-        },
-    }
+    let res = tokio::io::copy_bidirectional(&mut outbound, &mut inbound).await;
+    debug!("tcp relaying end, {:?}", res);
     Ok(())
 }
