@@ -166,15 +166,19 @@ pub async fn handle_tcp_tls_connection(
 const RELAY_BUFFER_SIZE: usize = 4096;
 
 async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    dir: String,
     r: &mut R,
     w: &mut W,
 ) -> Result<()> {
     let mut buf = [0u8; RELAY_BUFFER_SIZE];
     loop {
+        debug!("[{}]read awaiting.", dir);
         let len = r.read(&mut buf).await?;
         if len == 0 {
+            debug!("copy_tcp broken.");
             break;
         }
+        debug!("[{}]write {} awaiting", dir, len);
         w.write(&buf[..len]).await?;
     }
     Ok(())
@@ -231,12 +235,12 @@ where
             info!("[tcp][{}]start relaying", conn_id);
             select! {
                 // _ = tokio::io::copy(&mut out_read, &mut in_write) => {
-                _ = copy_tcp(&mut out_read, &mut in_write) => {
-                    debug!("server relaying upload end");
+                _ = copy_tcp("download".into(), &mut out_read, &mut in_write) => {
+                    debug!("server relaying download end");
                 },
                 // _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                _ = copy_tcp(&mut in_read, &mut out_write) => {
-                    debug!("server relaying download end");
+                _ = copy_tcp("download".into(), &mut in_read, &mut out_write) => {
+                    debug!("server relaying upload end");
                 },
                 _ = upper_shutdown.recv() => {
                     debug!("server shutdown signal received");
