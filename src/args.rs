@@ -3,7 +3,6 @@ use sha2::{Digest, Sha224};
 use std::fmt::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 use structopt::StructOpt;
 
@@ -28,10 +27,6 @@ fn parse_connection_mode(l: &str) -> ConnectionMode {
         "q" => ConnectionMode::Quic,
         _ => ConnectionMode::Quic,
     }
-}
-
-fn parse_remote_addr(_: &str) -> SocketAddr {
-    ([0, 0, 0, 0], 0).into()
 }
 
 fn parse_addr(l: &str) -> String {
@@ -86,9 +81,6 @@ pub struct Opt {
     #[structopt(short = "x", long, default_value = "9999")]
     pub proxy_port: String,
 
-    #[structopt(default_value = "", parse(from_str = parse_remote_addr))]
-    pub remote_socket_addr: SocketAddr,
-
     #[structopt(short, long)]
     pub server: bool,
 
@@ -108,4 +100,10 @@ pub struct Opt {
 
     #[structopt(short = "m", long, default_value = "quic", parse(from_str = parse_connection_mode))]
     pub connection_mode: ConnectionMode,
+}
+
+#[derive(Debug, Clone)]
+pub struct TrojanContext {
+    pub options: Opt,
+    pub remote_socket_addr: SocketAddr,
 }

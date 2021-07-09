@@ -7,7 +7,7 @@ use futures::{StreamExt, TryFutureExt};
 use lazy_static::lazy_static;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use tokio::{io::*, select};
+use tokio::select;
 use tokio::{
     net::{TcpStream, UdpSocket},
     sync::broadcast,

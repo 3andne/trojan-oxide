@@ -13,7 +13,7 @@ const SOCKS_VERSION_INDEX: usize = 0;
 const NUM_SUPPORTED_AUTH_METHOD_INDEX: usize = 1;
 const CONNECTION_TYPE_INDEX: usize = 1;
 const ADDR_TYPE_INDEX: usize = 3;
-const LEN_OF_ADDR_INDEX: usize = 4;
+// const LEN_OF_ADDR_INDEX: usize = 4;
 const PHASE1_SERVER_REPLY: [u8; 2] = [0x05, 0x00];
 const PHASE2_SERVER_REPLY: [u8; 3] = [0x05, 0x00, 0x00];
 
