@@ -96,29 +96,12 @@ pub async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     loop {
         let len = r.read(&mut buf).await?;
         if len == 0 {
+            w.flush().await?;
             return Ok(());
         }
         w.write(&buf[..len]).await?;
         if len != buf.len() {
             w.flush().await?;
-        //     if full_times == 2 {
-        //         break;
-        //     }
-        // } else {
-        //     full_times += 1;
         }
     }
-
-    // let mut buf = Vec::with_capacity(2048);
-    // loop {
-    //     let len = r.read(&mut buf).await?;
-    //     if len == 0 {
-    //         break;
-    //     }
-    //     w.write(&buf[..len]).await?;
-    //     if len != buf.len() {
-    //         w.flush().await?;
-    //     }
-    // }
-    // Ok(())
 }
