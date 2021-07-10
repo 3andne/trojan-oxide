@@ -171,10 +171,10 @@ where
             // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
             select! {
                 _ = copy_tcp(&mut out_read, &mut in_write) => {
-                    debug!("server relaying upload end");
-                },
-                _ = copy_tcp(&mut in_read, &mut out_write) => {
                     debug!("server relaying download end");
+                },
+                _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+                    debug!("server relaying upload end");
                 },
                 _ = upper_shutdown.recv() => {
                     debug!("server shutdown signal received");
