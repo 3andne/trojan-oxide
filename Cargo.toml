@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio={version = "1.8", features = ["full"]}
+tokio={version = "1.8.1", features = ["full"]}
 clap = "2.33.3"
 anyhow = { version = "1.0.41" }
 tracing = "0.1.26"
@@ -22,17 +22,17 @@ structopt = "0.3.21"
 rcgen = "0.8.11"
 # rustls = "0.19.1"
 sha2 = "0.9.5"
-#webpki = "0.22"
-webpki-roots = "0.21"
+webpki = "^0.21"
+webpki-roots = "^0.21"
 bytes = "1.0.1"
 pin-project-lite = "0.2.7"
 lazy_static = "1.4.0"
 tokio-rustls = "0.22.0"
 #rustls-native-certs = "*"
 
-[dev-dependencies]
-criterion = "0.3"
+#[dev-dependencies]
+#criterion = "0.3"
 
-[[bench]]
-name = "bench_simd"
-harness = false
+#[[bench]]
+#name = "bench_simd"
+#harness = false
