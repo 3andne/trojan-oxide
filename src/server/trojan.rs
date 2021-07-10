@@ -160,7 +160,7 @@ pub async fn handle_outbound(
             } else {
                 TcpStream::connect(target.host.host_repr()).await?
             };
-            debug!("outbound connected: {:?}", outbound);
+            // debug!("outbound connected: {:?}", outbound);
 
             // todo: refactor with BufferedRecv
             if target.cursor < target.buf.len() {
@@ -173,7 +173,7 @@ pub async fn handle_outbound(
                 outbound.flush().await?;
             }
 
-            let (mut out_read, mut out_write) = outbound.split();
+            let (mut out_read, mut out_write) = outbound.into_split();
             let conn_id = CONNECTION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             info!("[tcp][{}]start relaying", conn_id);
             // let mut in_read = DebugAsyncReader::new(in_read);
