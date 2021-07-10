@@ -16,7 +16,7 @@ use tokio::{
     net::{TcpStream, UdpSocket},
     sync::broadcast,
 };
-use tokio_rustls::{TlsAcceptor, server::TlsStream};
+use tokio_rustls::{server::TlsStream, TlsAcceptor};
 
 lazy_static! {
     static ref CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -145,15 +145,12 @@ pub async fn handle_tcp_tls_connection(
     Ok(())
 }
 
-pub async fn handle_outbound<I>(
-    stream: I,
+pub async fn handle_outbound(
+    stream: TlsStream<TcpStream>,
     mut upper_shutdown: broadcast::Receiver<()>,
     password_hash: Arc<String>,
     fallback_port: Arc<String>,
-) -> Result<()>
-where
-    I: SplitableToAsyncReadWrite + Debug + Unpin,
-{
+) -> Result<()> {
     let mut target = Target::new(password_hash.as_bytes(), fallback_port);
     use ConnectionRequest::*;
     match target.accept(stream).await {

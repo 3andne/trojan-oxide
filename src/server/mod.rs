@@ -10,10 +10,11 @@ use crate::{
 use anyhow::Result;
 // use quinn::*;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf},
     net::TcpStream,
     select,
 };
+use tokio_rustls::server::TlsStream;
 use tracing::*;
 
 pub mod trojan;
@@ -110,10 +111,19 @@ impl<'a> Target<'a> {
     /// o  DST.ADDR desired destination address
     /// o  DST.PORT desired destination port in network octet order
     /// ```
-    pub async fn accept<I: SplitableToAsyncReadWrite + Debug + Unpin>(
+    pub async fn accept(
         &mut self,
-        inbound: I,
-    ) -> Result<ConnectionRequest<(I::W, I::R), TrojanUdpStream<I::W, I::R>>, ParserError> {
+        inbound: TlsStream<TcpStream>,
+    ) -> Result<
+        ConnectionRequest<
+            (
+                WriteHalf<TlsStream<TcpStream>>,
+                ReadHalf<TlsStream<TcpStream>>,
+            ),
+            TrojanUdpStream<WriteHalf<TlsStream<TcpStream>>, ReadHalf<TlsStream<TcpStream>>>,
+        >,
+        ParserError,
+    > {
         let (mut read_half, write_half) = inbound.split();
         loop {
             let read = read_half
@@ -126,7 +136,12 @@ impl<'a> Target<'a> {
                         error!("Target::accept failed: {:?}", err);
                         let mut buf = Vec::new();
                         std::mem::swap(&mut buf, &mut self.buf);
-                        tokio::spawn(fallback(buf, self.fallback_port.clone(), read_half, write_half));
+                        tokio::spawn(fallback(
+                            buf,
+                            self.fallback_port.clone(),
+                            read_half,
+                            write_half,
+                        ));
                         return Err(err);
                     }
                     Err(err @ ParserError::Incomplete(_)) => {
