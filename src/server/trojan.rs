@@ -153,7 +153,9 @@ async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(r: &mut R, w: &mu
             break;
         }
         w.write(&buf[..len]).await?;
-        w.flush().await?;
+        if len != 4096 {
+            w.flush().await?;
+        }
     }
     Ok(())
 }
