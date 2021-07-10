@@ -92,16 +92,14 @@ pub async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     w: &mut W,
 ) -> Result<()> {
     let mut buf = [0; RELAY_BUFFER_SIZE];
-    // let mut full_times = 0u8;
     loop {
         let len = r.read(&mut buf).await?;
         if len == 0 {
-            // w.flush().await?;
             return Ok(());
         }
-        w.write_all(&buf[..len]).await?;
-        // if len != buf.len() {
-        //     w.flush().await?;
-        // }
+        w.write(&buf[..len]).await?;
+        if len != buf.len() {
+            w.flush().await?;
+        }
     }
 }
