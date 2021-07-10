@@ -16,7 +16,7 @@ pub use server_udp_stream::{ServerUdpRecvStream, ServerUdpSendStream, ServerUdpS
 pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream};
 pub use data_transfer::{relay_tcp, relay_udp};
 
-use quinn::*;
+// use quinn::*;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -246,10 +246,10 @@ where
 #[derive(Debug, Clone)]
 pub enum ConnectionMode {
     TcpTLS,
-    Quic,
+    // Quic,
 }
 
 pub enum ClientServerConnection {
-    Quic((SendStream, RecvStream)),
+    // Quic((SendStream, RecvStream)),
     TcpTLS(TlsStream<TcpStream>),
 }

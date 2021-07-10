@@ -28,9 +28,9 @@ pub async fn trojan_connect_udp(
 ) -> Result<()> {
     let addr = MixAddrType::V4(([0, 0, 0, 0], 0));
     match outbound {
-        ClientServerConnection::Quic((out_write, _)) => {
-            trojan_connect(true, &addr, out_write, password).await
-        }
+        // ClientServerConnection::Quic((out_write, _)) => {
+        //     trojan_connect(true, &addr, out_write, password).await
+        // }
         ClientServerConnection::TcpTLS(out_write) => {
             trojan_connect(true, &addr, out_write, password).await
         }
@@ -43,9 +43,9 @@ pub async fn trojan_connect_tcp(
     password: Arc<String>,
 ) -> Result<()> {
     match outbound {
-        ClientServerConnection::Quic((out_write, _)) => {
-            trojan_connect(false, addr, out_write, password).await
-        }
+        // ClientServerConnection::Quic((out_write, _)) => {
+        //     trojan_connect(false, addr, out_write, password).await
+        // }
         ClientServerConnection::TcpTLS(out_write) => {
             trojan_connect(false, addr, out_write, password).await
         }
@@ -88,50 +88,50 @@ where
     Ok(())
 }
 
-pub async fn handle_quic_connection(
-    mut streams: IncomingBiStreams,
-    mut upper_shutdown: broadcast::Receiver<()>,
-    password_hash: Arc<String>,
-    fallback_port: Arc<String>,
-) -> Result<()> {
-    let (shutdown_tx, _) = broadcast::channel(1);
+// pub async fn handle_quic_connection(
+//     mut streams: IncomingBiStreams,
+//     mut upper_shutdown: broadcast::Receiver<()>,
+//     password_hash: Arc<String>,
+//     fallback_port: Arc<String>,
+// ) -> Result<()> {
+//     let (shutdown_tx, _) = broadcast::channel(1);
 
-    loop {
-        let stream = select! {
-            s = streams.next() => {
-                match s {
-                    Some(stream) => stream,
-                    None => {break;}
-                }
-            },
-            _ = upper_shutdown.recv() => {
-                // info
-                break;
-            }
-        };
+//     loop {
+//         let stream = select! {
+//             s = streams.next() => {
+//                 match s {
+//                     Some(stream) => stream,
+//                     None => {break;}
+//                 }
+//             },
+//             _ = upper_shutdown.recv() => {
+//                 // info
+//                 break;
+//             }
+//         };
 
-        let stream = match stream {
-            Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                info!("connection closed");
-                return Ok(());
-            }
-            Err(e) => {
-                return Err(anyhow::Error::new(e));
-            }
-            Ok(s) => QuicStream::new(s),
-        };
-        let shutdown = shutdown_tx.subscribe();
-        let pass_copy = password_hash.clone();
-        let fallback_port_clone = fallback_port.clone();
-        tokio::spawn(
-            handle_outbound(stream, shutdown, pass_copy, fallback_port_clone).map_err(|e| {
-                debug!("handle_quic_outbound quit due to {:?}", e);
-                e
-            }),
-        );
-    }
-    Ok(())
-}
+//         let stream = match stream {
+//             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
+//                 info!("connection closed");
+//                 return Ok(());
+//             }
+//             Err(e) => {
+//                 return Err(anyhow::Error::new(e));
+//             }
+//             Ok(s) => QuicStream::new(s),
+//         };
+//         let shutdown = shutdown_tx.subscribe();
+//         let pass_copy = password_hash.clone();
+//         let fallback_port_clone = fallback_port.clone();
+//         tokio::spawn(
+//             handle_outbound(stream, shutdown, pass_copy, fallback_port_clone).map_err(|e| {
+//                 debug!("handle_quic_outbound quit due to {:?}", e);
+//                 e
+//             }),
+//         );
+//     }
+//     Ok(())
+// }
 
 pub async fn handle_tcp_tls_connection(
     stream: TcpStream,
@@ -178,13 +178,13 @@ where
                 outbound.flush().await?;
             }
 
-            let (out_read, out_write) = outbound.split();
+            let (mut out_read, mut out_write) = outbound.split();
             let conn_id = CONNECTION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             info!("[tcp][{}]start relaying", conn_id);
-            let mut in_read = DebugAsyncReader::new(in_read);
-            let mut out_read = DebugAsyncReader::new(out_read);
-            let mut in_write = DebugAsyncWriter::new(in_write);
-            let mut out_write = DebugAsyncWriter::new(out_write);
+            // let mut in_read = DebugAsyncReader::new(in_read);
+            // let mut out_read = DebugAsyncReader::new(out_read);
+            // let mut in_write = DebugAsyncWriter::new(in_write);
+            // let mut out_write = DebugAsyncWriter::new(out_write);
             select! {
                 _ = tokio::io::copy(&mut out_read, &mut in_write) => {
                     debug!("server relaying upload end");

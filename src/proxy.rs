@@ -140,8 +140,8 @@ where
     let remote_addr = context.remote_socket_addr;
     let domain_string = Arc::new(context.options.proxy_url.clone());
 
-    let (task_tx, task_rx) = tokio::sync::mpsc::channel(20);
-    tokio::spawn(quic_connection_daemon(context.clone(), task_rx));
+    // let (task_tx, task_rx) = tokio::sync::mpsc::channel(20);
+    // tokio::spawn(quic_connection_daemon(context.clone(), task_rx));
     let tls_config = Arc::new(tls_client_config().await);
 
     loop {
@@ -163,17 +163,17 @@ where
                     connect_through_tcp_tls(tls_config_copy, domain_string_copy, remote_addr),
                 ));
             }
-            ConnectionMode::Quic => {
-                let (conn_ret_tx, conn_ret_rx) = oneshot::channel();
-                or_continue!(task_tx.send(conn_ret_tx).await);
-                tokio::spawn(forward(
-                    stream,
-                    shutdown_rx,
-                    hash_copy,
-                    accept_client_request.clone(),
-                    async move { Ok(ClientServerConnection::Quic(conn_ret_rx.await??)) },
-                ));
-            }
+            // ConnectionMode::Quic => {
+            //     let (conn_ret_tx, conn_ret_rx) = oneshot::channel();
+            //     or_continue!(task_tx.send(conn_ret_tx).await);
+            //     tokio::spawn(forward(
+            //         stream,
+            //         shutdown_rx,
+            //         hash_copy,
+            //         accept_client_request.clone(),
+            //         async move { Ok(ClientServerConnection::Quic(conn_ret_rx.await??)) },
+            //     ));
+            // }
         }
     }
     Ok(())
@@ -203,38 +203,38 @@ async fn run_client(upper_shutdown: oneshot::Receiver<()>, context: TrojanContex
     Ok(())
 }
 
-async fn run_quic_server(
-    mut upper_shutdown: oneshot::Receiver<()>,
-    context: TrojanContext,
-) -> Result<()> {
-    let (shutdown_tx, _) = broadcast::channel(1);
-    let (endpoint, mut incoming) = quic_tunnel_rx(&context.options).await?;
-    info!("listening on {}", endpoint.local_addr()?);
-    while let Some(conn) = incoming.next().await {
-        try_recv!(oneshot, upper_shutdown);
-        debug!("connection incoming");
-        let shutdown_rx = shutdown_tx.subscribe();
-        let hash_copy = context.options.password_hash.clone();
-        let fallback_port = context.options.fallback_port.clone();
+// async fn run_quic_server(
+//     mut upper_shutdown: oneshot::Receiver<()>,
+//     context: TrojanContext,
+// ) -> Result<()> {
+//     let (shutdown_tx, _) = broadcast::channel(1);
+//     let (endpoint, mut incoming) = quic_tunnel_rx(&context.options).await?;
+//     info!("listening on {}", endpoint.local_addr()?);
+//     while let Some(conn) = incoming.next().await {
+//         try_recv!(oneshot, upper_shutdown);
+//         debug!("connection incoming");
+//         let shutdown_rx = shutdown_tx.subscribe();
+//         let hash_copy = context.options.password_hash.clone();
+//         let fallback_port = context.options.fallback_port.clone();
 
-        let quinn::NewConnection { bi_streams, .. } = match conn.await {
-            Ok(new_conn) => new_conn,
-            Err(e) => {
-                error!("error while awaiting connection {:?}", e);
-                continue;
-            }
-        };
-        debug!("connected");
-        tokio::spawn(async move {
-            handle_quic_connection(bi_streams, shutdown_rx, hash_copy, fallback_port)
-                .await
-                .unwrap_or_else(move |e| {
-                    error!("connection failed: {reason}", reason = e.to_string())
-                });
-        });
-    }
-    Ok(())
-}
+//         let quinn::NewConnection { bi_streams, .. } = match conn.await {
+//             Ok(new_conn) => new_conn,
+//             Err(e) => {
+//                 error!("error while awaiting connection {:?}", e);
+//                 continue;
+//             }
+//         };
+//         debug!("connected");
+//         tokio::spawn(async move {
+//             handle_quic_connection(bi_streams, shutdown_rx, hash_copy, fallback_port)
+//                 .await
+//                 .unwrap_or_else(move |e| {
+//                     error!("connection failed: {reason}", reason = e.to_string())
+//                 });
+//         });
+//     }
+//     Ok(())
+// }
 
 async fn run_tcp_tls_server(
     mut upper_shutdown: oneshot::Receiver<()>,
@@ -265,9 +265,9 @@ async fn run_tcp_tls_server(
 
 // todo: refactor into Server class
 async fn run_server(upper_shutdown: oneshot::Receiver<()>, context: TrojanContext) -> Result<()> {
-    let (_shutdown_tx1, shutdown_rx1) = oneshot::channel();
+    // let (_shutdown_tx1, shutdown_rx1) = oneshot::channel();
     let (_shutdown_tx2, shutdown_rx2) = oneshot::channel();
-    tokio::spawn(run_quic_server(shutdown_rx1, context.clone()));
+    // tokio::spawn(run_quic_server(shutdown_rx1, context.clone()));
     tokio::spawn(run_tcp_tls_server(shutdown_rx2, context));
     let _ = upper_shutdown.await;
     Ok(())

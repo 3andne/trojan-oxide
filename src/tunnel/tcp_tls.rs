@@ -1,7 +1,7 @@
 use crate::args::Opt;
 use crate::utils::ClientServerConnection;
 use anyhow::{anyhow, Result};
-use rustls_native_certs;
+// use rustls_native_certs;
 use std::fs::File;
 use std::io::{self, BufReader};
 use std::net::SocketAddr;
@@ -17,11 +17,11 @@ use tokio_rustls::rustls::{Certificate, NoClientAuth, PrivateKey, ServerConfig, 
 
 pub async fn tls_client_config() -> ClientConfig {
     let mut config = ClientConfig::new();
-    // config
-    //     .root_store
-    //     .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-    config.root_store =
-        rustls_native_certs::load_native_certs().expect("could not load platform certs");
+    config
+        .root_store
+        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+    // config.root_store =
+    //     rustls_native_certs::load_native_certs().expect("could not load platform certs");
     config.set_persistence(ClientSessionMemoryCache::new(128));
     config
 }

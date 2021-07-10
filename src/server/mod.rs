@@ -8,7 +8,7 @@ use crate::{
     },
 };
 use anyhow::Result;
-use quinn::*;
+// use quinn::*;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
@@ -20,8 +20,8 @@ pub mod trojan;
 pub mod trojan_stream;
 
 pub const HASH_LEN: usize = 56;
-#[derive(Debug)]
-pub struct QuicStream(RecvStream, SendStream);
+// #[derive(Debug)]
+// pub struct QuicStream(RecvStream, SendStream);
 pub type TrojanUdpStream<W, R> = (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>);
 
 #[derive(Default, Debug)]

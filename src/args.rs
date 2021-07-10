@@ -23,9 +23,9 @@ fn parse_connection_mode(l: &str) -> ConnectionMode {
         "t" => ConnectionMode::TcpTLS,
         "tcp" => ConnectionMode::TcpTLS,
         "tcp_tls" => ConnectionMode::TcpTLS,
-        "quic" => ConnectionMode::Quic,
-        "q" => ConnectionMode::Quic,
-        _ => ConnectionMode::Quic,
+        // "quic" => ConnectionMode::Quic,
+        // "q" => ConnectionMode::Quic,
+        _ => ConnectionMode::TcpTLS,
     }
 }
 
