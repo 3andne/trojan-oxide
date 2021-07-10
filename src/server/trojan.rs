@@ -1,15 +1,17 @@
 use crate::{
     server::*,
-    utils::{copy_udp, copy_tcp, ClientServerConnection, ConnectionRequest, ServerUdpStream},
+    utils::{copy_tcp, copy_udp, ClientServerConnection, ConnectionRequest, ServerUdpStream},
 };
 use anyhow::Result;
 use futures::{StreamExt, TryFutureExt};
 use lazy_static::lazy_static;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
-use tokio::select;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use tokio::{
     net::{TcpStream, UdpSocket},
+    select,
     sync::broadcast,
 };
 use tokio_rustls::TlsAcceptor;
@@ -163,19 +165,8 @@ where
             };
             debug!("outbound connected: {:?}", outbound);
 
-            // todo: refactor with BufferedRecv
-            if target.cursor < target.buf.len() {
-                debug!(
-                    "remaining packet: {:?}",
-                    String::from_utf8(target.buf[target.cursor..].to_vec())
-                );
-                let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
-                outbound.write_all_buf(&mut t).await?;
-                outbound.flush().await?;
-            }
-
             let (mut out_read, mut out_write) = outbound.split();
-            let conn_id = CONNECTION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let conn_id = CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             info!("[tcp][{}]start relaying", conn_id);
             // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
             select! {

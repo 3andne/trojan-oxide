@@ -213,7 +213,7 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
 pub fn new_trojan_udp_stream<R, W>(
     write: W,
     read: R,
-    buffered_request: Option<Vec<u8>>,
+    buffered_request: Option<(usize, Vec<u8>)>,
 ) -> (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>) {
     (
         TrojanUdpSendStream::new(write),

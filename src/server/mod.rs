@@ -3,8 +3,8 @@ use std::{fmt::Debug, io::Cursor, sync::Arc};
 use crate::{
     expect_buf_len,
     utils::{
-        new_trojan_udp_stream, ConnectionRequest, MixAddrType, ParserError, TrojanUdpRecvStream,
-        TrojanUdpSendStream,
+        new_trojan_udp_stream, BufferedRecv, ConnectionRequest, MixAddrType, ParserError,
+        TrojanUdpRecvStream, TrojanUdpSendStream,
     },
 };
 use anyhow::Result;
@@ -40,7 +40,7 @@ impl<'a> Target<'a> {
         Target {
             password_hash,
             fallback_port,
-            buf: Vec::with_capacity(1024),
+            buf: Vec::with_capacity(128),
             ..Default::default()
         }
     }
@@ -114,7 +114,10 @@ impl<'a> Target<'a> {
     pub async fn accept<I: SplitableToAsyncReadWrite + Debug + Unpin>(
         &mut self,
         inbound: I,
-    ) -> Result<ConnectionRequest<(I::W, I::R), TrojanUdpStream<I::W, I::R>>, ParserError> {
+    ) -> Result<
+        ConnectionRequest<(I::W, BufferedRecv<I::R>), TrojanUdpStream<I::W, I::R>>,
+        ParserError,
+    > {
         let (mut read_half, write_half) = inbound.split();
         loop {
             let read = read_half
@@ -152,7 +155,7 @@ impl<'a> Target<'a> {
         let buffered_request = if self.buf.len() == self.cursor {
             None
         } else {
-            Some(Vec::from(&self.buf[self.cursor..]))
+            Some((self.cursor, std::mem::take(&mut self.buf)))
         };
 
         Ok(match self.cmd_code {
@@ -161,8 +164,8 @@ impl<'a> Target<'a> {
                 read_half,
                 buffered_request,
             )),
-            0x01 => TCP((write_half, read_half)),
-            0xff => ECHO((write_half, read_half)),
+            0x01 => TCP((write_half, BufferedRecv::new(read_half, buffered_request))),
+            0xff => ECHO((write_half, BufferedRecv::new(read_half, buffered_request))),
             _ => unreachable!(),
         })
     }

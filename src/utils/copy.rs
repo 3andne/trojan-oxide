@@ -7,9 +7,10 @@ use std::fmt::Debug;
 use std::pin::Pin;
 use std::task::Poll;
 use std::{future::Future, u64};
+use tinyvec::TinyVec;
 use tracing::debug;
 
-const RELAY_BUFFER_SIZE: usize = 8192;
+const RELAY_BUFFER_SIZE: usize = 256;
 
 pub async fn copy_udp<'a, R: UdpRead + Unpin + Debug, W: UdpWrite + Unpin + Debug>(
     reader: &'a mut R,
@@ -87,15 +88,18 @@ where
     }
 }
 
-pub async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(r: &mut R, w: &mut W) -> Result<()> {
-    let mut buf = [0u8; RELAY_BUFFER_SIZE];
+pub async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    r: &mut R,
+    w: &mut W,
+) -> Result<()> {
+    let mut buf = TinyVec::<[u8; RELAY_BUFFER_SIZE]>::new();
     loop {
         let len = r.read(&mut buf).await?;
         if len == 0 {
             break;
         }
         w.write(&buf[..len]).await?;
-        if len != RELAY_BUFFER_SIZE {
+        if len != buf.len() {
             w.flush().await?;
         }
     }

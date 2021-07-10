@@ -1,7 +1,7 @@
-mod data_transfer;
 mod client_tcp_stream;
 mod client_udp_stream;
 mod copy;
+mod data_transfer;
 mod mix_addr;
 mod server_udp_stream;
 mod trojan_udp_stream;
@@ -9,11 +9,11 @@ mod trojan_udp_stream;
 use bytes::BufMut;
 pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
 pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream};
-pub use copy::{copy_udp, copy_tcp};
+pub use copy::{copy_tcp, copy_udp};
+pub use data_transfer::{relay_tcp, relay_udp};
 pub use mix_addr::MixAddrType;
 pub use server_udp_stream::{ServerUdpRecvStream, ServerUdpSendStream, ServerUdpStream};
 pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream};
-pub use data_transfer::{relay_tcp, relay_udp};
 
 use quinn::*;
 use std::ops::Deref;
@@ -208,12 +208,12 @@ pub enum ConnectionRequest<TcpRequest, UdpRequest> {
 
 #[derive(Debug)]
 pub struct BufferedRecv<T> {
-    buffered_request: Option<Vec<u8>>,
+    buffered_request: Option<(usize, Vec<u8>)>,
     inner: T,
 }
 
 impl<T> BufferedRecv<T> {
-    pub fn new(inner: T, buffered_request: Option<Vec<u8>>) -> Self {
+    pub fn new(inner: T, buffered_request: Option<(usize, Vec<u8>)>) -> Self {
         Self {
             inner,
             buffered_request,
@@ -231,8 +231,8 @@ where
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         if self.buffered_request.is_some() {
-            let buffered_request = self.buffered_request.as_ref().unwrap();
-            buf.put_slice(&buffered_request);
+            let (index, buffered_request) = self.buffered_request.as_ref().unwrap();
+            buf.put_slice(&buffered_request[*index..]);
             self.buffered_request = None;
             return Poll::Ready(Ok(()));
         }
