@@ -2,14 +2,13 @@ use crate::{
     args::TrojanContext,
     client::{http::*, socks5::*},
     server::trojan::*,
-    tunnel::{get_server_local_addr, quic::*, tcp_tls::*},
+    tunnel::{get_server_local_addr, tcp_tls::*},
     utils::{
         relay_tcp, relay_udp, ClientServerConnection, ClientTcpStream, ConnectionMode,
         ConnectionRequest, MixAddrType, Socks5UdpStream,
     },
 };
 use anyhow::Result;
-use futures::StreamExt;
 use lazy_static::lazy_static;
 use std::{
     future::Future,
@@ -162,18 +161,17 @@ where
                     accept_client_request.clone(),
                     connect_through_tcp_tls(tls_config_copy, domain_string_copy, remote_addr),
                 ));
-            }
-            // ConnectionMode::Quic => {
-            //     let (conn_ret_tx, conn_ret_rx) = oneshot::channel();
-            //     or_continue!(task_tx.send(conn_ret_tx).await);
-            //     tokio::spawn(forward(
-            //         stream,
-            //         shutdown_rx,
-            //         hash_copy,
-            //         accept_client_request.clone(),
-            //         async move { Ok(ClientServerConnection::Quic(conn_ret_rx.await??)) },
-            //     ));
-            // }
+            } // ConnectionMode::Quic => {
+              //     let (conn_ret_tx, conn_ret_rx) = oneshot::channel();
+              //     or_continue!(task_tx.send(conn_ret_tx).await);
+              //     tokio::spawn(forward(
+              //         stream,
+              //         shutdown_rx,
+              //         hash_copy,
+              //         accept_client_request.clone(),
+              //         async move { Ok(ClientServerConnection::Quic(conn_ret_rx.await??)) },
+              //     ));
+              // }
         }
     }
     Ok(())
@@ -248,13 +246,12 @@ async fn run_tcp_tls_server(
     loop {
         try_recv!(oneshot, upper_shutdown);
         let (stream, _peer_addr) = listener.accept().await?;
-        let acceptor_copy = acceptor.clone();
+        let stream = acceptor.accept(stream).await?;
         let shutdown_rx = shutdown_tx.subscribe();
         let hash_copy = context.options.password_hash.clone();
         let fallback_port = context.options.fallback_port.clone();
         tokio::spawn(handle_tcp_tls_connection(
             stream,
-            acceptor_copy,
             shutdown_rx,
             hash_copy,
             fallback_port,
