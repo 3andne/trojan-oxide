@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::{
-    rustls::ClientConfig, rustls::ClientSessionMemoryCache, webpki::DNSNameRef, TlsConnector,
+    rustls::ClientConfig, rustls::ClientSessionMemoryCache, webpki::DNSNameRef, TlsConnector
 };
 
 use tokio_rustls::rustls::internal::pemfile::{certs, rsa_private_keys};

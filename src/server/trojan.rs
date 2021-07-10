@@ -163,17 +163,17 @@ pub async fn handle_outbound(
             // debug!("outbound connected: {:?}", outbound);
 
             // todo: refactor with BufferedRecv
+            let (mut out_read, mut out_write) = split(outbound);
             if target.cursor < target.buf.len() {
                 debug!(
                     "remaining packet: {:?}",
                     String::from_utf8(target.buf[target.cursor..].to_vec())
                 );
                 // let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
-                outbound.write_all(&target.buf[target.cursor..]).await?;
+                out_write.write_all(&target.buf[target.cursor..]).await?;
                 // outbound.flush().await?;
             }
 
-            let (mut out_read, mut out_write) = split(outbound);
             let conn_id = CONNECTION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             info!("[tcp][{}]start relaying", conn_id);
             // let mut in_read = DebugAsyncReader::new(in_read);
