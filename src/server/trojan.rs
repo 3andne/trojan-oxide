@@ -168,9 +168,9 @@ pub async fn handle_outbound(
                     "remaining packet: {:?}",
                     String::from_utf8(target.buf[target.cursor..].to_vec())
                 );
-                let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
-                outbound.write_all_buf(&mut t).await?;
-                outbound.flush().await?;
+                // let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
+                outbound.write_all(&target.buf[target.cursor..]).await?;
+                // outbound.flush().await?;
             }
 
             let (mut out_read, mut out_write) = split(outbound);
