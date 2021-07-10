@@ -100,8 +100,8 @@ pub async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
             return Ok(());
         }
         w.write(&buf[..len]).await?;
-        if len != buf.len() {
-            w.flush().await?;
-        }
+        // if len != buf.len() {
+        //     w.flush().await?;
+        // }
     }
 }
