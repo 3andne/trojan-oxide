@@ -1,6 +1,6 @@
 use crate::{
     server::*,
-    utils::{copy_udp, ClientServerConnection, ConnectionRequest, ServerUdpStream},
+    utils::{copy_udp, copy_tcp, ClientServerConnection, ConnectionRequest, ServerUdpStream},
 };
 use anyhow::Result;
 use futures::{StreamExt, TryFutureExt};
@@ -177,11 +177,12 @@ where
             let (mut out_read, mut out_write) = outbound.split();
             let conn_id = CONNECTION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             info!("[tcp][{}]start relaying", conn_id);
+            // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
             select! {
-                _ = tokio::io::copy(&mut out_read, &mut in_write) => {
+                _ = copy_tcp(&mut out_read, &mut in_write) => {
                     debug!("server relaying upload end");
                 },
-                _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+                _ = copy_tcp(&mut in_read, &mut out_write) => {
                     debug!("server relaying download end");
                 },
                 _ = upper_shutdown.recv() => {

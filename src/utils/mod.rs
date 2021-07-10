@@ -9,7 +9,7 @@ mod trojan_udp_stream;
 use bytes::BufMut;
 pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
 pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream};
-pub use copy::copy_udp;
+pub use copy::{copy_udp, copy_tcp};
 pub use mix_addr::MixAddrType;
 pub use server_udp_stream::{ServerUdpRecvStream, ServerUdpSendStream, ServerUdpStream};
 pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream};

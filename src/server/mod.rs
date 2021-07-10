@@ -40,6 +40,7 @@ impl<'a> Target<'a> {
         Target {
             password_hash,
             fallback_port,
+            buf: Vec::with_capacity(1024),
             ..Default::default()
         }
     }
@@ -126,7 +127,12 @@ impl<'a> Target<'a> {
                         error!("Target::accept failed: {:?}", err);
                         let mut buf = Vec::new();
                         std::mem::swap(&mut buf, &mut self.buf);
-                        tokio::spawn(fallback(buf, self.fallback_port.clone(), read_half, write_half));
+                        tokio::spawn(fallback(
+                            buf,
+                            self.fallback_port.clone(),
+                            read_half,
+                            write_half,
+                        ));
                         return Err(err);
                     }
                     Err(err @ ParserError::Incomplete(_)) => {
