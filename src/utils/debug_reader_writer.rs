@@ -28,6 +28,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
+        debug!("self: {:?}", &self);
         match Pin::new(&mut self.inner).poll_read(cx, buf) {
             res @ Poll::Ready(_) => {
                 self.pending_times = 0;
@@ -35,7 +36,6 @@ where
             }
             res @ Poll::Pending => {
                 self.pending_times += 1;
-                debug!("self: {:?}", &self);
                 res
             }
         }
@@ -66,6 +66,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
+        debug!("self: {:?}", &self);
         match Pin::new(&mut self.inner).poll_write(cx, buf) {
             res @ Poll::Ready(_) => {
                 self.pending_times = 0;
@@ -73,7 +74,6 @@ where
             }
             res @ Poll::Pending => {
                 self.pending_times += 1;
-                debug!("self: {:?}", &self);
                 res
             }
         }
@@ -83,6 +83,7 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
+        debug!("self: {:?}", &self);
         match Pin::new(&mut self.inner).poll_flush(cx) {
             res @ Poll::Ready(_) => {
                 self.pending_times = 0;
@@ -90,7 +91,6 @@ where
             }
             res @ Poll::Pending => {
                 self.pending_times += 1;
-                debug!("self: {:?}", &self);
                 res
             }
         }
@@ -100,6 +100,7 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
+        debug!("self: {:?}", &self);
         match Pin::new(&mut self.inner).poll_shutdown(cx) {
             res @ Poll::Ready(_) => {
                 self.pending_times = 0;
@@ -107,7 +108,6 @@ where
             }
             res @ Poll::Pending => {
                 self.pending_times += 1;
-                debug!("self: {:?}", &self);
                 res
             }
         }
