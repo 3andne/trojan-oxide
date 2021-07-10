@@ -9,7 +9,7 @@ use std::task::Poll;
 use std::{future::Future, u64};
 use tracing::debug;
 
-const RELAY_BUFFER_SIZE: usize = 256;
+const RELAY_BUFFER_SIZE: usize = 2048;
 
 pub async fn copy_udp<'a, R: UdpRead + Unpin + Debug, W: UdpWrite + Unpin + Debug>(
     reader: &'a mut R,
@@ -92,7 +92,7 @@ pub async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     w: &mut W,
 ) -> Result<()> {
     let mut buf = [0; RELAY_BUFFER_SIZE];
-    let mut full_times = 0u8;
+    // let mut full_times = 0u8;
     loop {
         let len = r.read(&mut buf).await?;
         if len == 0 {
@@ -101,24 +101,24 @@ pub async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         w.write(&buf[..len]).await?;
         if len != buf.len() {
             w.flush().await?;
-            if full_times == 2 {
-                break;
-            }
-        } else {
-            full_times += 1;
+        //     if full_times == 2 {
+        //         break;
+        //     }
+        // } else {
+        //     full_times += 1;
         }
     }
 
-    let mut buf = Vec::with_capacity(2048);
-    loop {
-        let len = r.read(&mut buf).await?;
-        if len == 0 {
-            break;
-        }
-        w.write(&buf[..len]).await?;
-        if len != buf.len() {
-            w.flush().await?;
-        }
-    }
-    Ok(())
+    // let mut buf = Vec::with_capacity(2048);
+    // loop {
+    //     let len = r.read(&mut buf).await?;
+    //     if len == 0 {
+    //         break;
+    //     }
+    //     w.write(&buf[..len]).await?;
+    //     if len != buf.len() {
+    //         w.flush().await?;
+    //     }
+    // }
+    // Ok(())
 }
