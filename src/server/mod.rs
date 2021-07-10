@@ -41,6 +41,7 @@ impl<'a> Target<'a> {
         Target {
             password_hash,
             fallback_port,
+            buf: Vec::with_capacity(4096),
             ..Default::default()
         }
     }
