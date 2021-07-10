@@ -145,6 +145,19 @@ pub async fn handle_tcp_tls_connection(
     Ok(())
 }
 
+async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(r: &mut R, w: &mut W) -> Result<()> {
+    let mut buf = [0u8; 4096];
+    loop {
+        let len = r.read(&mut buf).await?;
+        if len == 0 {
+            break;
+        }
+        w.write(&buf[..len]).await?;
+        w.flush().await?;
+    }
+    Ok(())
+}
+
 pub async fn handle_outbound(
     stream: TlsStream<TcpStream>,
     mut upper_shutdown: broadcast::Receiver<()>,
@@ -155,7 +168,7 @@ pub async fn handle_outbound(
     use ConnectionRequest::*;
     match target.accept(stream).await {
         Ok(TCP((mut in_write, mut in_read))) => {
-            let mut outbound = if target.host.is_ip() {
+            let outbound = if target.host.is_ip() {
                 TcpStream::connect(target.host.to_socket_addrs()).await?
             } else {
                 TcpStream::connect(target.host.host_repr()).await?
@@ -171,7 +184,7 @@ pub async fn handle_outbound(
                 );
                 // let mut t = std::io::Cursor::new(&target.buf[target.cursor..]);
                 out_write.write_all(&target.buf[target.cursor..]).await?;
-                // outbound.flush().await?;
+                out_write.flush().await?;
             }
 
             let conn_id = CONNECTION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -181,10 +194,12 @@ pub async fn handle_outbound(
             // let mut in_write = DebugAsyncWriter::new(in_write);
             // let mut out_write = DebugAsyncWriter::new(out_write);
             select! {
-                _ = tokio::io::copy(&mut out_read, &mut in_write) => {
+                // _ = tokio::io::copy(&mut out_read, &mut in_write) => {
+                _ = copy_tcp(&mut out_read, &mut in_write) => {
                     debug!("server relaying upload end");
                 },
-                _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+                // _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+                _ = copy_tcp(&mut in_read, &mut out_write) => {
                     debug!("server relaying download end");
                 },
                 _ = upper_shutdown.recv() => {
