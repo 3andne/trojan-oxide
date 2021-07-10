@@ -1,6 +1,10 @@
 use crate::{
     server::*,
-    utils::{copy_udp, ClientServerConnection, ConnectionRequest, ServerUdpStream},
+    utils::{
+        copy_udp,
+        debug_reader_writer::{DebugAsyncReader, DebugAsyncWriter},
+        ClientServerConnection, ConnectionRequest, ServerUdpStream,
+    },
 };
 use anyhow::Result;
 use futures::{StreamExt, TryFutureExt};
@@ -174,9 +178,13 @@ where
                 outbound.flush().await?;
             }
 
-            let (mut out_read, mut out_write) = outbound.split();
+            let (out_read, out_write) = outbound.split();
             let conn_id = CONNECTION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             info!("[tcp][{}]start relaying", conn_id);
+            let mut in_read = DebugAsyncReader::new(in_read);
+            let mut out_read = DebugAsyncReader::new(out_read);
+            let mut in_write = DebugAsyncWriter::new(in_write);
+            let mut out_write = DebugAsyncWriter::new(out_write);
             select! {
                 _ = tokio::io::copy(&mut out_read, &mut in_write) => {
                     debug!("server relaying upload end");

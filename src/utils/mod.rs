@@ -5,6 +5,7 @@ mod copy;
 mod mix_addr;
 mod server_udp_stream;
 mod trojan_udp_stream;
+pub mod debug_reader_writer;
 
 use bytes::BufMut;
 pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
