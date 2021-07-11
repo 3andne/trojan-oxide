@@ -1,27 +1,63 @@
+#[cfg(feature = "client")]
 mod client_tcp_stream;
-mod client_udp_stream;
-mod copy;
-mod data_transfer;
-mod mix_addr;
-mod server_udp_stream;
-mod trojan_udp_stream;
-
-use bytes::BufMut;
+#[cfg(feature = "client")]
 pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
+
+#[cfg(all(feature = "client", feature = "udp"))]
+mod client_udp_stream;
+#[cfg(all(feature = "client", feature = "udp"))]
 pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream};
-pub use copy::{copy_tcp, copy_udp};
-pub use data_transfer::{relay_tcp, relay_udp};
-pub use mix_addr::MixAddrType;
+
+#[cfg(all(feature = "server", feature = "udp"))]
+mod server_udp_stream;
+#[cfg(all(feature = "server", feature = "udp"))]
 pub use server_udp_stream::{ServerUdpRecvStream, ServerUdpSendStream, ServerUdpStream};
+
+#[cfg(feature = "udp")]
+mod trojan_udp_stream;
+#[cfg(feature = "udp")]
 pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream};
 
-use quinn::*;
-use std::ops::Deref;
+#[cfg(feature = "udp")]
+mod udp_relay_buffer;
+#[cfg(feature = "udp")]
+pub use udp_relay_buffer::UdpRelayBuffer;
+
+#[cfg(feature = "udp")]
+mod udp_traits;
+#[cfg(feature = "udp")]
+pub use udp_traits::{UdpRead, UdpWrite};
+#[cfg(feature = "udp")]
+mod copy_udp;
+#[cfg(feature = "udp")]
+pub use copy_udp::copy_udp;
+
+mod copy_tcp;
+#[cfg(feature = "client")]
+mod data_transfer;
+mod macros;
+mod mix_addr;
+use bytes::BufMut;
+
+pub use copy_tcp::copy_tcp;
+
+#[cfg(feature = "client")]
+pub use data_transfer::relay_tcp;
+#[cfg(all(feature = "udp", feature = "client"))]
+pub use data_transfer::relay_udp;
+pub use mix_addr::MixAddrType;
+
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::Poll;
 use tokio::io::{AsyncRead, ReadBuf};
+#[cfg(feature = "client")]
 use tokio::net::TcpStream;
+
+#[cfg(feature = "client")]
 use tokio_rustls::client::TlsStream;
+
+#[cfg(feature = "quic")]
+use quinn::*;
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
@@ -79,99 +115,6 @@ impl<'a> CursoredBuffer for (&'a mut usize, &Vec<u8>) {
     }
 }
 
-#[derive(Debug)]
-pub struct UdpRelayBuffer {
-    cursor: usize,
-    inner: Vec<u8>,
-}
-
-impl<'a> UdpRelayBuffer {
-    fn new() -> Self {
-        let buf = Vec::with_capacity(2048);
-        Self {
-            cursor: 0,
-            inner: buf,
-        }
-    }
-
-    fn as_read_buf(&'a mut self) -> ReadBuf<'a> {
-        self.inner.as_read_buf()
-    }
-
-    unsafe fn advance_mut(&mut self, cnt: usize) {
-        self.inner.advance_mut(cnt);
-    }
-
-    unsafe fn reset(&mut self) {
-        self.inner.set_len(0);
-        self.cursor = 0;
-    }
-
-    fn has_remaining(&self) -> bool {
-        self.cursor < self.inner.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-
-    fn pump(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let data_len = self.remaining();
-        for i in 0..data_len {
-            self.inner[i] = self.inner[i + self.cursor];
-        }
-        unsafe {
-            self.inner.set_len(data_len);
-        }
-        self.cursor = 0;
-    }
-}
-
-impl<'a> CursoredBuffer for UdpRelayBuffer {
-    fn chunk(&self) -> &[u8] {
-        &self.inner[self.cursor..]
-    }
-
-    fn advance(&mut self, len: usize) {
-        assert!(
-            self.inner.len() >= self.cursor + len,
-            "UdpRelayBuffer was about to set a larger position({}+{}) than it's length({})",
-            self.cursor,
-            len,
-            self.inner.len()
-        );
-        self.cursor += len;
-    }
-}
-
-impl Deref for UdpRelayBuffer {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        self.chunk()
-    }
-}
-
-pub trait UdpRead {
-    fn poll_proxy_stream_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut UdpRelayBuffer,
-    ) -> Poll<std::io::Result<crate::utils::MixAddrType>>;
-}
-
-pub trait UdpWrite {
-    fn poll_proxy_stream_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-        addr: &MixAddrType,
-    ) -> Poll<std::io::Result<usize>>;
-}
-
 pub trait VecAsReadBufExt<'a> {
     fn as_read_buf(&'a mut self) -> ReadBuf<'a>;
 }
@@ -194,15 +137,18 @@ impl ExtendableFromSlice for Vec<u8> {
     }
 }
 
-impl ExtendableFromSlice for UdpRelayBuffer {
-    fn extend_from_slice(&mut self, src: &[u8]) {
-        self.inner.extend_from_slice(src);
-    }
-}
-
+#[cfg(feature = "udp")]
 pub enum ConnectionRequest<TcpRequest, UdpRequest> {
     TCP(TcpRequest),
     UDP(UdpRequest),
+    #[cfg(feature = "quic")]
+    ECHO(TcpRequest),
+}
+
+#[cfg(not(feature = "udp"))]
+pub enum ConnectionRequest<TcpRequest> {
+    TCP(TcpRequest),
+    #[cfg(feature = "quic")]
     ECHO(TcpRequest),
 }
 
@@ -245,10 +191,13 @@ where
 #[derive(Debug, Clone)]
 pub enum ConnectionMode {
     TcpTLS,
+    #[cfg(feature = "quic")]
     Quic,
 }
 
+#[cfg(feature = "client")]
 pub enum ClientServerConnection {
+    #[cfg(feature = "quic")]
     Quic((SendStream, RecvStream)),
     TcpTLS(TlsStream<TcpStream>),
 }

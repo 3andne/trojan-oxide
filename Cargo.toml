@@ -34,3 +34,19 @@ criterion = "0.3"
 [[bench]]
 name = "bench_simd"
 harness = false
+
+[profile.release]
+codegen-units = 1
+incremental = false
+lto = true
+opt-level = 3
+
+[features]
+server = []
+client = []
+tcp_tls = []
+quic = []
+udp = []
+full = ["server", "client", "tcp_tls", "quic", "udp"]
+#default = ["full"]
+default = ["client"]

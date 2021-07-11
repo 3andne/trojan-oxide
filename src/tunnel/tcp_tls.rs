@@ -1,4 +1,5 @@
 use crate::args::Opt;
+#[cfg(feature = "client")]
 use crate::utils::ClientServerConnection;
 use anyhow::{anyhow, Result};
 use rustls_native_certs;
@@ -21,6 +22,8 @@ use tokio_rustls::{
 use tokio_rustls::rustls::internal::pemfile::{certs, rsa_private_keys};
 use tokio_rustls::rustls::{Certificate, NoClientAuth, PrivateKey, ServerConfig, Ticketer};
 
+
+#[cfg(feature = "client")]
 pub async fn tls_client_config() -> ClientConfig {
     let mut config = ClientConfig::new();
     // config
@@ -32,6 +35,7 @@ pub async fn tls_client_config() -> ClientConfig {
     config
 }
 
+#[cfg(feature = "client")]
 pub async fn connect_through_tcp_tls(
     config: Arc<ClientConfig>,
     domain_string: Arc<String>,

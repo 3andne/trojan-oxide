@@ -1,14 +1,18 @@
 // #![feature(aarch64_target_feature)]
 // #![feature(stdsimd)]
 mod proxy;
+#[cfg(feature = "client")]
+mod client;
+
+#[cfg(feature = "server")]
 mod server;
+mod protocol;
 // pub mod simd;
 
 mod args;
 use args::{Opt, TrojanContext};
 use structopt::StructOpt;
 
-mod client;
 mod tunnel;
 mod utils;
 

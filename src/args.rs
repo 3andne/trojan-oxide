@@ -1,4 +1,4 @@
-use crate::{server::HASH_LEN, utils::ConnectionMode};
+use crate::{protocol::HASH_LEN, utils::ConnectionMode};
 use sha2::{Digest, Sha224};
 use std::fmt::Write;
 use std::net::SocketAddr;
@@ -23,9 +23,11 @@ fn parse_connection_mode(l: &str) -> ConnectionMode {
         "t" => ConnectionMode::TcpTLS,
         "tcp" => ConnectionMode::TcpTLS,
         "tcp_tls" => ConnectionMode::TcpTLS,
+        #[cfg(feature = "quic")]
         "quic" => ConnectionMode::Quic,
+        #[cfg(feature = "quic")]
         "q" => ConnectionMode::Quic,
-        _ => ConnectionMode::Quic,
+        _ => ConnectionMode::TcpTLS,
     }
 }
 

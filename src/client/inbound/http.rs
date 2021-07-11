@@ -1,7 +1,8 @@
 use crate::{
     utils::ConnectionRequest,
-    utils::{ClientTcpStream, MixAddrType, ParserError, Socks5UdpStream},
+    utils::{ClientTcpStream, MixAddrType, ParserError},
 };
+
 use anyhow::{Error, Result};
 // use futures::future;
 // use std::io::IoSlice;
@@ -9,6 +10,8 @@ use anyhow::{Error, Result};
 use tokio::io::*;
 use tokio::net::TcpStream;
 use tracing::*;
+
+use super::ClientConnectionRequest;
 
 pub struct HttpRequest {
     is_https: bool,
@@ -121,10 +124,7 @@ impl HttpRequest {
         Err(ParserError::Incomplete("HttpRequest::parse"))
     }
 
-    pub async fn accept(
-        &mut self,
-        mut inbound: TcpStream,
-    ) -> Result<ConnectionRequest<ClientTcpStream, Socks5UdpStream>> {
+    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ClientConnectionRequest> {
         let mut buffer = Vec::with_capacity(200);
         loop {
             let read = inbound.read_buf(&mut buffer).await?;
