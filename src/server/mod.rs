@@ -4,7 +4,7 @@ use crate::{
     expect_buf_len,
     utils::{
         new_trojan_udp_stream, BufferedRecv, ConnectionRequest, MixAddrType, ParserError,
-        TrojanUdpRecvStream, TrojanUdpSendStream,
+        TrojanUdpRecvStream, TrojanUdpSendStream, copy_tcp
     },
 };
 use anyhow::Result;
@@ -210,7 +210,7 @@ async fn fallback<IR: AsyncRead + Unpin, IW: AsyncWrite + Unpin>(
     let (mut out_read, mut out_write) = outbound.split();
 
     select! {
-        res = tokio::io::copy(&mut out_read, &mut in_write) => {
+        res = copy_tcp(&mut out_read, &mut in_write) => {
             debug!("tcp relaying download end, {:?}", res);
         },
         res = tokio::io::copy(&mut in_read, &mut out_write) => {

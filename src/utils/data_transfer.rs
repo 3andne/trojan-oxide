@@ -1,5 +1,6 @@
 use crate::utils::{
-    copy_udp, new_trojan_udp_stream, ClientServerConnection, ClientTcpStream, Socks5UdpStream,
+    copy_tcp, copy_udp, new_trojan_udp_stream, ClientServerConnection, ClientTcpStream,
+    Socks5UdpStream,
 };
 use tokio::{io::split, select, sync::broadcast};
 use tracing::debug;
@@ -30,7 +31,7 @@ pub async fn relay_tcp(
                 res = tokio::io::copy(&mut out_read, &mut in_write) => {
                     debug!("tcp relaying download end, {:?}", res);
                 },
-                res = tokio::io::copy(&mut in_read, &mut out_write) => {
+                res = copy_tcp(&mut in_read, &mut out_write) => {
                     debug!("tcp relaying upload end, {:?}", res);
                 },
                 _ = upper_shutdown.recv() => {
