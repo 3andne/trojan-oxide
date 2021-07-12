@@ -64,6 +64,7 @@ where
         }
         #[cfg(feature = "quic")]
         ECHO(_) => panic!("unreachable"),
+        #[allow(unreachable_patterns)]
         _ => panic!("functionality not included"),
     }
 

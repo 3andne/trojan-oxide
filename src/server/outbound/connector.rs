@@ -11,11 +11,9 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-use tokio::{
-    net::{TcpStream, UdpSocket},
-    select,
-    sync::broadcast,
-};
+#[cfg(feature = "udp")]
+use tokio::net::UdpSocket;
+use tokio::{net::TcpStream, select, sync::broadcast};
 use tracing::{debug, info};
 
 lazy_static! {

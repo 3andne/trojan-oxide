@@ -1,53 +1,17 @@
 use crate::args::Opt;
-#[cfg(feature = "client")]
-use crate::utils::ClientServerConnection;
-use anyhow::{anyhow, Result};
-use rustls_native_certs;
+use anyhow::Result;
 use std::fs::File;
 use std::io::{self, BufReader};
-use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::Arc;
-use tokio::net::TcpStream;
 use tokio_rustls::rustls::ciphersuite::{
     TLS13_AES_128_GCM_SHA256, TLS13_AES_256_GCM_SHA384, TLS13_CHACHA20_POLY1305_SHA256,
     TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
     TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
     TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
 };
-use tokio_rustls::{
-    rustls::ClientConfig, rustls::ClientSessionMemoryCache, webpki::DNSNameRef, TlsConnector,
-};
 
 use tokio_rustls::rustls::internal::pemfile::{certs, rsa_private_keys};
 use tokio_rustls::rustls::{Certificate, NoClientAuth, PrivateKey, ServerConfig, Ticketer};
-
-
-#[cfg(feature = "client")]
-pub async fn tls_client_config() -> ClientConfig {
-    let mut config = ClientConfig::new();
-    // config
-    //     .root_store
-    //     .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-    config.root_store =
-        rustls_native_certs::load_native_certs().expect("could not load platform certs");
-    config.set_persistence(ClientSessionMemoryCache::new(128));
-    config
-}
-
-#[cfg(feature = "client")]
-pub async fn connect_through_tcp_tls(
-    config: Arc<ClientConfig>,
-    domain_string: Arc<String>,
-    remote_addr: SocketAddr,
-) -> Result<ClientServerConnection> {
-    let domain =
-        DNSNameRef::try_from_ascii_str(&domain_string).map_err(|_| anyhow!("invalid dnsname"))?;
-    let connector = TlsConnector::from(config);
-    let stream = TcpStream::connect(remote_addr).await?;
-    let stream = connector.connect(domain, stream).await?;
-    return Ok(ClientServerConnection::TcpTLS(stream));
-}
 
 fn load_certs(path: &Path) -> io::Result<Vec<Certificate>> {
     certs(&mut BufReader::new(File::open(path)?))

@@ -33,13 +33,12 @@ mod copy_udp;
 pub use copy_udp::copy_udp;
 
 mod copy_tcp;
+pub use copy_tcp::copy_tcp;
 #[cfg(feature = "client")]
 mod data_transfer;
 mod macros;
 mod mix_addr;
 use bytes::BufMut;
-
-pub use copy_tcp::copy_tcp;
 
 #[cfg(feature = "client")]
 pub use data_transfer::relay_tcp;
@@ -53,10 +52,10 @@ use tokio::io::{AsyncRead, ReadBuf};
 #[cfg(feature = "client")]
 use tokio::net::TcpStream;
 
-#[cfg(feature = "client")]
+#[cfg(all(feature = "client", feature = "tcp_tls"))]
 use tokio_rustls::client::TlsStream;
 
-#[cfg(feature = "quic")]
+#[cfg(all(feature = "quic", feature = "client"))]
 use quinn::*;
 
 #[derive(Debug, err_derive::Error)]

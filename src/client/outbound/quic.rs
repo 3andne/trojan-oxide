@@ -11,10 +11,8 @@ use tokio::time::sleep;
 use tokio::time::timeout;
 use tokio::{fs, io};
 use tracing::*;
-use webpki_roots;
 
 use crate::protocol::*;
-
 
 lazy_static! {
     static ref IS_CONNECTION_OPENED: AtomicBool = AtomicBool::new(false);
@@ -198,9 +196,9 @@ async fn new_builder(options: &Opt) -> Result<EndpointBuilder> {
 
     let mut cfg = client_config.build();
     let tls_cfg = Arc::get_mut(&mut cfg.crypto).unwrap();
-    tls_cfg
-        .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+
+    tls_cfg.root_store =
+        rustls_native_certs::load_native_certs().expect("could not load platform certs");
 
     let transport_cfg = Arc::get_mut(&mut cfg.transport).unwrap();
     transport_cfg.max_idle_timeout(Some(MAX_IDLE_TIMEOUT))?;

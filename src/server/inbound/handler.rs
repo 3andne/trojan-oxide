@@ -1,12 +1,16 @@
-#[cfg(feature = "quic")]
-use {crate::server::inbound::QuicStream, quinn::*};
 use crate::server::outbound::handle_outbound;
 use anyhow::Result;
-use futures::{StreamExt, TryFutureExt};
 use std::sync::Arc;
-use tokio::{net::TcpStream, select, sync::broadcast};
-use tokio_rustls::TlsAcceptor;
-use tracing::{debug, error, info};
+use tokio::{select, sync::broadcast};
+use tracing::{error, info};
+#[cfg(feature = "quic")]
+use {
+    crate::server::inbound::QuicStream,
+    futures::{StreamExt, TryFutureExt},
+    quinn::*,
+};
+#[cfg(feature = "tcp_tls")]
+use {tokio::net::TcpStream, tokio_rustls::TlsAcceptor};
 
 #[cfg(feature = "quic")]
 pub async fn handle_quic_connection(
@@ -46,7 +50,7 @@ pub async fn handle_quic_connection(
         let fallback_port_clone = fallback_port.clone();
         tokio::spawn(
             handle_outbound(stream, shutdown, pass_copy, fallback_port_clone).map_err(|e| {
-                debug!("handle_quic_outbound quit due to {:?}", e);
+                error!("handle_quic_outbound quit due to {:?}", e);
                 e
             }),
         );
@@ -54,6 +58,7 @@ pub async fn handle_quic_connection(
     Ok(())
 }
 
+#[cfg(feature = "tcp_tls")]
 pub async fn handle_tcp_tls_connection(
     stream: TcpStream,
     acceptor: TlsAcceptor,

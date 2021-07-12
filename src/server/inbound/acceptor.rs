@@ -15,11 +15,18 @@ use tokio::io::AsyncReadExt;
 use tracing::*;
 
 #[cfg(feature = "udp")]
-type ServerConnectionRequest<I: SplitableToAsyncReadWrite> =
-    ConnectionRequest<(I::W, BufferedRecv<I::R>), TrojanUdpStream<I::W, I::R>>;
+type ServerConnectionRequest<I> = ConnectionRequest<
+    (
+        <I as SplitableToAsyncReadWrite>::W,
+        BufferedRecv<<I as SplitableToAsyncReadWrite>::R>,
+    ),
+    TrojanUdpStream<<I as SplitableToAsyncReadWrite>::W, <I as SplitableToAsyncReadWrite>::R>,
+>;
 #[cfg(not(feature = "udp"))]
-type ServerConnectionRequest<I: SplitableToAsyncReadWrite + Debug + Unpin> =
-    ConnectionRequest<(I::W, BufferedRecv<I::R>)>;
+type ServerConnectionRequest<I> = ConnectionRequest<(
+    <I as SplitableToAsyncReadWrite>::W,
+    BufferedRecv<<I as SplitableToAsyncReadWrite>::R>,
+)>;
 #[derive(Default, Debug)]
 pub struct TrojanAcceptor<'a> {
     pub host: MixAddrType,

@@ -3,7 +3,7 @@ mod handler;
 mod listener;
 mod stream_trait;
 #[cfg(feature = "quic")]
-mod streams;
+mod quic;
 #[cfg(feature = "tcp_tls")]
 mod tcp_tls;
 
@@ -14,7 +14,7 @@ pub use acceptor::TrojanAcceptor;
 pub use listener::tcp_tls_listener;
 pub use stream_trait::SplitableToAsyncReadWrite;
 #[cfg(feature = "quic")]
-pub use {listener::quic_listener, streams::QuicStream};
+pub use {listener::quic_listener, quic::QuicStream};
 
 use crate::args::Opt;
 use std::net::{SocketAddr, ToSocketAddrs};

@@ -48,6 +48,7 @@ pub async fn build_tunnel(ctrl_c: impl std::future::Future, context: TrojanConte
                 }
             }
         }
+        #[allow(unreachable_patterns)]
         _ => panic!("function not complied"),
     }
 

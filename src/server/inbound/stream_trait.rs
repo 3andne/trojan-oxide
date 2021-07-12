@@ -1,10 +1,14 @@
 use std::fmt::Debug;
 
-use tokio::{
-    io::{split, AsyncRead, AsyncWrite, ReadHalf, WriteHalf},
-    net::TcpStream,
+use tokio::io::{AsyncRead, AsyncWrite};
+#[cfg(feature = "tcp_tls")]
+use {
+    tokio::{
+        io::{split, ReadHalf, WriteHalf},
+        net::TcpStream,
+    },
+    tokio_rustls::server::TlsStream,
 };
-use tokio_rustls::server::TlsStream;
 
 #[cfg(feature = "quic")]
 use {super::QuicStream, quinn::*};
@@ -33,6 +37,7 @@ impl QuicStream {
     }
 }
 
+#[cfg(feature = "tcp_tls")]
 impl SplitableToAsyncReadWrite for TlsStream<TcpStream> {
     type R = ReadHalf<TlsStream<TcpStream>>;
     type W = WriteHalf<TlsStream<TcpStream>>;

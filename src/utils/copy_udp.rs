@@ -1,15 +1,11 @@
 use futures::ready;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::{CursoredBuffer, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
-use anyhow::Result;
 use std::fmt::Debug;
 use std::pin::Pin;
 use std::task::Poll;
 use std::{future::Future, u64};
 use tracing::debug;
-
-const RELAY_BUFFER_SIZE: usize = 2048;
 
 pub async fn copy_udp<'a, R: UdpRead + Unpin + Debug, W: UdpWrite + Unpin + Debug>(
     reader: &'a mut R,

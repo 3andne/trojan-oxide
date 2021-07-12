@@ -2,7 +2,7 @@ use crate::{args::TrojanContext, try_recv};
 
 #[cfg(feature = "quic")]
 use crate::{
-    server::inbound::handler::handle_quic_connection, server::inbound::streams::quic_tunnel_rx,
+    server::inbound::handler::handle_quic_connection, server::inbound::quic::quic_tunnel_rx,
 };
 
 use anyhow::Result;

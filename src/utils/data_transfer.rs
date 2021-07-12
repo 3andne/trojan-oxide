@@ -1,8 +1,10 @@
-use crate::utils::{copy_tcp, ClientServerConnection, ClientTcpStream};
 #[cfg(feature = "udp")]
 use crate::utils::{copy_udp, new_trojan_udp_stream, Socks5UdpStream};
-use tokio::{io::split, select, sync::broadcast};
+use crate::utils::{ClientServerConnection, ClientTcpStream};
+use tokio::{select, sync::broadcast};
 use tracing::debug;
+#[cfg(feature = "tcp_tls")]
+use {crate::utils::copy_tcp, tokio::io::split};
 
 pub async fn relay_tcp(
     mut inbound: ClientTcpStream,
