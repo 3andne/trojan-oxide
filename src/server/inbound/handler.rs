@@ -1,9 +1,8 @@
 #[cfg(feature = "quic")]
-use crate::server::inbound::QuicStream;
+use {crate::server::inbound::QuicStream, quinn::*};
 use crate::server::outbound::handle_outbound;
 use anyhow::Result;
 use futures::{StreamExt, TryFutureExt};
-use quinn::*;
 use std::sync::Arc;
 use tokio::{net::TcpStream, select, sync::broadcast};
 use tokio_rustls::TlsAcceptor;

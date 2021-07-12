@@ -1,20 +1,25 @@
-use crate::{
-    args::TrojanContext,
-    server::inbound::handler::handle_tcp_tls_connection,
-    try_recv,
-    tunnel::{get_server_local_addr, tcp_tls::*},
-};
+use crate::{args::TrojanContext, try_recv};
+
 #[cfg(feature = "quic")]
-use crate::{server::inbound::handler::handle_quic_connection, tunnel::quic::*};
+use crate::{
+    server::inbound::handler::handle_quic_connection, server::inbound::streams::quic_tunnel_rx,
+};
+
 use anyhow::Result;
 use futures::StreamExt;
-use std::sync::Arc;
-use tokio::{
-    net::TcpListener,
-    sync::{broadcast, oneshot},
-};
-use tokio_rustls::TlsAcceptor;
+use tokio::sync::{broadcast, oneshot};
 use tracing::*;
+
+#[cfg(feature = "tcp_tls")]
+use {
+    crate::server::inbound::{
+        get_server_local_addr,
+        {handler::handle_tcp_tls_connection, tcp_tls::*},
+    },
+    std::sync::Arc,
+    tokio::net::TcpListener,
+    tokio_rustls::TlsAcceptor,
+};
 
 #[cfg(feature = "quic")]
 pub async fn quic_listener(
@@ -50,6 +55,7 @@ pub async fn quic_listener(
     Ok(())
 }
 
+#[cfg(feature = "tcp_tls")]
 pub async fn tcp_tls_listener(
     mut upper_shutdown: oneshot::Receiver<()>,
     context: TrojanContext,

@@ -19,15 +19,24 @@ fn parse_log_level(l: &str) -> tracing::Level {
 
 fn parse_connection_mode(l: &str) -> ConnectionMode {
     match &l.to_lowercase()[..] {
+        #[cfg(feature = "tcp_tls")]
         "tcp-tls" => ConnectionMode::TcpTLS,
+        #[cfg(feature = "tcp_tls")]
         "t" => ConnectionMode::TcpTLS,
+        #[cfg(feature = "tcp_tls")]
         "tcp" => ConnectionMode::TcpTLS,
+        #[cfg(feature = "tcp_tls")]
         "tcp_tls" => ConnectionMode::TcpTLS,
         #[cfg(feature = "quic")]
         "quic" => ConnectionMode::Quic,
         #[cfg(feature = "quic")]
         "q" => ConnectionMode::Quic,
+        #[cfg(not(feature = "quic"))]
         _ => ConnectionMode::TcpTLS,
+        #[cfg(not(feature = "tcp_tls"))]
+        _ => ConnectionMode::Quic,
+        #[cfg(all(feature = "tcp_tls", feature = "quic"))]
+        _ => ConnectionMode::Quic,
     }
 }
 

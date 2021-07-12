@@ -17,6 +17,7 @@ pub async fn trojan_auth_udp(
         ClientServerConnection::Quic((out_write, _)) => {
             trojan_auth(true, &addr, out_write, password).await
         }
+        #[cfg(feature = "tcp_tls")]
         ClientServerConnection::TcpTLS(out_write) => {
             trojan_auth(true, &addr, out_write, password).await
         }
@@ -33,6 +34,7 @@ pub async fn trojan_auth_tcp(
         ClientServerConnection::Quic((out_write, _)) => {
             trojan_auth(false, addr, out_write, password).await
         }
+        #[cfg(feature = "tcp_tls")]
         ClientServerConnection::TcpTLS(out_write) => {
             trojan_auth(false, addr, out_write, password).await
         }

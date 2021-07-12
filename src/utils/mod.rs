@@ -190,6 +190,7 @@ where
 
 #[derive(Debug, Clone)]
 pub enum ConnectionMode {
+    #[cfg(feature = "tcp_tls")]
     TcpTLS,
     #[cfg(feature = "quic")]
     Quic,
@@ -199,5 +200,6 @@ pub enum ConnectionMode {
 pub enum ClientServerConnection {
     #[cfg(feature = "quic")]
     Quic((SendStream, RecvStream)),
+    #[cfg(feature = "tcp_tls")]
     TcpTLS(TlsStream<TcpStream>),
 }

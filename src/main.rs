@@ -9,11 +9,15 @@ mod server;
 mod protocol;
 // pub mod simd;
 
+#[cfg(not(any(feature = "quic", feature = "tcp_tls")))]
+mod must_choose_between_quic_and_tcp_tls;
+#[cfg(not(any(feature = "client", feature = "server")))]
+mod must_choose_between_client_and_server;
+
 mod args;
 use args::{Opt, TrojanContext};
 use structopt::StructOpt;
 
-mod tunnel;
 mod utils;
 
 use anyhow::anyhow;

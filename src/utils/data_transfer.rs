@@ -25,6 +25,7 @@ pub async fn relay_tcp(
                 },
             }
         }
+        #[cfg(feature = "tcp_tls")]
         ClientServerConnection::TcpTLS(out_tls) => {
             let (mut out_read, mut out_write) = split(out_tls);
             select! {
@@ -65,6 +66,7 @@ pub async fn relay_udp(
                 },
             }
         }
+        #[cfg(feature = "tcp_tls")]
         ClientServerConnection::TcpTLS(out_tls) => {
             let (out_read, out_write) = split(out_tls);
             let (mut out_write, mut out_read) = new_trojan_udp_stream(out_write, out_read, None);

@@ -15,8 +15,6 @@ tracing-futures = "0.2.5"
 tracing-subscriber = "0.2.19"
 futures = "0.3"
 err-derive = "0.3.0"
-quinn = "0.7.2"
-quinn-proto = "0.7.3"
 directories = "3.0"
 structopt = "0.3.21"
 rcgen = "0.8.11"
@@ -30,6 +28,14 @@ rustls-native-certs = "*"
 
 [dev-dependencies]
 criterion = "0.3"
+
+[dependencies.quinn]
+version = "0.7.2"
+optional = true
+
+[dependencies.quinn-proto]
+version = "0.7.3"
+optional = true
 
 [[bench]]
 name = "bench_simd"
@@ -45,8 +51,8 @@ opt-level = 3
 server = []
 client = []
 tcp_tls = []
-quic = []
+quic = ["quinn", "quinn-proto"]
 udp = []
 full = ["server", "client", "tcp_tls", "quic", "udp"]
 #default = ["full"]
-default = ["client"]
+default = ["client", "tcp_tls"]

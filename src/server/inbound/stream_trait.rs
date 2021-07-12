@@ -1,6 +1,5 @@
 use std::fmt::Debug;
 
-use quinn::*;
 use tokio::{
     io::{split, AsyncRead, AsyncWrite, ReadHalf, WriteHalf},
     net::TcpStream,
@@ -8,7 +7,7 @@ use tokio::{
 use tokio_rustls::server::TlsStream;
 
 #[cfg(feature = "quic")]
-use super::QuicStream;
+use {super::QuicStream, quinn::*};
 
 pub trait SplitableToAsyncReadWrite {
     type R: AsyncRead + Unpin + Debug + Send + 'static;

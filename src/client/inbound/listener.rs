@@ -4,12 +4,13 @@ use crate::{
     args::TrojanContext,
     client::outbound::forward,
     or_continue, try_recv,
-    tunnel::tcp_tls::*,
     utils::{ClientServerConnection, ConnectionMode, MixAddrType},
 };
 
 #[cfg(feature = "quic")]
-use crate::tunnel::quic::*;
+use crate::client::outbound::quic::*;
+#[cfg(feature = "tcp_tls")]
+use crate::client::outbound::tcp_tls::*;
 use anyhow::Result;
 use std::{future::Future, net::SocketAddr, sync::Arc};
 use tokio::{
@@ -35,6 +36,8 @@ where
     let hash = context.options.password_hash.clone();
     let remote_addr = context.remote_socket_addr;
     let domain_string = Arc::new(context.options.proxy_url.clone());
+
+    #[cfg(feature = "tcp_tls")]
     let tls_config = Arc::new(tls_client_config().await);
 
     #[cfg(feature = "quic")]
@@ -50,6 +53,7 @@ where
         let hash_copy = hash.clone();
 
         match &context.options.connection_mode {
+            #[cfg(feature = "tcp_tls")]
             ConnectionMode::TcpTLS => {
                 let tls_config_copy = tls_config.clone();
                 let domain_string_copy = domain_string.clone();
