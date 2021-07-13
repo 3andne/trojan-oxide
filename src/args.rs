@@ -1,6 +1,7 @@
-use crate::server::HASH_LEN;
+use crate::{protocol::HASH_LEN, utils::ConnectionMode};
 use sha2::{Digest, Sha224};
 use std::fmt::Write;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use structopt::StructOpt;
@@ -13,6 +14,29 @@ fn parse_log_level(l: &str) -> tracing::Level {
         "error" => tracing::Level::ERROR,
         "trace" => tracing::Level::TRACE,
         _ => tracing::Level::INFO,
+    }
+}
+
+fn parse_connection_mode(l: &str) -> ConnectionMode {
+    match &l.to_lowercase()[..] {
+        #[cfg(feature = "tcp_tls")]
+        "tcp-tls" => ConnectionMode::TcpTLS,
+        #[cfg(feature = "tcp_tls")]
+        "t" => ConnectionMode::TcpTLS,
+        #[cfg(feature = "tcp_tls")]
+        "tcp" => ConnectionMode::TcpTLS,
+        #[cfg(feature = "tcp_tls")]
+        "tcp_tls" => ConnectionMode::TcpTLS,
+        #[cfg(feature = "quic")]
+        "quic" => ConnectionMode::Quic,
+        #[cfg(feature = "quic")]
+        "q" => ConnectionMode::Quic,
+        #[cfg(not(feature = "quic"))]
+        _ => ConnectionMode::TcpTLS,
+        #[cfg(not(feature = "tcp_tls"))]
+        _ => ConnectionMode::Quic,
+        #[cfg(all(feature = "tcp_tls", feature = "quic"))]
+        _ => ConnectionMode::Quic,
     }
 }
 
@@ -43,6 +67,10 @@ fn password_to_hash(s: &str) -> Arc<String> {
     Arc::new(s)
 }
 
+fn arc_string(s: &str) -> Arc<String> {
+    Arc::new(s.to_string())
+}
+
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "basic")]
 pub struct Opt {
@@ -67,9 +95,6 @@ pub struct Opt {
     #[structopt(short, long)]
     pub server: bool,
 
-    #[structopt(short, long)]
-    pub trust: bool,
-
     /// TLS private key in PEM format
     #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
     pub key: Option<PathBuf>,
@@ -80,4 +105,16 @@ pub struct Opt {
 
     #[structopt(short = "w", long, parse(from_str = password_to_hash))]
     pub password_hash: Arc<String>,
+
+    #[structopt(short = "f", long, parse(from_str = arc_string))]
+    pub fallback_port: Arc<String>,
+
+    #[structopt(short = "m", long, default_value = "quic", parse(from_str = parse_connection_mode))]
+    pub connection_mode: ConnectionMode,
+}
+
+#[derive(Debug, Clone)]
+pub struct TrojanContext {
+    pub options: Opt,
+    pub remote_socket_addr: SocketAddr,
 }

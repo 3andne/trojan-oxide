@@ -1,20 +1,21 @@
 use anyhow::Result;
+#[cfg(feature = "client")]
+use std::{
+    net::{SocketAddrV4, SocketAddrV6},
+    str::FromStr,
+};
 
 use crate::{
     expect_buf_len,
     utils::{transmute_u16s_to_u8s, CursoredBuffer, ExtendableFromSlice, ParserError},
 };
-use std::{
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
-    str::FromStr,
-};
+use std::net::SocketAddr;
 use tracing::*;
 #[derive(Debug, Clone)]
 pub enum MixAddrType {
     V4(([u8; 4], u16)),
     V6(([u16; 8], u16)),
     Hostname((String, u16)),
-    EncodedSocks(Vec<u8>),
     None,
 }
 
@@ -49,6 +50,7 @@ impl MixAddrType {
         }
     }
 
+    #[cfg(feature = "client")]
     pub fn encoded_len(&self) -> usize {
         use MixAddrType::*;
         match self {
@@ -56,7 +58,6 @@ impl MixAddrType {
             V4(_) => 1 + 4 + 2,
             V6(_) => 1 + 16 + 2,
             MixAddrType::None => panic!("encoded_len() unexpected: MixAddrType::None"),
-            EncodedSocks(v) => v.len(),
         }
     }
 
@@ -70,6 +71,7 @@ impl MixAddrType {
         }
     }
 
+    #[cfg(feature = "client")]
     pub fn from_http_header(is_https: bool, buf: &[u8]) -> Result<Self, ParserError> {
         debug!(
             "from_http_header: entered, buf: {:?}",
@@ -179,9 +181,6 @@ impl MixAddrType {
                 buf.extend_from_slice(&port.to_be_bytes());
             }
             MixAddrType::None => panic!("as_bytes() unexpected: MixAddrType::None"),
-            EncodedSocks(en) => {
-                buf.extend_from_slice(en);
-            }
         }
     }
 
@@ -264,6 +263,7 @@ impl MixAddrType {
         })
     }
 
+    #[cfg(feature = "client")]
     pub fn init_from(addr: &SocketAddr) -> Self {
         match addr {
             SocketAddr::V4(v4) => Self::V4((v4.ip().octets(), v4.port())),
@@ -271,6 +271,7 @@ impl MixAddrType {
         }
     }
 
+    #[cfg(all(feature = "server", feature = "udp"))]
     pub fn new_null() -> Self {
         Self::V4(([0, 0, 0, 0], 0))
     }

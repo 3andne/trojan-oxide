@@ -1,19 +1,29 @@
 use crate::{
     expect_buf_len,
     utils::ConnectionRequest,
-    utils::{ClientTcpStream, MixAddrType, ParserError, Socks5UdpStream},
+    utils::{ClientTcpStream, MixAddrType, ParserError},
 };
-use anyhow::{Error, Result};
+
+#[cfg(feature = "udp")]
+use crate::utils::Socks5UdpStream;
+#[cfg(feature = "udp")]
 use std::net::SocketAddr;
-use tokio::{io::*, net::UdpSocket};
-use tokio::{net::TcpStream, sync::oneshot};
+#[cfg(feature = "udp")]
+use tokio::net::UdpSocket;
+#[cfg(feature = "udp")]
+use tokio::sync::oneshot;
+
+use super::ClientConnectionRequest;
+use anyhow::{Error, Result};
+use tokio::io::*;
+use tokio::net::TcpStream;
 use tracing::*;
 
 const SOCKS_VERSION_INDEX: usize = 0;
 const NUM_SUPPORTED_AUTH_METHOD_INDEX: usize = 1;
 const CONNECTION_TYPE_INDEX: usize = 1;
 const ADDR_TYPE_INDEX: usize = 3;
-const LEN_OF_ADDR_INDEX: usize = 4;
+// const LEN_OF_ADDR_INDEX: usize = 4;
 const PHASE1_SERVER_REPLY: [u8; 2] = [0x05, 0x00];
 const PHASE2_SERVER_REPLY: [u8; 3] = [0x05, 0x00, 0x00];
 
@@ -41,10 +51,7 @@ impl Socks5Request {
         self.addr
     }
 
-    pub async fn accept(
-        &mut self,
-        mut inbound: TcpStream,
-    ) -> Result<ConnectionRequest<ClientTcpStream, Socks5UdpStream>> {
+    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ClientConnectionRequest> {
         let mut buffer = Vec::with_capacity(200);
         loop {
             let read = inbound.read_buf(&mut buffer).await?;
@@ -82,28 +89,37 @@ impl Socks5Request {
 
         let mut buf = Vec::with_capacity(3 + 1 + 16 + 2);
         buf.extend_from_slice(&PHASE2_SERVER_REPLY);
-        if !self.is_udp {
-            MixAddrType::init_from(&inbound.local_addr()?).write_buf(&mut buf);
-            inbound.write_all(&buf).await?;
-            Ok(ConnectionRequest::TCP(ClientTcpStream {
-                inner: inbound,
-                http_request_extension: None,
-            }))
-        } else {
-            let local_ip = inbound.local_addr()?.ip();
-            let server_udp_socket = UdpSocket::bind(SocketAddr::new(local_ip, 0)).await?;
-            MixAddrType::init_from(&server_udp_socket.local_addr()?).write_buf(&mut buf);
-            inbound.write_all(&buf).await?;
-            let (stream_reset_signal_tx, stream_reset_signal_rx) = oneshot::channel();
 
-            tokio::spawn(async move {
-                let mut dummy = [0u8; 3];
-                let _ = inbound.read(&mut dummy).await;
-                let _ = stream_reset_signal_tx.send(());
-            });
+        match self.is_udp {
+            false => {
+                MixAddrType::init_from(&inbound.local_addr()?).write_buf(&mut buf);
+                inbound.write_all(&buf).await?;
+                Ok(ConnectionRequest::TCP(ClientTcpStream {
+                    inner: inbound,
+                    http_request_extension: None,
+                }))
+            }
+            #[cfg(feature = "udp")]
+            true => {
+                let local_ip = inbound.local_addr()?.ip();
+                let server_udp_socket = UdpSocket::bind(SocketAddr::new(local_ip, 0)).await?;
+                MixAddrType::init_from(&server_udp_socket.local_addr()?).write_buf(&mut buf);
+                inbound.write_all(&buf).await?;
+                let (stream_reset_signal_tx, stream_reset_signal_rx) = oneshot::channel();
 
-            let udp_stream = Socks5UdpStream::new(server_udp_socket, stream_reset_signal_rx);
-            Ok(ConnectionRequest::UDP(udp_stream))
+                tokio::spawn(async move {
+                    let mut dummy = [0u8; 3];
+                    let _ = inbound.read(&mut dummy).await;
+                    let _ = stream_reset_signal_tx.send(());
+                });
+
+                let udp_stream = Socks5UdpStream::new(server_udp_socket, stream_reset_signal_rx);
+                Ok(ConnectionRequest::UDP(udp_stream))
+            }
+            #[cfg(not(feature = "udp"))]
+            _ => {
+                panic!("Udp not included, re-compile to include")
+            }
         }
     }
 

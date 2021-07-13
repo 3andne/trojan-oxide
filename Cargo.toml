@@ -7,30 +7,68 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio={version = "1.6.1", features = ["full"]}
+tokio={version = "1.8", features = ["full"]}
 clap = "2.33.3"
-anyhow = { version = "1.0.40" }
-tracing = "0.1.25"
+anyhow = { version = "1.0.41" }
+tracing = "0.1.26"
 tracing-futures = "0.2.5"
-tracing-subscriber = "0.2.18"
+tracing-subscriber = "0.2.19"
 futures = "0.3"
 err-derive = "0.3.0"
-quinn = "0.7.2"
-quinn-proto = "0.7.3"
 directories = "3.0"
 structopt = "0.3.21"
-rcgen = "0.8.11"
-rustls = "0.19.1"
 sha2 = "0.9.5"
-#webpki = "0.22"
-webpki-roots = "0.21"
 bytes = "1.0.1"
-pin-project-lite = "0.2.6"
+pin-project-lite = "0.2.7"
 lazy_static = "1.4.0"
+rustls-native-certs = "*"
 
 [dev-dependencies]
 criterion = "0.3"
 
-[[bench]]
-name = "bench_simd"
-harness = false
+[dependencies.quinn]
+version = "0.7.2"
+optional = true
+
+[dependencies.quinn-proto]
+version = "0.7.3"
+optional = true
+
+[dependencies.tokio-rustls]
+version = "0.22.0"
+optional = true
+
+[dependencies.rcgen]
+version = "0.8.11"
+optional = true
+
+#[[bench]]
+#name = "bench_simd"
+#harness = false
+
+[profile.release]
+codegen-units = 1
+incremental = false
+lto = true
+opt-level = 3
+
+[features]
+server = []
+client = []
+tcp_tls = ["tokio-rustls"]
+quic = ["quinn", "quinn-proto", "rcgen"]
+udp = []
+full = ["server", "client", "tcp_tls", "quic", "udp"]
+server_quic = ["server", "quic"]
+server_quic_udp = ["server", "quic", "udp"]
+server_tcp_tls = ["server", "tcp_tls"]
+server_tcp_tls_udp = ["server", "tcp_tls", "udp"]
+server_full_tunnel = ["server", "tcp_tls", "quic"]
+server_full = ["server", "tcp_tls", "quic", "udp"]
+client_quic = ["client", "quic"]
+client_quic_udp = ["client", "quic", "udp"]
+client_tcp_tls = ["client", "tcp_tls"]
+client_tcp_tls_udp = ["client", "tcp_tls", "udp"]
+client_full_tunnel = ["client", "tcp_tls", "quic"]
+client_full = ["client", "tcp_tls", "quic", "udp"]
+default = ["full"]

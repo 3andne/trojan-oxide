@@ -16,7 +16,7 @@ impl ClientTcpStream {
     pub fn split(&mut self) -> (ClientTcpRecvStream, WriteHalf) {
         let (read, write) = self.inner.split();
         (
-            ClientTcpRecvStream::new(read, self.http_request_extension.take()),
+            ClientTcpRecvStream::new(read, self.http_request_extension.take().map(|v| (0, v))),
             write,
         )
     }
