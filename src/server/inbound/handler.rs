@@ -66,6 +66,7 @@ pub async fn handle_tcp_tls_connection(
     password_hash: Arc<String>,
     fallback_port: Arc<String>,
 ) -> Result<()> {
+    stream.set_nodelay(true)?;
     let stream = acceptor.accept(stream).await?;
     handle_outbound(stream, upper_shutdown, password_hash, fallback_port)
         .await

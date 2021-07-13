@@ -38,6 +38,7 @@ where
             } else {
                 TcpStream::connect(target.host.host_repr()).await?
             };
+            outbound.set_nodelay(true)?;
             debug!("outbound connected: {:?}", outbound);
 
             let (mut out_read, mut out_write) = outbound.split();
