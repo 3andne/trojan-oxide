@@ -19,13 +19,14 @@ pub async fn copy_tcp<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         if len == 0 {
             return Ok(());
         }
-        let mut writen = 0;
-        loop {
-            writen += w.write(&buf[writen..len]).await?;
-            if writen == len {
-                break;
-            }
-        }
+        // let mut writen = 0;
+        w.write(&buf[..len]).await?;
+        // loop {
+        //     writen += w.write(&buf[writen..len]).await?;
+        //     if writen == len {
+        //         break;
+        //     }
+        // }
         if len != buf.len() {
             w.flush().await?;
         }
