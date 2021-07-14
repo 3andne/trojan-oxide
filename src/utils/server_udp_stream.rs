@@ -52,7 +52,14 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
                         task
                     );
 
-                    match ready!(Pin::new(task).poll(cx))??.next() {
+                    let poll_res = Pin::new(task).poll(cx);
+
+                    debug!(
+                        "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Pending(), res: {:?}",
+                        poll_res
+                    );
+
+                    match ready!(poll_res)??.next() {
                         Some(x) => {
                             self.addr_task = ResolveAddr::Ready(x);
                         }

@@ -17,7 +17,8 @@ use tokio::{net::TcpStream, select, sync::broadcast};
 use tracing::{debug, info};
 
 lazy_static! {
-    static ref CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    static ref TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    static ref UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 }
 
 pub async fn handle_outbound<I>(
@@ -42,7 +43,7 @@ where
             debug!("outbound connected: {:?}", outbound);
 
             let (mut out_read, mut out_write) = outbound.split();
-            let conn_id = CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             info!("[tcp][{}]start relaying", conn_id);
             // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
             select! {
@@ -61,7 +62,8 @@ where
         #[cfg(feature = "udp")]
         Ok(UDP((mut in_write, mut in_read))) => {
             let outbound = UdpSocket::bind("[::]:0").await?;
-            info!("[udp] {:?} =>", outbound.local_addr());
+            let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            info!("[udp][{}] {:?} =>", conn_id, outbound.local_addr());
             let mut udp_stream = ServerUdpStream::new(outbound);
             let (mut out_write, mut out_read) = udp_stream.split();
             select! {
@@ -72,6 +74,7 @@ where
                     debug!("udp relaying upload end: {:?}", res);
                 },
             }
+            info!("[udp][{}] end", conn_id);
         }
         #[cfg(feature = "quic")]
         Ok(ECHO((mut in_write, mut in_read))) => {
