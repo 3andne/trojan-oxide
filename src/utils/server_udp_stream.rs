@@ -77,11 +77,6 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
 
                     let res = self.inner.poll_send_to(cx, buf, s_addr);
 
-                    debug!(
-                        "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Ready({}), res {:?}",
-                        s_addr, res
-                    );
-
                     if res.is_ready() {
                         self.addr_task = ResolveAddr::None;
                     }
@@ -93,10 +88,11 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
                     use MixAddrType::*;
                     self.addr_task = match addr {
                         x @ V4(_) | x @ V6(_) => ResolveAddr::Ready(x.clone().to_socket_addrs()),
-                        Hostname((name, _)) => {
+                        Hostname((name, port)) => {
                             let name = name.to_owned();
+                            let port = *port;
                             ResolveAddr::Pending(spawn_blocking(move || {
-                                std::net::ToSocketAddrs::to_socket_addrs(&name)
+                                std::net::ToSocketAddrs::to_socket_addrs(&(name.as_str(), port))
                             }))
                         }
                         _ => panic!("unprecedented MixAddrType variant"),
