@@ -28,6 +28,7 @@ pub async fn connect_through_tcp_tls(
         DNSNameRef::try_from_ascii_str(&domain_string).map_err(|_| anyhow!("invalid dnsname"))?;
     let connector = TlsConnector::from(config);
     let stream = TcpStream::connect(remote_addr).await?;
+    stream.set_nodelay(true)?;
     let stream = connector.connect(domain, stream).await?;
     return Ok(ClientServerConnection::TcpTLS(stream));
 }
