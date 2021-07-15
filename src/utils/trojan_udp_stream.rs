@@ -5,6 +5,7 @@ use super::{
 use futures::ready;
 use pin_project_lite::pin_project;
 use std::{
+    cmp::min,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -193,14 +194,20 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                     me.buffer.advance(2); // for `\r\n`
                 }
 
-                if me.expecting.unwrap() <= me.buffer.remaining() {
+                if me.buffer.remaining() > 0 {
                     let expecting = me.expecting.unwrap();
-                    outer_buf.extend_from_slice(&me.buffer.chunk()[..expecting]);
-                    me.buffer.advance(expecting);
+                    let to_read = min(expecting, me.buffer.remaining());
+                    outer_buf.extend_from_slice(&me.buffer.chunk()[..to_read]);
+                    me.buffer.advance(to_read);
                     me.buffer.pump();
-                    *me.expecting = None;
-                    let addr = std::mem::replace(me.addr_buf, MixAddrType::None);
-                    Poll::Ready(Ok(addr))
+                    if to_read < expecting {
+                        *me.expecting = Some(expecting - to_read);
+                        Poll::Pending
+                    } else {
+                        *me.expecting = None;
+                        let addr = std::mem::replace(me.addr_buf, MixAddrType::None);
+                        Poll::Ready(Ok(addr))
+                    }
                 } else {
                     Poll::Pending
                 }
