@@ -160,6 +160,10 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                 if me.addr_buf.is_none() {
                     match MixAddrType::from_encoded(me.buffer) {
                         Ok(addr) => {
+                            debug!(
+                                "TrojanUdpRecvStream::poll_proxy_stream_read() addr {:?}",
+                                addr
+                            );
                             *me.addr_buf = addr;
                         }
                         Err(ParserError::Incomplete(msg)) => {
@@ -179,6 +183,11 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                     }
                 }
 
+                debug!(
+                    "TrojanUdpRecvStream::poll_proxy_stream_read() buf after addr {:?}",
+                    me.buffer
+                );
+
                 if me.expecting.is_none() {
                     if me.buffer.remaining() < 2 {
                         return Poll::Pending;
@@ -193,6 +202,11 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                     me.buffer.advance(2); // for `\r\n`
                 }
 
+                debug!(
+                    "TrojanUdpRecvStream::poll_proxy_stream_read() expecting: {:?}, buf after expecting {:?}",
+                    me.expecting, me.buffer
+                );
+
                 if me.expecting.unwrap() <= me.buffer.remaining() {
                     let expecting = me.expecting.unwrap();
                     outer_buf.extend_from_slice(&me.buffer.chunk()[..expecting]);
@@ -200,8 +214,16 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                     me.buffer.pump();
                     *me.expecting = None;
                     let addr = std::mem::replace(me.addr_buf, MixAddrType::None);
+                    debug!(
+                        "TrojanUdpRecvStream::poll_proxy_stream_read() expecting: {:?}, long enough, addr {:?}, buffer {:?}",
+                        me.expecting, addr, me.buffer
+                    );
                     Poll::Ready(Ok(addr))
                 } else {
+                    debug!(
+                        "TrojanUdpRecvStream::poll_proxy_stream_read() expecting: {:?}, not long enough",
+                        me.expecting
+                    );
                     Poll::Pending
                 }
             }
