@@ -1,7 +1,7 @@
-use std::ops::Deref;
-use tokio::io::ReadBuf;
 use super::{CursoredBuffer, ExtendableFromSlice, VecAsReadBufExt};
 use bytes::BufMut;
+use std::ops::Deref;
+use tokio::io::ReadBuf;
 
 #[derive(Debug)]
 pub struct UdpRelayBuffer {
@@ -19,7 +19,7 @@ impl<'a> UdpRelayBuffer {
     }
 
     pub fn as_read_buf(&'a mut self) -> ReadBuf<'a> {
-        self.inner.as_read_buf()
+        self.inner.as_read_buf(self.cursor)
     }
 
     pub unsafe fn advance_mut(&mut self, cnt: usize) {
