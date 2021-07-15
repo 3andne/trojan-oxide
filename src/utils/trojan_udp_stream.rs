@@ -161,6 +161,10 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                 if me.addr_buf.is_none() {
                     match MixAddrType::from_encoded(me.buffer) {
                         Ok(addr) => {
+                            debug!(
+                                "TrojanUdpRecvStream::poll_proxy_stream_read() addr {:?}",
+                                addr
+                            );
                             *me.addr_buf = addr;
                         }
                         Err(ParserError::Incomplete(msg)) => {
@@ -179,6 +183,11 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                         }
                     }
                 }
+
+                debug!(
+                    "TrojanUdpRecvStream::poll_proxy_stream_read() buf after addr {:?}",
+                    me.buffer
+                );
 
                 if me.expecting.is_none() {
                     if me.buffer.remaining() < 2 {
@@ -209,6 +218,10 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                         Poll::Ready(Ok(addr))
                     }
                 } else {
+                    debug!(
+                        "TrojanUdpRecvStream::poll_proxy_stream_read() expecting: {:?}, not long enough",
+                        me.expecting
+                    );
                     Poll::Pending
                 }
             }
@@ -227,3 +240,4 @@ pub fn new_trojan_udp_stream<R, W>(
         TrojanUdpRecvStream::new(BufferedRecv::new(read, buffered_request)),
     )
 }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
