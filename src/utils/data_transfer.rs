@@ -57,10 +57,10 @@ pub async fn relay_udp(
         ClientServerConnection::Quic((out_write, out_read)) => {
             let (mut out_write, mut out_read) = new_trojan_udp_stream(out_write, out_read, None);
             select! {
-                res = copy_udp(&mut out_read, &mut in_write) => {
+                res = copy_udp(&mut out_read, &mut in_write, "download") => {
                     debug!("tcp relaying download end, {:?}", res);
                 },
-                res = copy_udp(&mut in_read, &mut out_write) => {
+                res = copy_udp(&mut in_read, &mut out_write, "upload") => {
                     debug!("tcp relaying upload end, {:?}", res);
                 },
                 _ = upper_shutdown.recv() => {
@@ -73,10 +73,10 @@ pub async fn relay_udp(
             let (out_read, out_write) = split(out_tls);
             let (mut out_write, mut out_read) = new_trojan_udp_stream(out_write, out_read, None);
             select! {
-                res = copy_udp(&mut out_read, &mut in_write) => {
+                res = copy_udp(&mut out_read, &mut in_write, "download") => {
                     debug!("tcp relaying download end, {:?}", res);
                 },
-                res = copy_udp(&mut in_read, &mut out_write) => {
+                res = copy_udp(&mut in_read, &mut out_write, "upload") => {
                     debug!("tcp relaying upload end, {:?}", res);
                 },
                 _ = upper_shutdown.recv() => {

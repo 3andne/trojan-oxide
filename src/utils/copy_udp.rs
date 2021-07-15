@@ -10,6 +10,7 @@ use tracing::debug;
 pub async fn copy_udp<'a, R: UdpRead + Unpin + Debug, W: UdpWrite + Unpin + Debug>(
     reader: &'a mut R,
     writer: &'a mut W,
+    comment: &'static str,
 ) -> std::io::Result<u64> {
     CopyUdp {
         reader,
@@ -17,6 +18,7 @@ pub async fn copy_udp<'a, R: UdpRead + Unpin + Debug, W: UdpWrite + Unpin + Debu
         buf: UdpRelayBuffer::new(),
         addr: None,
         amt: 0,
+        comment,
     }
     .await
 }
@@ -27,6 +29,7 @@ struct CopyUdp<'a, R: UdpRead, W: UdpWrite> {
     buf: UdpRelayBuffer,
     addr: Option<MixAddrType>,
     amt: u64,
+    comment: &'static str,
 }
 
 impl<R, W> Future for CopyUdp<'_, R, W>
@@ -42,15 +45,16 @@ where
     ) -> Poll<Self::Output> {
         let me = &mut *self;
         loop {
+            debug!("[{}] poll enter", me.comment);
             if me.addr.is_none() {
                 debug!(
-                    "[{:?} >> {:?}] CopyUdp::poll me.addr.is_none()",
-                    me.reader, me.writer
+                    "[{}] CopyUdp::poll me.addr.is_none()",
+                    me.comment
                 );
                 let new_addr =
                     ready!(Pin::new(&mut *me.reader).poll_proxy_stream_read(cx, &mut me.buf))?;
                 if new_addr.is_none() {
-                    debug!("CopyUdp::poll new_addr.is_none()");
+                    debug!("[{}] CopyUdp::poll new_addr.is_none()", me.comment);
                     return Poll::Ready(Ok(me.amt));
                 }
                 me.addr = Some(new_addr);

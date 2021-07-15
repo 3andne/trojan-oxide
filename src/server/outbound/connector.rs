@@ -67,10 +67,10 @@ where
             let mut udp_stream = ServerUdpStream::new(outbound);
             let (mut out_write, mut out_read) = udp_stream.split();
             select! {
-                res = copy_udp(&mut out_read, &mut in_write) => {
+                res = copy_udp(&mut out_read, &mut in_write, "download") => {
                     debug!("udp relaying download end: {:?}", res);
                 },
-                res = copy_udp(&mut in_read, &mut out_write) => {
+                res = copy_udp(&mut in_read, &mut out_write, "upload") => {
                     debug!("udp relaying upload end: {:?}", res);
                 },
             }
