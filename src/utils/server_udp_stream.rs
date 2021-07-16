@@ -131,6 +131,11 @@ impl<'a> UdpRead for ServerUdpRecvStream<'a> {
         assert_eq!(ptr, buf_inner.filled().as_ptr());
         let n = buf_inner.filled().len();
 
+        if n == 0 {
+            // EOF is seen
+            return Poll::Ready(Ok(MixAddrType::None));
+        }
+
         // Safety: This is guaranteed to be the number of initialized (and read)
         // bytes due to the invariants provided by `ReadBuf::filled`.
         unsafe {

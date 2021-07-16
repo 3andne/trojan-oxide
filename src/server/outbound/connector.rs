@@ -36,11 +36,12 @@ where
     match target.accept(stream).await {
         Ok(TCP((mut in_write, mut in_read))) => {
             let mut outbound = if target.host.is_ip() {
-                TcpStream::connect(target.host.to_socket_addrs()).await?
+                TcpStream::connect(target.host.to_socket_addrs()).await
             } else {
-                TcpStream::connect(target.host.host_repr()).await?
-            };
-            outbound.set_nodelay(true)?;
+                TcpStream::connect(target.host.host_repr()).await
+            }
+            .map_err(|e| anyhow::format_err("failed to connect to {:?}, {:?}", target.host, e))?;
+            outbound.set_nodelay(true).map_err(|e| anyhow::format_err!("failed to set to {:?}, {:?}", target.host, e))??;
 
             #[cfg(feature = "debug_info")]
             debug!("outbound connected: {:?}", outbound);
@@ -51,13 +52,13 @@ where
             // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
             select! {
                 _ = copy_tcp(&mut out_read, &mut in_write) => {
-                    debug!("[tcp][{}]end downloading", conn_id);
+                    info!("[tcp][{}]end downloading", conn_id);
                 },
                 _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                    debug!("[tcp][{}]end uploading", conn_id);
+                    info!("[tcp][{}]end uploading", conn_id);
                 },
                 _ = upper_shutdown.recv() => {
-                    debug!("[tcp][{}]shutdown signal received", conn_id);
+                    info!("[tcp][{}]shutdown signal received", conn_id);
                 },
             }
         }
@@ -70,13 +71,15 @@ where
             let (mut out_write, mut out_read) = udp_stream.split();
             select! {
                 res = copy_udp(&mut out_read, &mut in_write, None) => {
-                    debug!("udp relaying download end: {:?}", res);
+                    info!("[udp][{}]udp relaying download end: {:?}", conn_id, res);
                 },
                 res = copy_udp(&mut in_read, &mut out_write, Some(conn_id)) => {
-                    debug!("udp relaying upload end: {:?}", res);
+                    info!("[udp][{}]udp relaying upload end: {:?}", conn_id, res);
+                },
+                _ = upper_shutdown.recv() => {
+                    info!("[udp][{}]shutdown signal received", conn_id);
                 },
             }
-            info!("[udp][{}] end", conn_id);
         }
         #[cfg(feature = "quic")]
         Ok(ECHO((mut in_write, mut in_read))) => {

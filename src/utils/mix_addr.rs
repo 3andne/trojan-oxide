@@ -211,13 +211,13 @@ impl MixAddrType {
     ///```
     pub fn from_encoded_bytes(buf: &[u8]) -> Result<(MixAddrType, usize), ParserError> {
         debug!("MixAddrType::from_encoded_bytes buf: {:?}", buf);
-        expect_buf_len!(buf, 2);
+        expect_buf_len!(buf, 2, "MixAddrType::from_encoded_bytes cmd");
         match buf[0] {
             // Field ATYP
             0x01 => {
                 // IPv4
                 debug!("IPv4");
-                expect_buf_len!(buf, 1 + 4 + 2); // cmd + ipv4 + port
+                expect_buf_len!(buf, 1 + 4 + 2, "MixAddrType::from_encoded_bytes IPv4"); // cmd + ipv4 + port
                 let ip = [buf[1], buf[2], buf[3], buf[4]];
                 let port = u16::from_be_bytes([buf[5], buf[6]]);
                 Ok((MixAddrType::V4((ip, port)), 7))
@@ -226,7 +226,7 @@ impl MixAddrType {
                 // Domain Name
                 debug!("Domain Name");
                 let host_len = buf[1] as usize;
-                expect_buf_len!(buf, 1 + 1 + host_len + 2); // cmd + host_len + host(host_len bytes) + port
+                expect_buf_len!(buf, 1 + 1 + host_len + 2, "MixAddrType::from_encoded_bytes Domain Name"); // cmd + host_len + host(host_len bytes) + port
                 let host = String::from_utf8(buf[2..2 + host_len].to_vec()).map_err(|_| {
                     ParserError::Invalid("MixAddrType::from_encoded_bytes Domain Name Utf8Error")
                 })?;
@@ -236,7 +236,7 @@ impl MixAddrType {
             0x04 => {
                 // IPv6
                 debug!("IPv6");
-                expect_buf_len!(buf, 1 + 16 + 2); // cmd + ipv6u8(16 bytes) + port
+                expect_buf_len!(buf, 1 + 16 + 2, "MixAddrType::from_encoded_bytes IPv6"); // cmd + ipv6u8(16 bytes) + port
                 let v6u8 = &buf[1..1 + 16];
                 let mut v6u16 = [0u16; 8];
                 for i in 0..8 {

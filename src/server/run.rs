@@ -14,13 +14,16 @@ pub async fn run_server(
     context: TrojanContext,
 ) -> Result<()> {
     #[cfg(feature = "quic")]
-    let (_shutdown_tx1, shutdown_rx1) = oneshot::channel();
-    #[cfg(feature = "quic")]
-    tokio::spawn(quic_listener(shutdown_rx1, context.clone()));
+    {
+        let (_shutdown_tx1, shutdown_rx1) = oneshot::channel();
+        tokio::spawn(quic_listener(shutdown_rx1, context.clone()));
+    }
+
     #[cfg(feature = "tcp_tls")]
-    let (_shutdown_tx2, shutdown_rx2) = oneshot::channel();
-    #[cfg(feature = "tcp_tls")]
-    tokio::spawn(tcp_tls_listener(shutdown_rx2, context));
+    {
+        let (_shutdown_tx2, shutdown_rx2) = oneshot::channel();
+        tokio::spawn(tcp_tls_listener(shutdown_rx2, context));
+    }
     let _ = upper_shutdown.await;
     Ok(())
 }

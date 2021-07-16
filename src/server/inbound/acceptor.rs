@@ -63,7 +63,11 @@ impl<'a> TrojanAcceptor<'a> {
     }
 
     fn set_host_and_port(&mut self) -> Result<(), ParserError> {
-        expect_buf_len!(self.buf, HASH_LEN + 5); // HASH + \r\n + cmd(2 bytes) + host_len(1 byte, only valid when address is hostname)
+        expect_buf_len!(
+            self.buf,
+            HASH_LEN + 5,
+            "TrojanAcceptor::set_host_and_port cmd"
+        ); // HASH + \r\n + cmd(2 bytes) + host_len(1 byte, only valid when address is hostname)
 
         unsafe {
             // This is so buggy
@@ -189,7 +193,8 @@ impl<'a> TrojanAcceptor<'a> {
 
         debug!("target: {:?}", self);
 
-        expect_buf_len!(self.buf, self.cursor + 2);
+        expect_buf_len!(self.buf, self.cursor + 2, "TrojanAcceptor::parse CRLF");
+
         if &self.buf[self.cursor..self.cursor + 2] == b"\r\n" {
             self.cursor += 2;
             Ok(())

@@ -86,8 +86,8 @@ macro_rules! expect_buf_len {
     };
     ($buf:expr, $len:expr, $mark:expr) => {
         if $buf.len() < $len {
-            debug!("expect_buf_len {}", $mark);
-            return Err(ParserError::Incomplete);
+            // debug!("expect_buf_len {}", $mark);
+            return Err(ParserError::Incomplete($mark));
         }
     };
 }
