@@ -1,7 +1,7 @@
 use std::{io::Cursor, sync::Arc};
 
 use crate::utils::copy_tcp;
-use anyhow::Result;
+use anyhow::{anyhow, Context, Error, Result};
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
@@ -15,17 +15,24 @@ pub async fn fallback<IR: AsyncRead + Unpin, IW: AsyncWrite + Unpin>(
     mut in_read: IR,
     mut in_write: IW,
 ) -> Result<()> {
-    let mut outbound = TcpStream::connect("127.0.0.1:".to_owned() + fallback_port.as_str()).await?;
-    outbound.write_all_buf(&mut Cursor::new(&buf)).await?;
+    let mut outbound = TcpStream::connect("127.0.0.1:".to_owned() + fallback_port.as_str())
+        .await
+        .map_err(|e| Error::new(e))
+        .with_context(|| anyhow!("failed to connect to fallback service"))?;
+
+    outbound
+        .write_all_buf(&mut Cursor::new(&buf))
+        .await
+        .with_context(|| anyhow!("failed to write to fallback service"))?;
 
     let (mut out_read, mut out_write) = outbound.split();
 
     select! {
         res = copy_tcp(&mut out_read, &mut in_write) => {
-            debug!("tcp relaying download end, {:?}", res);
+            debug!("[fallback]relaying download end, {:?}", res);
         },
         res = tokio::io::copy(&mut in_read, &mut out_write) => {
-            debug!("tcp relaying upload end, {:?}", res);
+            debug!("[fallback]relaying upload end, {:?}", res);
         },
     }
     Ok(())

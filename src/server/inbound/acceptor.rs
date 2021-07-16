@@ -10,6 +10,7 @@ use crate::{
     utils::{BufferedRecv, ConnectionRequest, MixAddrType, ParserError},
 };
 use anyhow::Result;
+use futures::TryFutureExt;
 use std::{fmt::Debug, sync::Arc};
 use tokio::io::AsyncReadExt;
 use tracing::*;
@@ -133,12 +134,12 @@ impl<'a> TrojanAcceptor<'a> {
                         error!("Target::accept failed: {:?}", err);
                         let mut buf = Vec::new();
                         std::mem::swap(&mut buf, &mut self.buf);
-                        tokio::spawn(fallback(
-                            buf,
-                            self.fallback_port.clone(),
-                            read_half,
-                            write_half,
-                        ));
+                        tokio::spawn(
+                            fallback(buf, self.fallback_port.clone(), read_half, write_half)
+                                .unwrap_or_else(|e| {
+                                    error!("connection to fallback failed {:?}", e)
+                                }),
+                        );
                         return Err(err);
                     }
                     Err(err @ ParserError::Incomplete(_)) => {
@@ -151,7 +152,7 @@ impl<'a> TrojanAcceptor<'a> {
                     }
                 }
             } else {
-                return Err(ParserError::Invalid("Target::accept unexpected EOF"));
+                return Err(ParserError::Incomplete("Target::accept EOF"));
             }
         }
         use ConnectionRequest::*;
@@ -176,6 +177,7 @@ impl<'a> TrojanAcceptor<'a> {
     }
 
     pub fn parse(&mut self) -> Result<(), ParserError> {
+        #[cfg(feature = "debug_info")]
         debug!(
             "parse begin, cursor {}, buffer({}): {:?}",
             self.cursor,
@@ -184,6 +186,7 @@ impl<'a> TrojanAcceptor<'a> {
         );
         if self.cursor == 0 {
             self.verify()?;
+            #[cfg(feature = "debug_info")]
             debug!("verified");
         }
 
@@ -191,6 +194,7 @@ impl<'a> TrojanAcceptor<'a> {
             self.set_host_and_port()?;
         }
 
+        #[cfg(feature = "debug_info")]
         debug!("target: {:?}", self);
 
         expect_buf_len!(self.buf, self.cursor + 2, "TrojanAcceptor::parse CRLF");

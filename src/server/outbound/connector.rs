@@ -2,7 +2,7 @@ use crate::{
     server::inbound::{SplitableToAsyncReadWrite, TrojanAcceptor},
     utils::{copy_tcp, ConnectionRequest},
 };
-use anyhow::Result;
+use anyhow::{anyhow, Context, Error, Result};
 use lazy_static::lazy_static;
 use std::fmt::Debug;
 use std::sync::{
@@ -10,7 +10,7 @@ use std::sync::{
     Arc,
 };
 use tokio::{net::TcpStream, select, sync::broadcast};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 #[cfg(feature = "udp")]
 use {
     crate::utils::{copy_udp, ServerUdpStream},
@@ -40,8 +40,18 @@ where
             } else {
                 TcpStream::connect(target.host.host_repr()).await
             }
-            .map_err(|e| anyhow::format_err("failed to connect to {:?}, {:?}", target.host, e))?;
-            outbound.set_nodelay(true).map_err(|e| anyhow::format_err!("failed to set to {:?}, {:?}", target.host, e))??;
+            .map_err(|e| Error::new(e))
+            .with_context(|| anyhow!("failed to connect to {:?}", target.host))?;
+
+            outbound
+                .set_nodelay(true)
+                .map_err(|e| Error::new(e))
+                .with_context(|| {
+                    anyhow!(
+                        "failed to set tcp_nodelay for outbound stream {:?}",
+                        target.host
+                    )
+                })?;
 
             #[cfg(feature = "debug_info")]
             debug!("outbound connected: {:?}", outbound);
@@ -64,7 +74,11 @@ where
         }
         #[cfg(feature = "udp")]
         Ok(UDP((mut in_write, mut in_read))) => {
-            let outbound = UdpSocket::bind("[::]:0").await?;
+            let outbound = UdpSocket::bind("[::]:0")
+                .await
+                .map_err(|e| Error::new(e))
+                .with_context(|| anyhow!("failed to bind UdpSocket {:?}", target.host))?;
+
             let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             debug!("[udp][{}] {:?} =>", conn_id, outbound.local_addr());
             let mut udp_stream = ServerUdpStream::new(outbound);
@@ -95,7 +109,9 @@ where
             debug!("[echo]end relaying");
         }
         Err(e) => {
-            error!("invalid connection to {:?}: {}", &target.host, e);
+            return Err(
+                Error::new(e).context(anyhow!("failed to parse connection to {:?}", target.host))
+            );
         }
     }
 
