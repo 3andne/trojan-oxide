@@ -60,6 +60,7 @@ impl HttpRequest {
     }
 
     fn set_host(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
+        #[cfg(feature = "debug_info")]
         debug!("set_host entered");
         while self.cursor < buf.len() && buf[self.cursor] == b' ' {
             self.cursor += 1;
@@ -89,19 +90,23 @@ impl HttpRequest {
     }
 
     fn parse(&mut self, buf: &mut Vec<u8>) -> Result<(), ParserError> {
+        #[cfg(feature = "debug_info")]
         debug!("parsing: {:?}", String::from_utf8(buf.clone()));
         if self.cursor == 0 {
             self.set_stream_type(buf)?;
         }
 
+        #[cfg(feature = "debug_info")]
         debug!("stream is https: {}", self.is_https);
 
         if self.addr.is_none() {
             match self.set_host(buf) {
                 Ok(_) => {
+                    #[cfg(feature = "debug_info")]
                     debug!("stream target host: {:?}", self.addr);
                 }
                 err @ Err(_) => {
+                    #[cfg(feature = "debug_info")]
                     debug!("stream target host err: {:?}", err);
                     return err;
                 }
@@ -110,6 +115,7 @@ impl HttpRequest {
 
         // `integrity` check
         if &buf[buf.len() - 4..] == b"\r\n\r\n" {
+            #[cfg(feature = "debug_info")]
             debug!("integrity test passed");
             return Ok(());
         }
@@ -131,6 +137,7 @@ impl HttpRequest {
             if read != 0 {
                 match self.parse(&mut buffer) {
                     Ok(_) => {
+                        #[cfg(feature = "debug_info")]
                         debug!("http request parsed");
                         break;
                     }

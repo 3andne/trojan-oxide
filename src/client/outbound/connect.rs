@@ -19,7 +19,8 @@ use tokio::{net::TcpStream, sync::broadcast};
 use tracing::*;
 
 lazy_static! {
-    static ref CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    static ref TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    static ref UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 }
 
 pub async fn forward<F, Fut, Connecting>(
@@ -40,12 +41,12 @@ where
         error!("forward error: {}", e);
         e
     })?;
-    let conn_id = CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
 
     use ConnectionRequest::*;
     match conn_req {
         TCP(inbound) => {
             trojan_auth_tcp(&addr, &mut outbound, password_hash).await?;
+            let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             info!(
                 "[tcp][{}]{:?} => {:?}",
                 conn_id,
@@ -57,9 +58,10 @@ where
         }
         #[cfg(feature = "udp")]
         UDP(inbound) => {
+            let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             trojan_auth_udp(&mut outbound, password_hash).await?;
             info!("[udp][{}] => {:?}", conn_id, &addr);
-            relay_udp(inbound, outbound, upper_shutdown).await;
+            relay_udp(inbound, outbound, upper_shutdown, conn_id).await;
             info!("[end][udp][{}]", conn_id);
         }
         #[cfg(feature = "quic")]

@@ -1,5 +1,3 @@
-#[cfg(feature = "udp")]
-use crate::utils::{copy_udp, ServerUdpStream};
 use crate::{
     server::inbound::{SplitableToAsyncReadWrite, TrojanAcceptor},
     utils::{copy_tcp, ConnectionRequest},
@@ -11,10 +9,13 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-#[cfg(feature = "udp")]
-use tokio::net::UdpSocket;
 use tokio::{net::TcpStream, select, sync::broadcast};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
+#[cfg(feature = "udp")]
+use {
+    crate::utils::{copy_udp, ServerUdpStream},
+    tokio::net::UdpSocket,
+};
 
 lazy_static! {
     static ref TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -40,37 +41,38 @@ where
                 TcpStream::connect(target.host.host_repr()).await?
             };
             outbound.set_nodelay(true)?;
+
+            #[cfg(feature = "debug_info")]
             debug!("outbound connected: {:?}", outbound);
 
             let (mut out_read, mut out_write) = outbound.split();
             let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            info!("[tcp][{}]start relaying", conn_id);
+            info!("[tcp][{}] => {:?}", conn_id, &target.host);
             // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
             select! {
                 _ = copy_tcp(&mut out_read, &mut in_write) => {
-                    debug!("server relaying download end");
+                    debug!("[tcp][{}]end downloading", conn_id);
                 },
                 _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                    debug!("server relaying upload end");
+                    debug!("[tcp][{}]end uploading", conn_id);
                 },
                 _ = upper_shutdown.recv() => {
-                    debug!("server shutdown signal received");
+                    debug!("[tcp][{}]shutdown signal received", conn_id);
                 },
             }
-            debug!("[tcp][{}]end relaying", conn_id);
         }
         #[cfg(feature = "udp")]
         Ok(UDP((mut in_write, mut in_read))) => {
             let outbound = UdpSocket::bind("[::]:0").await?;
             let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            info!("[udp][{}] {:?} =>", conn_id, outbound.local_addr());
+            debug!("[udp][{}] {:?} =>", conn_id, outbound.local_addr());
             let mut udp_stream = ServerUdpStream::new(outbound);
             let (mut out_write, mut out_read) = udp_stream.split();
             select! {
-                res = copy_udp(&mut out_read, &mut in_write, "download") => {
+                res = copy_udp(&mut out_read, &mut in_write, None) => {
                     debug!("udp relaying download end: {:?}", res);
                 },
-                res = copy_udp(&mut in_read, &mut out_write, "upload") => {
+                res = copy_udp(&mut in_read, &mut out_write, Some(conn_id)) => {
                     debug!("udp relaying upload end: {:?}", res);
                 },
             }
@@ -78,7 +80,7 @@ where
         }
         #[cfg(feature = "quic")]
         Ok(ECHO((mut in_write, mut in_read))) => {
-            info!("[echo]start relaying");
+            debug!("[echo]start relaying");
             select! {
                 _ = tokio::io::copy(&mut in_read, &mut in_write) => {
                     debug!("server relaying upload end");
@@ -87,10 +89,10 @@ where
                     debug!("server shutdown signal received");
                 },
             }
-            info!("[echo]end relaying");
+            debug!("[echo]end relaying");
         }
         Err(e) => {
-            info!("invalid connection: {}", e);
+            error!("invalid connection to {:?}: {}", &target.host, e);
         }
     }
 

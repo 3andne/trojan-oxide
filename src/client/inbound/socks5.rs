@@ -62,6 +62,7 @@ impl Socks5Request {
                         match self.phase {
                             P1ClientHello => {
                                 inbound.write_all(&PHASE1_SERVER_REPLY).await?;
+                                #[cfg(feature = "debug_info")]
                                 debug!("socks5 Phase 1 parsed");
                                 self.phase = P2ClientRequest;
                                 unsafe {
@@ -70,6 +71,7 @@ impl Socks5Request {
                                 }
                             }
                             P2ClientRequest => {
+                                #[cfg(feature = "debug_info")]
                                 debug!("socks5 Phase 2 parsed");
                                 break;
                             }

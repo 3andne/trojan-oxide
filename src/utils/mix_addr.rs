@@ -61,10 +61,10 @@ impl MixAddrType {
         }
     }
 
-    pub fn to_socket_addrs(self) -> SocketAddr {
+    pub fn to_socket_addrs(&self) -> SocketAddr {
         match self {
-            MixAddrType::V4(addr) => addr.into(),
-            MixAddrType::V6(addr) => addr.into(),
+            MixAddrType::V4(addr) => addr.to_owned().into(),
+            MixAddrType::V6(addr) => addr.to_owned().into(),
             _ => {
                 panic!("only IP can use this method");
             }
