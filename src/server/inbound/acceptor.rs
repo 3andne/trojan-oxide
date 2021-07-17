@@ -1,8 +1,4 @@
 use super::SplitableToAsyncReadWrite;
-#[cfg(feature = "udp")]
-use super::TrojanUdpStream;
-#[cfg(feature = "udp")]
-use crate::utils::new_trojan_udp_stream;
 use crate::{
     expect_buf_len,
     protocol::HASH_LEN,
@@ -14,6 +10,8 @@ use futures::TryFutureExt;
 use std::{fmt::Debug, sync::Arc};
 use tokio::io::AsyncReadExt;
 use tracing::*;
+#[cfg(feature = "udp")]
+use {super::TrojanUdpStream, crate::utils::new_trojan_udp_stream};
 
 #[cfg(feature = "udp")]
 type ServerConnectionRequest<I> = ConnectionRequest<

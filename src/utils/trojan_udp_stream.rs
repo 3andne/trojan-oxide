@@ -60,14 +60,19 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
         };
         let me = self.project();
 
+        #[cfg(feature = "debug_info")]
         debug!(
             "TrojanUdpSendStream::poll_proxy_stream_write() inner {:?}",
             me.buffer
         );
 
         match me.inner.poll_write(cx, &me.buffer)? {
+            Poll::Ready(x) if x == 0 => {
+                return Poll::Ready(Ok(0));
+            }
             Poll::Ready(x) => {
                 if x < me.buffer.remaining() {
+                    #[cfg(feature = "debug_info")]
                     debug!(
                         "TrojanUdpSendStream::poll_proxy_stream_write() x < me.buffer.remaining() inner {:?}",
                         me.buffer
@@ -98,9 +103,11 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
             Poll::Pending
         }
     }
-}
 
-// pub type BufferedQuicRecvStream = BufferedRecv<RecvStream>;
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+}
 
 pin_project! {
     #[derive(Debug)]

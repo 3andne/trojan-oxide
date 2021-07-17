@@ -320,4 +320,8 @@ impl<'a> UdpWrite for Socks5UdpSendStream<'a> {
             Poll::Pending
         }
     }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        AsyncWrite::poll_flush(self, cx)
+    }
 }

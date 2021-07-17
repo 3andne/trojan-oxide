@@ -55,7 +55,7 @@ where
                 if new_addr.is_none() {
                     #[cfg(feature = "debug_info")]
                     debug!("[{:?}]CopyUdp::poll new_addr.is_none()", me.conn_id);
-                    return Poll::Ready(Ok(me.amt));
+                    break;
                 }
                 if me.conn_id.is_some() {
                     info!("[udp][{}] => {:?}", me.conn_id.unwrap(), &new_addr);
@@ -77,6 +77,10 @@ where
                 me.addr.as_ref().unwrap()
             ))?;
 
+            if x == 0 {
+                break;
+            }
+
             #[cfg(feature = "debug_info")]
             debug!("[{:?}]CopyUdp::poll me.buf.advance({})", me.conn_id, x);
             me.buf.advance(x);
@@ -90,7 +94,9 @@ where
                 }
             }
 
+            ready!(Pin::new(&mut *me.writer).poll_flush(cx))?; // for TlsStream
             me.amt += x as u64;
         }
+        return Poll::Ready(Ok(me.amt));
     }
 }

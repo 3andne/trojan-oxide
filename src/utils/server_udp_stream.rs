@@ -43,10 +43,12 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
         buf: &[u8],
         addr: &MixAddrType,
     ) -> Poll<std::io::Result<usize>> {
+        #[cfg(feature = "debug_info")]
         debug!("ServerUdpSendStream::poll_proxy_stream_write()");
         loop {
             match self.addr_task {
                 ResolveAddr::Pending(ref mut task) => {
+                    #[cfg(feature = "debug_info")]
                     debug!(
                         "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Pending({:?})",
                         task
@@ -54,6 +56,7 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
 
                     let poll_res = Pin::new(task).poll(cx);
 
+                    #[cfg(feature = "debug_info")]
                     debug!(
                         "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Pending(), res: {:?}",
                         poll_res
@@ -70,6 +73,7 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
                     }
                 }
                 ResolveAddr::Ready(s_addr) => {
+                    #[cfg(feature = "debug_info")]
                     debug!(
                         "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Ready({}), buf {:?}",
                         s_addr, buf
@@ -83,6 +87,7 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
                     return res;
                 }
                 ResolveAddr::None => {
+                    #[cfg(feature = "debug_info")]
                     debug!("ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::None");
 
                     use MixAddrType::*;
@@ -100,6 +105,10 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
                 }
             }
         }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
 
