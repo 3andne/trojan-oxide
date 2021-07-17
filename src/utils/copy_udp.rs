@@ -60,7 +60,7 @@ where
                     return Poll::Ready(Ok(me.amt));
                 }
                 if me.conn_id.is_some() {
-                    info!("[{}] => {:?}", me.conn_id.unwrap(), &new_addr);
+                    info!("[udp][{}] => {:?}", me.conn_id.unwrap(), &new_addr);
                 }
                 me.addr = Some(new_addr);
             }

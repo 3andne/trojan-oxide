@@ -180,7 +180,8 @@ where
             let (index, buffered_request) = self.buffered_request.as_ref().unwrap();
             buf.put_slice(&buffered_request[*index..]);
             self.buffered_request = None;
-            // return Poll::Ready(Ok(()));
+            cx.waker().wake_by_ref(); // super important
+            return Poll::Ready(Ok(()));
         }
 
         let reader = Pin::new(&mut self.inner);
