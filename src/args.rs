@@ -94,6 +94,9 @@ pub struct Opt {
     #[structopt(short = "x", long, default_value = "9999")]
     pub proxy_port: String,
 
+    #[structopt(short = "d", long, default_value = "")]
+    pub proxy_ip: String,
+
     #[structopt(short, long)]
     pub server: bool,
 
