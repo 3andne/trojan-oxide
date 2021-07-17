@@ -39,7 +39,7 @@ pub async fn quic_listener(
         let quinn::NewConnection { bi_streams, .. } = match conn.await {
             Ok(new_conn) => new_conn,
             Err(e) => {
-                error!("error while awaiting connection {:?}", e);
+                error!("error while awaiting connection {:#}", e);
                 continue;
             }
         };
@@ -48,7 +48,7 @@ pub async fn quic_listener(
             handle_quic_connection(bi_streams, shutdown_rx, hash_copy, fallback_port)
                 .await
                 .unwrap_or_else(move |e| {
-                    error!("connection failed: {reason}", reason = e.to_string())
+                    error!("connection failed: {:#}", e)
                 });
         });
     }
@@ -81,7 +81,7 @@ pub async fn tcp_tls_listener(
         let fallback_port = context.options.fallback_port.clone();
         tokio::spawn(
             handle_tcp_tls_connection(stream, acceptor_copy, shutdown_rx, hash_copy, fallback_port)
-                .unwrap_or_else(move |e| error!("failed to handle tcp_tls connection: {:?}", e)),
+                .unwrap_or_else(move |e| error!("failed to handle tcp_tls connection: {:#}", e)),
         );
     }
     Ok(())

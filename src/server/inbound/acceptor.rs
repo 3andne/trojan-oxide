@@ -131,13 +131,13 @@ impl<'a> TrojanAcceptor<'a> {
             if read != 0 {
                 match self.parse() {
                     Err(err @ ParserError::Invalid(_)) => {
-                        error!("Target::accept failed: {:?}", err);
+                        error!("Target::accept failed: {:#}", err);
                         let mut buf = Vec::new();
                         std::mem::swap(&mut buf, &mut self.buf);
                         tokio::spawn(
                             fallback(buf, self.fallback_port.clone(), read_half, write_half)
                                 .unwrap_or_else(|e| {
-                                    error!("connection to fallback failed {:?}", e)
+                                    error!("connection to fallback failed {:#}", e)
                                 }),
                         );
                         return Err(err);

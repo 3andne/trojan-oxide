@@ -38,7 +38,7 @@ where
     let (conn_req, addr) = accept_client_request(stream).await?;
 
     let mut outbound = connect_to_server.await.map_err(|e| {
-        error!("forward error: {}", e);
+        error!("forward error: {:#}", e);
         e
     })?;
 

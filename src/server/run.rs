@@ -20,7 +20,7 @@ pub async fn run_server(
     #[cfg(feature = "quic")]
     tokio::spawn(
         quic_listener(shutdown_rx1, context.clone())
-            .unwrap_or_else(move |e| error!("quic server shutdown due to {}", e)),
+            .unwrap_or_else(move |e| error!("quic server shutdown due to {:#}", e)),
     );
 
     #[cfg(feature = "tcp_tls")]
@@ -28,7 +28,7 @@ pub async fn run_server(
     #[cfg(feature = "tcp_tls")]
     tokio::spawn(
         tcp_tls_listener(shutdown_rx2, context)
-            .unwrap_or_else(move |e| error!("tcp_tls server shutdown due to {}", e)),
+            .unwrap_or_else(move |e| error!("tcp_tls server shutdown due to {:#}", e)),
     );
     let _ = upper_shutdown.await;
     Ok(())

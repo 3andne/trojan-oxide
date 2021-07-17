@@ -50,7 +50,7 @@ pub async fn handle_quic_connection(
         let fallback_port_clone = fallback_port.clone();
         tokio::spawn(
             handle_outbound(stream, shutdown, pass_copy, fallback_port_clone).map_err(|e| {
-                error!("handle_quic_outbound quit due to {:?}", e);
+                error!("handle_quic_outbound quit due to {:#}", e);
                 e
             }),
         );

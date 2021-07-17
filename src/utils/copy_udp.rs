@@ -1,7 +1,5 @@
 use futures::ready;
 
-use crate::args::Opt;
-
 use super::{CursoredBuffer, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
 use std::fmt::Debug;
 use std::pin::Pin;
