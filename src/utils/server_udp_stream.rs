@@ -43,16 +43,26 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
         buf: &[u8],
         addr: &MixAddrType,
     ) -> Poll<std::io::Result<usize>> {
+        #[cfg(feature = "debug_info")]
         debug!("ServerUdpSendStream::poll_proxy_stream_write()");
         loop {
             match self.addr_task {
                 ResolveAddr::Pending(ref mut task) => {
+                    #[cfg(feature = "debug_info")]
                     debug!(
                         "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Pending({:?})",
                         task
                     );
 
-                    match ready!(Pin::new(task).poll(cx))??.next() {
+                    let poll_res = Pin::new(task).poll(cx);
+
+                    #[cfg(feature = "debug_info")]
+                    debug!(
+                        "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Pending(), res: {:?}",
+                        poll_res
+                    );
+
+                    match ready!(poll_res)??.next() {
                         Some(x) => {
                             self.addr_task = ResolveAddr::Ready(x);
                         }
@@ -63,6 +73,7 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
                     }
                 }
                 ResolveAddr::Ready(s_addr) => {
+                    #[cfg(feature = "debug_info")]
                     debug!(
                         "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Ready({}), buf {:?}",
                         s_addr, buf
@@ -70,26 +81,23 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
 
                     let res = self.inner.poll_send_to(cx, buf, s_addr);
 
-                    debug!(
-                        "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Ready({}), res {:?}",
-                        s_addr, res
-                    );
-
                     if res.is_ready() {
                         self.addr_task = ResolveAddr::None;
                     }
                     return res;
                 }
                 ResolveAddr::None => {
+                    #[cfg(feature = "debug_info")]
                     debug!("ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::None");
 
                     use MixAddrType::*;
                     self.addr_task = match addr {
                         x @ V4(_) | x @ V6(_) => ResolveAddr::Ready(x.clone().to_socket_addrs()),
-                        Hostname((name, _)) => {
+                        Hostname((name, port)) => {
                             let name = name.to_owned();
+                            let port = *port;
                             ResolveAddr::Pending(spawn_blocking(move || {
-                                std::net::ToSocketAddrs::to_socket_addrs(&name)
+                                std::net::ToSocketAddrs::to_socket_addrs(&(name.as_str(), port))
                             }))
                         }
                         _ => panic!("unprecedented MixAddrType variant"),
@@ -97,6 +105,10 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
                 }
             }
         }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -127,6 +139,11 @@ impl<'a> UdpRead for ServerUdpRecvStream<'a> {
         // Ensure the pointer does not change from under us
         assert_eq!(ptr, buf_inner.filled().as_ptr());
         let n = buf_inner.filled().len();
+
+        if n == 0 {
+            // EOF is seen
+            return Poll::Ready(Ok(MixAddrType::None));
+        }
 
         // Safety: This is guaranteed to be the number of initialized (and read)
         // bytes due to the invariants provided by `ReadBuf::filled`.

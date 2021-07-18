@@ -5,6 +5,7 @@ use super::{
 use futures::ready;
 use pin_project_lite::pin_project;
 use std::{
+    cmp::min,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -59,14 +60,19 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
         };
         let me = self.project();
 
+        #[cfg(feature = "debug_info")]
         debug!(
             "TrojanUdpSendStream::poll_proxy_stream_write() inner {:?}",
             me.buffer
         );
 
         match me.inner.poll_write(cx, &me.buffer)? {
+            Poll::Ready(x) if x == 0 => {
+                return Poll::Ready(Ok(0));
+            }
             Poll::Ready(x) => {
                 if x < me.buffer.remaining() {
+                    #[cfg(feature = "debug_info")]
                     debug!(
                         "TrojanUdpSendStream::poll_proxy_stream_write() x < me.buffer.remaining() inner {:?}",
                         me.buffer
@@ -97,9 +103,11 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
             Poll::Pending
         }
     }
-}
 
-// pub type BufferedQuicRecvStream = BufferedRecv<RecvStream>;
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+}
 
 pin_project! {
     #[derive(Debug)]
@@ -146,6 +154,11 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                 assert_eq!(ptr, buf_inner.filled().as_ptr());
                 let n = buf_inner.filled().len();
 
+                if n == 0 {
+                    // EOF is seen
+                    return Poll::Ready(Ok(MixAddrType::None));
+                }
+
                 // Safety: This is guaranteed to be the number of initialized (and read)
                 // bytes due to the invariants provided by `ReadBuf::filled`.
                 unsafe {
@@ -160,24 +173,21 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                 if me.addr_buf.is_none() {
                     match MixAddrType::from_encoded(me.buffer) {
                         Ok(addr) => {
+                            debug!("TrojanUdpRecvStream addr {:?}", addr);
                             *me.addr_buf = addr;
                         }
                         Err(ParserError::Incomplete(msg)) => {
-                            error!(
-                                "TrojanUdpRecvStream::poll_proxy_stream_read Incomplete({})",
-                                msg
-                            );
+                            error!("TrojanUdpRecvStream Incomplete({})", msg);
                             return Poll::Pending;
                         }
                         Err(ParserError::Invalid(msg)) => {
-                            error!(
-                                "TrojanUdpRecvStream::poll_proxy_stream_read Invalid({})",
-                                msg
-                            );
+                            error!("TrojanUdpRecvStream Invalid({})", msg);
                             return Poll::Ready(Err(std::io::ErrorKind::Other.into()));
                         }
                     }
                 }
+
+                debug!("TrojanUdpRecvStream buf after addr {:?}", me.buffer);
 
                 if me.expecting.is_none() {
                     if me.buffer.remaining() < 2 {
@@ -193,15 +203,26 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                     me.buffer.advance(2); // for `\r\n`
                 }
 
-                if me.expecting.unwrap() <= me.buffer.remaining() {
+                if me.buffer.remaining() > 0 {
                     let expecting = me.expecting.unwrap();
-                    outer_buf.extend_from_slice(&me.buffer.chunk()[..expecting]);
-                    me.buffer.advance(expecting);
+                    let to_read = min(expecting, me.buffer.remaining());
+                    outer_buf.extend_from_slice(&me.buffer.chunk()[..to_read]);
+                    me.buffer.advance(to_read);
                     me.buffer.pump();
-                    *me.expecting = None;
-                    let addr = std::mem::replace(me.addr_buf, MixAddrType::None);
-                    Poll::Ready(Ok(addr))
+                    debug!("TrojanUdpRecvStream buffer before return {:?}", me.buffer);
+                    if to_read < expecting {
+                        *me.expecting = Some(expecting - to_read);
+                        Poll::Pending
+                    } else {
+                        *me.expecting = None;
+                        let addr = std::mem::replace(me.addr_buf, MixAddrType::None);
+                        Poll::Ready(Ok(addr))
+                    }
                 } else {
+                    debug!(
+                        "TrojanUdpRecvStream::poll_proxy_stream_read() expecting: {:?}, not long enough",
+                        me.expecting
+                    );
                     Poll::Pending
                 }
             }

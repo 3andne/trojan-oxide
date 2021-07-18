@@ -62,6 +62,7 @@ impl Socks5Request {
                         match self.phase {
                             P1ClientHello => {
                                 inbound.write_all(&PHASE1_SERVER_REPLY).await?;
+                                #[cfg(feature = "debug_info")]
                                 debug!("socks5 Phase 1 parsed");
                                 self.phase = P2ClientRequest;
                                 unsafe {
@@ -70,6 +71,7 @@ impl Socks5Request {
                                 }
                             }
                             P2ClientRequest => {
+                                #[cfg(feature = "debug_info")]
                                 debug!("socks5 Phase 2 parsed");
                                 break;
                             }
@@ -127,7 +129,7 @@ impl Socks5Request {
         use Sock5ParsePhase::*;
         match self.phase {
             P1ClientHello => {
-                expect_buf_len!(buf, 2);
+                expect_buf_len!(buf, 2, "Sock5ParsePhase::parse phase 1 incomplete[1]");
                 if buf[SOCKS_VERSION_INDEX] != 5 {
                     return Err(ParserError::Invalid(
                         "Socks5Request::parse only support socks v5",
@@ -136,7 +138,11 @@ impl Socks5Request {
                 let num = buf[NUM_SUPPORTED_AUTH_METHOD_INDEX];
 
                 let expected_len = 2 + num as usize;
-                expect_buf_len!(buf, expected_len);
+                expect_buf_len!(
+                    buf,
+                    expected_len,
+                    "Sock5ParsePhase::parse phase 1 incomplete[2]"
+                );
 
                 for &method in buf[2..expected_len].iter() {
                     if method == 0 {
@@ -146,7 +152,7 @@ impl Socks5Request {
                 return Err(ParserError::Invalid("Socks5Request::parse method invalid"));
             }
             P2ClientRequest => {
-                expect_buf_len!(buf, 5);
+                expect_buf_len!(buf, 5, "Sock5ParsePhase::parse phase 2 incomplete[1]");
                 if buf[SOCKS_VERSION_INDEX] != 5 {
                     return Err(ParserError::Invalid(
                         "Socks5Request::parse only support socks v5",

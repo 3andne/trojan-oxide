@@ -74,9 +74,11 @@ fn arc_string(s: &str) -> Arc<String> {
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "basic")]
 pub struct Opt {
+    #[cfg(feature = "client")]
     #[structopt(short = "h", long = "http_port", default_value = "8888", parse(from_str = parse_addr))]
     pub local_http_addr: String,
 
+    #[cfg(feature = "client")]
     #[structopt(short = "5", long = "socks5_port", default_value = "8889", parse(from_str = parse_addr))]
     pub local_socks5_addr: String,
 
@@ -92,23 +94,30 @@ pub struct Opt {
     #[structopt(short = "x", long, default_value = "9999")]
     pub proxy_port: String,
 
+    #[structopt(short = "d", long, default_value = "")]
+    pub proxy_ip: String,
+
     #[structopt(short, long)]
     pub server: bool,
 
     /// TLS private key in PEM format
+    #[cfg(feature = "server")]
     #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
     pub key: Option<PathBuf>,
 
     /// TLS certificate in PEM format
+    #[cfg(feature = "server")]
     #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
     pub cert: Option<PathBuf>,
 
     #[structopt(short = "w", long, parse(from_str = password_to_hash))]
     pub password_hash: Arc<String>,
 
+    #[cfg(feature = "server")]
     #[structopt(short = "f", long, parse(from_str = arc_string))]
     pub fallback_port: Arc<String>,
 
+    #[cfg(feature = "client")]
     #[structopt(short = "m", long, default_value = "quic", parse(from_str = parse_connection_mode))]
     pub connection_mode: ConnectionMode,
 }

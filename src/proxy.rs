@@ -18,7 +18,7 @@ pub async fn build_tunnel(ctrl_c: impl std::future::Future, context: TrojanConte
                 res = run_server(shutdown_rx, context) => {
                     match res {
                         Err(err) => {
-                            error!("server quit due to {:?}", err);
+                            error!("server quit due to {:#}", err);
                         }
                         ok => {
                             info!("server end: {:?}", ok);
@@ -38,7 +38,7 @@ pub async fn build_tunnel(ctrl_c: impl std::future::Future, context: TrojanConte
                 res = run_client(shutdown_rx, context) => {
                     match res {
                         Err(err) => {
-                            error!("client quit due to {:?}", err);
+                            error!("client quit due to {:#}", err);
                         }
                         ok => {
                             info!("client end: {:?}", ok);

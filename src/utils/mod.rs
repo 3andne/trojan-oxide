@@ -86,8 +86,8 @@ macro_rules! expect_buf_len {
     };
     ($buf:expr, $len:expr, $mark:expr) => {
         if $buf.len() < $len {
-            debug!("expect_buf_len {}", $mark);
-            return Err(ParserError::Incomplete);
+            // debug!("expect_buf_len {}", $mark);
+            return Err(ParserError::Incomplete($mark));
         }
     };
 }
@@ -115,12 +115,13 @@ impl<'a> CursoredBuffer for (&'a mut usize, &Vec<u8>) {
 }
 
 pub trait VecAsReadBufExt<'a> {
-    fn as_read_buf(&'a mut self) -> ReadBuf<'a>;
+    fn as_read_buf(&'a mut self, start: usize) -> ReadBuf<'a>;
 }
 
 impl<'a> VecAsReadBufExt<'a> for Vec<u8> {
-    fn as_read_buf(&'a mut self) -> ReadBuf<'a> {
-        let dst = self.chunk_mut();
+    fn as_read_buf(&'a mut self, start: usize) -> ReadBuf<'a> {
+        assert!(start <= self.remaining_mut());
+        let dst = &mut self.chunk_mut()[start..];
         let dst = unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>]) };
         ReadBuf::uninit(dst)
     }
@@ -179,6 +180,7 @@ where
             let (index, buffered_request) = self.buffered_request.as_ref().unwrap();
             buf.put_slice(&buffered_request[*index..]);
             self.buffered_request = None;
+            cx.waker().wake_by_ref(); // super important
             return Poll::Ready(Ok(()));
         }
 

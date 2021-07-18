@@ -225,7 +225,7 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
                 if e.kind() == io::ErrorKind::NotFound {
                     info!("local server certificate not found");
                 } else {
-                    error!("failed to open local server certificate: {}", e);
+                    error!("failed to open local server certificate: {:#}", e);
                 }
                 return Err(anyhow::Error::new(e));
             }

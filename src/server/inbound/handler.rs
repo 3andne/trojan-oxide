@@ -1,5 +1,5 @@
 use crate::server::outbound::handle_outbound;
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use std::sync::Arc;
 use tokio::{select, sync::broadcast};
 use tracing::{error, info};
@@ -50,7 +50,7 @@ pub async fn handle_quic_connection(
         let fallback_port_clone = fallback_port.clone();
         tokio::spawn(
             handle_outbound(stream, shutdown, pass_copy, fallback_port_clone).map_err(|e| {
-                error!("handle_quic_outbound quit due to {:?}", e);
+                error!("handle_quic_outbound quit due to {:#}", e);
                 e
             }),
         );
@@ -67,9 +67,10 @@ pub async fn handle_tcp_tls_connection(
     fallback_port: Arc<String>,
 ) -> Result<()> {
     stream.set_nodelay(true)?;
-    let stream = acceptor.accept(stream).await?;
-    handle_outbound(stream, upper_shutdown, password_hash, fallback_port)
+    let stream = acceptor
+        .accept(stream)
         .await
-        .unwrap_or_else(move |e| error!("connection failed: {reason}", reason = e.to_string()));
+        .with_context(|| anyhow!("failed to accept TlsStream"))?;
+    handle_outbound(stream, upper_shutdown, password_hash, fallback_port).await?;
     Ok(())
 }
