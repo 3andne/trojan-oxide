@@ -2,6 +2,7 @@ use super::SplitableToAsyncReadWrite;
 use crate::{
     expect_buf_len,
     protocol::HASH_LEN,
+    simd::trojan_password_compare,
     server::outbound::fallback,
     utils::{BufferedRecv, ConnectionRequest, MixAddrType, ParserError},
 };
@@ -53,7 +54,7 @@ impl<'a> TrojanAcceptor<'a> {
             ));
         }
 
-        if &self.buf[..HASH_LEN] == self.password_hash {
+        if trojan_password_compare(&self.buf[..HASH_LEN], self.password_hash) {
             self.cursor = HASH_LEN + 2;
             Ok(())
         } else {

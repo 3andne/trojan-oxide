@@ -1,5 +1,8 @@
-// #![feature(aarch64_target_feature)]
-// #![feature(stdsimd)]
+#![cfg_attr(
+    all(feature = "nightly", target_arch = "aarch64"),
+    feature(aarch64_target_feature)
+)]
+#![cfg_attr(feature = "nightly", feature(stdsimd))]
 #[cfg(feature = "client")]
 mod client;
 mod proxy;
@@ -7,7 +10,9 @@ mod proxy;
 mod protocol;
 #[cfg(feature = "server")]
 mod server;
-// pub mod simd;
+
+#[cfg(feature = "nightly")]
+pub mod simd;
 
 #[cfg(not(any(feature = "client", feature = "server")))]
 mod must_choose_between_client_and_server;
