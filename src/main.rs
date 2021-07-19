@@ -11,7 +11,6 @@ mod protocol;
 #[cfg(feature = "server")]
 mod server;
 
-#[cfg(feature = "nightly")]
 pub mod simd;
 
 #[cfg(not(any(feature = "client", feature = "server")))]
