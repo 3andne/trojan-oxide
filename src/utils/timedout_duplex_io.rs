@@ -1,108 +1,160 @@
 use futures::Future;
 use pin_project_lite::pin_project;
-use std::{
-    pin::Pin,
-    sync::atomic::{AtomicU32, Ordering},
-    task::Poll,
-};
+use std::{pin::Pin, sync::Arc, sync::atomic::{AtomicU32, Ordering}, task::Poll};
 
-use tokio::time::{sleep_until, Duration, Instant, Sleep};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    time::{sleep_until, Duration, Instant, Sleep},
+};
 
 use crate::utils::MixAddrType;
 
-use super::UdpRead;
-
-pub struct TimedoutReadWrite<T> {
-    inner: T,
-    created: Instant,
-    last_active: AtomicU32,
-    deadline: Duration,
-}
+use super::{UdpRead, UdpWrite};
 
 pin_project! {
-    pub struct TimedoutRead<'a, R> {
-        #[pin]
-        inner: R,
-        created: &'a Instant,
-        last_active: &'a AtomicU32,
+    pub struct TimeoutMonitor {
+        created: Instant,
+        last_active: Arc<AtomicU32>,
+        deadline: u32,
         #[pin]
         sleep: Sleep,
-        deadline: u32,
     }
 }
 
-pub struct TimedoutWrite<'a, W> {
-    inner: W,
-    created: &'a Instant,
-    last_active: &'a AtomicU32,
-    sleep: Sleep,
-    deadline: u32,
+pub struct TimedoutIO<R> {
+    inner: R,
+    created: Instant,
+    last_active: Arc<AtomicU32>,
 }
 
-pub trait SplitIntoReadWrite {
-    type R;
-    type W;
-    fn split(&self) -> (Self::R, Self::W);
-}
-
-impl<T> TimedoutReadWrite<T>
-where
-    T: SplitIntoReadWrite,
-{
-    fn split(&self) -> (TimedoutRead<T::R>, TimedoutWrite<T::W>) {
-        let (r, w) = self.inner.split();
-        let sleep = Instant::now() + self.deadline;
-        (
-            TimedoutRead {
-                inner: r,
-                created: &self.created,
-                last_active: &self.last_active,
-                deadline: self.deadline.as_secs() as u32,
-                sleep: sleep_until(sleep),
-            },
-            TimedoutWrite {
-                inner: w,
-                created: &self.created,
-                last_active: &self.last_active,
-                deadline: self.deadline.as_secs() as u32,
-                sleep: sleep_until(sleep),
-            },
-        )
-    }
-}
-
-impl<T: UdpRead + Unpin> UdpRead for TimedoutRead<'_, T> {
-    fn poll_proxy_stream_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut super::UdpRelayBuffer,
-    ) -> Poll<std::io::Result<crate::utils::MixAddrType>> {
-        let mut me = self.project();
-
-        match me.inner.poll_proxy_stream_read(cx, buf) {
-            res @ Poll::Ready(_) => {
-                let last_active = (Instant::now() - **me.created).as_secs() as u32;
-                me.last_active.store(last_active, Ordering::SeqCst);
-                return res;
-            }
-            Poll::Pending => (),
+impl TimeoutMonitor {
+    pub fn new(deadline: Duration) -> Self {
+        let sleep = Instant::now() + deadline;
+        Self {
+            created: Instant::now(),
+            last_active: Arc::new(AtomicU32::new(0)),
+            deadline: deadline.as_secs() as u32,
+            sleep: sleep_until(sleep),
         }
+    }
 
+    pub fn watch<R>(&self, inner: R) -> TimedoutIO<R> {
+        TimedoutIO {
+            inner,
+            created: self.created,
+            last_active: self.last_active.clone(),
+        }
+    }
+}
+
+impl Future for TimeoutMonitor {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let mut me = self.project();
         match me.sleep.as_mut().poll(cx) {
             Poll::Ready(()) => {
                 let instant = Instant::now();
-                let time_elapsed = (instant - **me.created).as_secs() as u32;
-                let last_active = me.last_active.load(Ordering::SeqCst);
+                let time_elapsed = (instant - *me.created).as_secs() as u32;
+                let last_active = me.last_active.load(Ordering::Relaxed);
                 let inactive_time = time_elapsed - last_active;
                 if inactive_time > *me.deadline {
-                    Poll::Ready(Ok(MixAddrType::None))
+                    Poll::Ready(())
                 } else {
-                    me.sleep.as_mut()
+                    me.sleep
+                        .as_mut()
                         .reset(instant + Duration::from_secs(*me.deadline as u64));
                     Poll::Pending
                 }
             }
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+macro_rules! poll_timeout {
+    {With $me:expr, $poll:expr} => {
+        match $poll {
+            res @ Poll::Ready(_) => {
+                let last_active = (Instant::now() - $me.created).as_secs() as u32;
+                $me.last_active.store(last_active, Ordering::Relaxed);
+                return res;
+            },
+            Poll::Pending => Poll::Pending,
+        }
+    };
+}
+
+impl<T: UdpRead + Unpin> UdpRead for TimedoutIO<T> {
+    fn poll_proxy_stream_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut super::UdpRelayBuffer,
+    ) -> Poll<std::io::Result<crate::utils::MixAddrType>> {
+        poll_timeout! {
+            With self,
+            Pin::new(&mut self.inner).poll_proxy_stream_read(cx, buf)
+        }
+    }
+}
+
+impl<T: UdpWrite + Unpin> UdpWrite for TimedoutIO<T> {
+    fn poll_proxy_stream_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+        addr: &MixAddrType,
+    ) -> Poll<std::io::Result<usize>> {
+        poll_timeout! {
+            With self,
+            Pin::new(&mut self.inner).poll_proxy_stream_write(cx, buf, addr)
+        }
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for TimedoutIO<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        poll_timeout! {
+            With self,
+            Pin::new(&mut self.inner).poll_read(cx, buf)
+        }
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for TimedoutIO<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        poll_timeout! {
+            With self,
+            Pin::new(&mut self.inner).poll_write(cx, buf)
+        }
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }

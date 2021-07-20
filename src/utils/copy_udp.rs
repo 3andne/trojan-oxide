@@ -9,7 +9,7 @@ use std::{future::Future, u64};
 use tracing::debug;
 use tracing::info;
 
-pub async fn copy_udp<'a, R: UdpRead + Unpin + Debug, W: UdpWrite + Unpin + Debug>(
+pub async fn copy_udp<'a, R: UdpRead + Unpin, W: UdpWrite + Unpin>(
     reader: &'a mut R,
     writer: &'a mut W,
     conn_id: Option<usize>,
@@ -36,8 +36,8 @@ struct CopyUdp<'a, R: UdpRead, W: UdpWrite> {
 
 impl<R, W> Future for CopyUdp<'_, R, W>
 where
-    R: UdpRead + Unpin + Debug,
-    W: UdpWrite + Unpin + Debug,
+    R: UdpRead + Unpin,
+    W: UdpWrite + Unpin,
 {
     type Output = std::io::Result<u64>;
 

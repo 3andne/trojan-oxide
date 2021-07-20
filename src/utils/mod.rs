@@ -50,6 +50,8 @@ pub use data_transfer::relay_tcp;
 pub use data_transfer::relay_udp;
 pub use mix_addr::MixAddrType;
 
+pub use timedout_duplex_io::{TimedoutIO, TimeoutMonitor};
+
 use std::pin::Pin;
 use std::task::Poll;
 use tokio::io::{AsyncRead, ReadBuf};
