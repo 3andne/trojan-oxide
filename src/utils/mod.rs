@@ -38,6 +38,10 @@ pub use copy_tcp::copy_tcp;
 mod data_transfer;
 mod macros;
 mod mix_addr;
+
+#[cfg(feature = "server")]
+mod timedout_duplex_io;
+
 use bytes::BufMut;
 
 #[cfg(feature = "client")]
