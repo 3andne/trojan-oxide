@@ -1,14 +1,14 @@
 use crate::{
     server::inbound::{SplitableToAsyncReadWrite, TrojanAcceptor},
-    utils::{copy_tcp, ConnectionRequest},
+    utils::{copy_tcp, ConnectionRequest, TimeoutMonitor},
 };
 use anyhow::{anyhow, Context, Error, Result};
 use lazy_static::lazy_static;
-use std::fmt::Debug;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use std::{fmt::Debug, time::Duration};
 use tokio::{net::TcpStream, select, sync::broadcast};
 use tracing::{debug, info};
 #[cfg(feature = "udp")]
@@ -56,7 +56,10 @@ where
             #[cfg(feature = "debug_info")]
             debug!("outbound connected: {:?}", outbound);
 
-            let (mut out_read, mut out_write) = outbound.split();
+            let (out_read, out_write) = outbound.split();
+            let timeout_monitor = TimeoutMonitor::new(Duration::from_secs(5 * 60));
+            let mut out_read = timeout_monitor.watch(out_read);
+            let mut out_write = timeout_monitor.watch(out_write);
             let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             info!("[tcp][{}] => {:?}", conn_id, &target.host);
             // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
@@ -67,6 +70,9 @@ where
                 _ = tokio::io::copy(&mut in_read, &mut out_write) => {
                     info!("[tcp][{}]end uploading", conn_id);
                 },
+                _ = timeout_monitor => {
+                    info!("[tcp][{}]end timeout", conn_id);
+                }
                 _ = upper_shutdown.recv() => {
                     info!("[tcp][{}]shutdown signal received", conn_id);
                 },
@@ -82,14 +88,20 @@ where
             let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             debug!("[udp][{}] {:?} =>", conn_id, outbound.local_addr());
             let mut udp_stream = ServerUdpStream::new(outbound);
-            let (mut out_write, mut out_read) = udp_stream.split();
+            let (out_write, out_read) = udp_stream.split();
+            let timeout_monitor = TimeoutMonitor::new(Duration::from_secs(5 * 60));
+            let mut out_read = timeout_monitor.watch(out_read);
+            let mut out_write = timeout_monitor.watch(out_write);
             select! {
                 res = copy_udp(&mut out_read, &mut in_write, None) => {
-                    info!("[udp][{}]udp relaying download end: {:?}", conn_id, res);
+                    info!("[udp][{}]end downloading: {:?}", conn_id, res);
                 },
                 res = copy_udp(&mut in_read, &mut out_write, Some(conn_id)) => {
-                    info!("[udp][{}]udp relaying upload end: {:?}", conn_id, res);
+                    info!("[udp][{}]end uploading: {:?}", conn_id, res);
                 },
+                _ = timeout_monitor => {
+                    info!("[udp][{}]end timeout", conn_id);
+                }
                 _ = upper_shutdown.recv() => {
                     info!("[udp][{}]shutdown signal received", conn_id);
                 },

@@ -38,6 +38,10 @@ pub use copy_tcp::copy_tcp;
 mod data_transfer;
 mod macros;
 mod mix_addr;
+
+#[cfg(feature = "server")]
+mod timedout_duplex_io;
+
 use bytes::BufMut;
 
 #[cfg(feature = "client")]
@@ -45,6 +49,8 @@ pub use data_transfer::relay_tcp;
 #[cfg(all(feature = "udp", feature = "client"))]
 pub use data_transfer::relay_udp;
 pub use mix_addr::MixAddrType;
+
+pub use timedout_duplex_io::{TimedoutIO, TimeoutMonitor};
 
 use std::pin::Pin;
 use std::task::Poll;

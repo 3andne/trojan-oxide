@@ -17,6 +17,7 @@ use super::ClientConnectionRequest;
 use anyhow::{Error, Result};
 use tokio::io::*;
 use tokio::net::TcpStream;
+#[cfg(feature = "debug_info")]
 use tracing::*;
 
 const SOCKS_VERSION_INDEX: usize = 0;
