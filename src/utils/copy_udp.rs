@@ -1,7 +1,6 @@
 use futures::ready;
 
 use super::{CursoredBuffer, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
-use std::fmt::Debug;
 use std::pin::Pin;
 use std::task::Poll;
 use std::{future::Future, u64};

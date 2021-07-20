@@ -1,4 +1,4 @@
-use std::{io::Cursor, sync::Arc, time::Duration};
+use std::{io::Cursor, sync::Arc};
 
 use crate::utils::copy_tcp;
 use anyhow::{anyhow, Context, Error, Result};
