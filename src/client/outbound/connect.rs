@@ -1,10 +1,11 @@
-use super::trojan_auth::{trojan_auth_tcp, trojan_auth_udp};
+use super::trojan_auth::trojan_auth;
 
 #[cfg(feature = "udp")]
 use crate::utils::relay_udp;
 use crate::{
     client::inbound::ClientRequestAcceptResult,
-    utils::{relay_tcp, ClientServerConnection, ConnectionRequest},
+    protocol::ServiceMode,
+    utils::{relay_tcp, ClientServerConnection, ConnectionRequest, MixAddrType},
 };
 use anyhow::Result;
 use lazy_static::lazy_static;
@@ -45,7 +46,7 @@ where
     use ConnectionRequest::*;
     match conn_req {
         TCP(inbound) => {
-            trojan_auth_tcp(&addr, &mut outbound, password_hash).await?;
+            trojan_auth(ServiceMode::TCP, &addr, &mut outbound, password_hash).await?;
             let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             info!(
                 "[tcp][{}]{:?} => {:?}",
@@ -59,11 +60,18 @@ where
         #[cfg(feature = "udp")]
         UDP(inbound) => {
             let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            trojan_auth_udp(&mut outbound, password_hash).await?;
+            trojan_auth(
+                ServiceMode::UDP,
+                &MixAddrType::new_null(),
+                &mut outbound,
+                password_hash,
+            )
+            .await?;
             info!("[udp][{}] => {:?}", conn_id, &addr);
             relay_udp(inbound, outbound, upper_shutdown, conn_id).await;
             info!("[end][udp][{}]", conn_id);
         }
+        MiniTLS(x) => {}
         #[cfg(feature = "quic")]
         ECHO(_) => panic!("unreachable"),
         #[allow(unreachable_patterns)]

@@ -149,6 +149,7 @@ pub enum ConnectionRequest<TcpRequest, UdpRequest> {
     UDP(UdpRequest),
     #[cfg(feature = "quic")]
     ECHO(TcpRequest),
+    MiniTLS(TcpRequest),
 }
 
 #[cfg(not(feature = "udp"))]
@@ -209,4 +210,6 @@ pub enum ClientServerConnection {
     Quic((SendStream, RecvStream)),
     #[cfg(feature = "tcp_tls")]
     TcpTLS(TlsStream<TcpStream>),
+    #[cfg(feature = "mini_tls")]
+    MiniTLS(TlsStream<TcpStream>),
 }

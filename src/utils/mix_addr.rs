@@ -271,7 +271,7 @@ impl MixAddrType {
         }
     }
 
-    #[cfg(all(feature = "server", feature = "udp"))]
+    #[cfg(all(feature = "udp"))]
     pub fn new_null() -> Self {
         Self::V4(([0, 0, 0, 0], 0))
     }

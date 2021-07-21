@@ -42,6 +42,8 @@ pub async fn relay_tcp(
                 },
             }
         }
+        #[cfg(feature = "mini_tls")]
+        ClientServerConnection::MiniTLS(_) => todo!(),
     }
 }
 
@@ -84,6 +86,10 @@ pub async fn relay_udp(
                     debug!("shutdown signal received");
                 },
             }
+        }
+        #[cfg(feature = "mini_tls")]
+        ClientServerConnection::MiniTLS(_) => {
+            unimplemented!("udp in minitls should be treated as tcp_tls")
         }
     }
 }

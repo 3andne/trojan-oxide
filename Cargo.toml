@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio={version = "1.8", features = ["full"]}
+tokio = { version = "1.8", features = ["full"] }
 clap = "2.33.3"
 anyhow = { version = "1.0.41" }
 tracing = "0.1.26"
@@ -56,11 +56,12 @@ opt-level = 3
 server = []
 client = []
 tcp_tls = ["tokio-rustls"]
+mini_tls = ["tokio-rustls"]
 quic = ["quinn", "quinn-proto", "rcgen"]
 udp = []
 debug_info = []
-full = ["server", "client", "tcp_tls", "quic", "udp"]
-dev = ["server", "client", "tcp_tls", "quic", "udp", "debug_info"]
+full = ["server", "client", "tcp_tls", "quic", "udp", "mini_tls"]
+dev = ["server", "client", "tcp_tls", "quic", "udp", "mini_tls", "debug_info"]
 server_quic = ["server", "quic"]
 server_quic_udp = ["server", "quic", "udp"]
 server_tcp_tls = ["server", "tcp_tls"]

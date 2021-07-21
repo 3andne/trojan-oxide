@@ -1,5 +1,5 @@
 use crate::{
-    protocol::HASH_LEN,
+    protocol::{ServiceMode, HASH_LEN},
     utils::{ClientServerConnection, MixAddrType},
 };
 use anyhow::Result;
@@ -7,24 +7,8 @@ use std::sync::Arc;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::{debug, trace};
 
-pub async fn trojan_auth_udp(
-    outbound: &mut ClientServerConnection,
-    password: Arc<String>,
-) -> Result<()> {
-    let addr = MixAddrType::V4(([0, 0, 0, 0], 0));
-    match outbound {
-        #[cfg(feature = "quic")]
-        ClientServerConnection::Quic((out_write, _)) => {
-            trojan_auth(true, &addr, out_write, password).await
-        }
-        #[cfg(feature = "tcp_tls")]
-        ClientServerConnection::TcpTLS(out_write) => {
-            trojan_auth(true, &addr, out_write, password).await
-        }
-    }
-}
-
-pub async fn trojan_auth_tcp(
+pub async fn trojan_auth(
+    mode: ServiceMode,
     addr: &MixAddrType,
     outbound: &mut ClientServerConnection,
     password: Arc<String>,
@@ -32,17 +16,21 @@ pub async fn trojan_auth_tcp(
     match outbound {
         #[cfg(feature = "quic")]
         ClientServerConnection::Quic((out_write, _)) => {
-            trojan_auth(false, addr, out_write, password).await
+            send_trojan_auth(mode, addr, out_write, password).await
         }
         #[cfg(feature = "tcp_tls")]
         ClientServerConnection::TcpTLS(out_write) => {
-            trojan_auth(false, addr, out_write, password).await
+            send_trojan_auth(mode, addr, out_write, password).await
+        }
+        #[cfg(feature = "mini_tls")]
+        ClientServerConnection::MiniTLS(out_write) => {
+            send_trojan_auth(mode, addr, out_write, password).await
         }
     }
 }
 
-async fn trojan_auth<A>(
-    udp: bool,
+async fn send_trojan_auth<A>(
+    mode: ServiceMode,
     addr: &MixAddrType,
     outbound: &mut A,
     password: Arc<String>,
@@ -52,7 +40,7 @@ where
 {
     let mut buf = Vec::with_capacity(HASH_LEN + 2 + 1 + addr.encoded_len() + 2);
     buf.extend_from_slice(password.as_bytes());
-    buf.extend_from_slice(&[b'\r', b'\n', if udp { 0x03 } else { 0x01 }]);
+    buf.extend_from_slice(&[b'\r', b'\n', mode.get_code()]);
     addr.write_buf(&mut buf);
     buf.extend_from_slice(&[b'\r', b'\n']);
     trace!("trojan_connect: writing {:?}", buf);

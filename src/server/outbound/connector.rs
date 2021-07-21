@@ -120,6 +120,7 @@ where
             }
             debug!("[echo]end relaying");
         }
+        Ok(MiniTLS((a, b))) => {}
         Err(e) => {
             return Err(
                 Error::new(e).context(anyhow!("failed to parse connection to {:?}", target.host))
