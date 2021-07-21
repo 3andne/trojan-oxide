@@ -149,7 +149,23 @@ pub enum ConnectionRequest<TcpRequest, UdpRequest> {
     UDP(UdpRequest),
     #[cfg(feature = "quic")]
     ECHO(TcpRequest),
+    #[cfg(feature = "mini_tls")]
     MiniTLS(TcpRequest),
+}
+
+#[cfg(feature = "udp")]
+impl<TcpRequest, UdpRequest> ConnectionRequest<TcpRequest, UdpRequest> {
+    pub fn get_code(&self) -> u8 {
+        use ConnectionRequest::*;
+        match self {
+            TCP(_) => 0x01,
+            UDP(_) => 0x03,
+            #[cfg(feature = "quic")]
+            ECHO(_) => 0xff,
+            #[cfg(feature = "mini_tls")]
+            MiniTLS(_) => 0x11,
+        }
+    }
 }
 
 #[cfg(not(feature = "udp"))]
@@ -157,8 +173,23 @@ pub enum ConnectionRequest<TcpRequest> {
     TCP(TcpRequest),
     #[cfg(feature = "quic")]
     ECHO(TcpRequest),
+    #[cfg(feature = "mini_tls")]
+    MiniTLS(TcpRequest),
 }
 
+#[cfg(not(feature = "udp"))]
+impl<TcpRequest> ConnectionRequest<TcpRequest> {
+    pub fn get_code(&self) -> u8 {
+        use ConnectionRequest::*;
+        match self {
+            TCP(_) => 0x01,
+            #[cfg(feature = "quic")]
+            ECHO(_) => 0xff,
+            #[cfg(feature = "mini_tls")]
+            MiniTLS(_) => 0x11,
+        }
+    }
+}
 #[derive(Debug)]
 pub struct BufferedRecv<T> {
     buffered_request: Option<(usize, Vec<u8>)>,

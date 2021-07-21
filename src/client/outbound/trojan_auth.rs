@@ -1,5 +1,5 @@
 use crate::{
-    protocol::{ServiceMode, HASH_LEN},
+    protocol::HASH_LEN,
     utils::{ClientServerConnection, MixAddrType},
 };
 use anyhow::Result;
@@ -8,7 +8,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::{debug, trace};
 
 pub async fn trojan_auth(
-    mode: ServiceMode,
+    mode: u8,
     addr: &MixAddrType,
     outbound: &mut ClientServerConnection,
     password: Arc<String>,
@@ -30,7 +30,7 @@ pub async fn trojan_auth(
 }
 
 async fn send_trojan_auth<A>(
-    mode: ServiceMode,
+    mode: u8,
     addr: &MixAddrType,
     outbound: &mut A,
     password: Arc<String>,
@@ -40,7 +40,7 @@ where
 {
     let mut buf = Vec::with_capacity(HASH_LEN + 2 + 1 + addr.encoded_len() + 2);
     buf.extend_from_slice(password.as_bytes());
-    buf.extend_from_slice(&[b'\r', b'\n', mode.get_code()]);
+    buf.extend_from_slice(&[b'\r', b'\n', mode]);
     addr.write_buf(&mut buf);
     buf.extend_from_slice(&[b'\r', b'\n']);
     trace!("trojan_connect: writing {:?}", buf);

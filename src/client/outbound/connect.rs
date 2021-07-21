@@ -4,7 +4,6 @@ use super::trojan_auth::trojan_auth;
 use crate::utils::relay_udp;
 use crate::{
     client::inbound::ClientRequestAcceptResult,
-    protocol::ServiceMode,
     utils::{relay_tcp, ClientServerConnection, ConnectionRequest, MixAddrType},
 };
 use anyhow::Result;
@@ -43,11 +42,13 @@ where
         e
     })?;
 
+    let connection_mode = conn_req.get_code();
+
     use ConnectionRequest::*;
     match conn_req {
         TCP(inbound) => {
-            trojan_auth(ServiceMode::TCP, &addr, &mut outbound, password_hash).await?;
             let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            trojan_auth(connection_mode, &addr, &mut outbound, password_hash).await?;
             info!(
                 "[tcp][{}]{:?} => {:?}",
                 conn_id,
@@ -61,7 +62,7 @@ where
         UDP(inbound) => {
             let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             trojan_auth(
-                ServiceMode::UDP,
+                connection_mode,
                 &MixAddrType::new_null(),
                 &mut outbound,
                 password_hash,
@@ -71,7 +72,19 @@ where
             relay_udp(inbound, outbound, upper_shutdown, conn_id).await;
             info!("[end][udp][{}]", conn_id);
         }
-        MiniTLS(x) => {}
+        #[cfg(feature = "mini_tls")]
+        MiniTLS(inbound) => {
+            let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            trojan_auth(connection_mode, &addr, &mut outbound, password_hash).await?;
+            info!(
+                "[MTLS][{}]{:?} => {:?}",
+                conn_id,
+                inbound.peer_addr()?,
+                &addr
+            );
+            relay_tcp(inbound, outbound, upper_shutdown).await;
+            debug!("[end][MTLS][{}]", conn_id);
+        }
         #[cfg(feature = "quic")]
         ECHO(_) => panic!("unreachable"),
         #[allow(unreachable_patterns)]

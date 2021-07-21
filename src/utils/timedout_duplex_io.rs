@@ -1,6 +1,11 @@
 use futures::Future;
 use pin_project_lite::pin_project;
-use std::{pin::Pin, sync::Arc, sync::atomic::{AtomicU32, Ordering}, task::Poll};
+use std::{
+    pin::Pin,
+    sync::atomic::{AtomicU32, Ordering},
+    sync::Arc,
+    task::Poll,
+};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -9,6 +14,7 @@ use tokio::{
 
 use crate::utils::MixAddrType;
 
+#[cfg(feature = "udp")]
 use super::{UdpRead, UdpWrite};
 
 pin_project! {
@@ -85,6 +91,7 @@ macro_rules! poll_timeout {
     };
 }
 
+#[cfg(feature = "udp")]
 impl<T: UdpRead + Unpin> UdpRead for TimedoutIO<T> {
     fn poll_proxy_stream_read(
         mut self: std::pin::Pin<&mut Self>,
@@ -98,6 +105,7 @@ impl<T: UdpRead + Unpin> UdpRead for TimedoutIO<T> {
     }
 }
 
+#[cfg(feature = "udp")]
 impl<T: UdpWrite + Unpin> UdpWrite for TimedoutIO<T> {
     fn poll_proxy_stream_write(
         mut self: Pin<&mut Self>,
