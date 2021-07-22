@@ -1,6 +1,6 @@
 use futures::ready;
 
-use super::{CursoredBuffer, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
+use crate::utils::{CursoredBuffer, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
 use std::pin::Pin;
 use std::task::Poll;
 use std::{future::Future, u64};

@@ -1,12 +1,26 @@
 #[cfg(feature = "client")]
-mod client_tcp_stream;
+mod client;
+
 #[cfg(feature = "client")]
-pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
+pub use {
+    client::{
+        client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream},
+        data_transfer::relay_tcp,
+    },
+    tokio::net::TcpStream,
+};
 
 #[cfg(all(feature = "client", feature = "udp"))]
-mod client_udp_stream;
-#[cfg(all(feature = "client", feature = "udp"))]
-pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream};
+pub use client::{
+    client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream},
+    data_transfer::relay_udp,
+};
+#[cfg(all(feature = "client", feature = "quic"))]
+use quinn::*;
+#[cfg(all(feature = "client", feature = "tcp_tls"))]
+use tokio_rustls::client::TlsStream;
+#[cfg(feature = "server")]
+mod timedout_duplex_io;
 
 #[cfg(all(feature = "server", feature = "udp"))]
 mod server_udp_stream;
@@ -14,55 +28,30 @@ mod server_udp_stream;
 pub use server_udp_stream::{ServerUdpRecvStream, ServerUdpSendStream, ServerUdpStream};
 
 #[cfg(feature = "udp")]
-mod trojan_udp_stream;
-#[cfg(feature = "udp")]
-pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream};
+mod udp;
 
 #[cfg(feature = "udp")]
-mod udp_relay_buffer;
-#[cfg(feature = "udp")]
-pub use udp_relay_buffer::UdpRelayBuffer;
-
-#[cfg(feature = "udp")]
-mod udp_traits;
-#[cfg(feature = "udp")]
-pub use udp_traits::{UdpRead, UdpWrite};
-#[cfg(feature = "udp")]
-mod copy_udp;
-#[cfg(feature = "udp")]
-pub use copy_udp::copy_udp;
+pub use udp::{
+    copy_udp::copy_udp,
+    trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream},
+    udp_relay_buffer::UdpRelayBuffer,
+    udp_traits::{UdpRead, UdpWrite},
+};
 
 mod copy_tcp;
 pub use copy_tcp::copy_tcp;
-#[cfg(feature = "client")]
-mod data_transfer;
+
 mod macros;
 mod mix_addr;
-
-#[cfg(feature = "server")]
-mod timedout_duplex_io;
+pub use mix_addr::MixAddrType;
 
 use bytes::BufMut;
-
-#[cfg(feature = "client")]
-pub use data_transfer::relay_tcp;
-#[cfg(all(feature = "udp", feature = "client"))]
-pub use data_transfer::relay_udp;
-pub use mix_addr::MixAddrType;
 
 pub use timedout_duplex_io::{TimedoutIO, TimeoutMonitor};
 
 use std::pin::Pin;
 use std::task::Poll;
 use tokio::io::{AsyncRead, ReadBuf};
-#[cfg(feature = "client")]
-use tokio::net::TcpStream;
-
-#[cfg(all(feature = "client", feature = "tcp_tls"))]
-use tokio_rustls::client::TlsStream;
-
-#[cfg(all(feature = "quic", feature = "client"))]
-use quinn::*;
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {

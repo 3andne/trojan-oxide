@@ -1,4 +1,4 @@
-use super::{
+use crate::utils::{
     BufferedRecv, CursoredBuffer, ExtendableFromSlice, MixAddrType, ParserError, UdpRead,
     UdpRelayBuffer, UdpWrite,
 };

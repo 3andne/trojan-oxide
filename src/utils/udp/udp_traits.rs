@@ -1,4 +1,4 @@
-use super::{MixAddrType, UdpRelayBuffer};
+use crate::utils::{MixAddrType, UdpRelayBuffer};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 

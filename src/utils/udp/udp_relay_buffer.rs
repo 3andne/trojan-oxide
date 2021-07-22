@@ -1,4 +1,4 @@
-use super::{CursoredBuffer, ExtendableFromSlice, VecAsReadBufExt};
+use crate::utils::{CursoredBuffer, ExtendableFromSlice, VecAsReadBufExt};
 use bytes::BufMut;
 use std::ops::Deref;
 use tokio::io::ReadBuf;

@@ -1,4 +1,4 @@
-use super::{CursoredBuffer, ExtendableFromSlice, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
+use crate::utils::{CursoredBuffer, ExtendableFromSlice, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
 use futures::ready;
 use std::pin::Pin;
 use std::task::{Context, Poll};
