@@ -51,17 +51,15 @@ where
         debug!("accepted http: {:?}", stream);
         let shutdown_rx = shutdown_tx.subscribe();
         let hash_copy = hash.clone();
-
         match &context.options.connection_mode {
             #[cfg(feature = "tcp_tls")]
             ConnectionMode::TcpTLS => {
                 let tls_config_copy = tls_config.clone();
                 let domain_string_copy = domain_string.clone();
                 tokio::spawn(forward(
-                    stream,
                     shutdown_rx,
                     hash_copy,
-                    accept_client_request.clone(),
+                    accept_client_request(stream),
                     connect_through_tcp_tls(tls_config_copy, domain_string_copy, remote_addr),
                 ));
             }
@@ -70,10 +68,9 @@ where
                 let (conn_ret_tx, conn_ret_rx) = oneshot::channel();
                 or_continue!(task_tx.send(conn_ret_tx).await);
                 tokio::spawn(forward(
-                    stream,
                     shutdown_rx,
                     hash_copy,
-                    accept_client_request.clone(),
+                    accept_client_request(stream),
                     async move { Ok(ClientServerConnection::Quic(conn_ret_rx.await??)) },
                 ));
             }

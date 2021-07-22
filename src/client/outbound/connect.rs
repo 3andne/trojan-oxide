@@ -15,7 +15,7 @@ use std::{
         Arc,
     },
 };
-use tokio::{net::TcpStream, sync::broadcast};
+use tokio::sync::broadcast;
 use tracing::*;
 
 lazy_static! {
@@ -23,19 +23,17 @@ lazy_static! {
     static ref UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 }
 
-pub async fn forward<F, Fut, Connecting>(
-    stream: TcpStream,
+pub async fn forward<Incomming, Connecting>(
     upper_shutdown: broadcast::Receiver<()>,
     password_hash: Arc<String>,
-    accept_client_request: F,
+    incomming_request: Incomming,
     connect_to_server: Connecting,
 ) -> Result<()>
 where
-    F: FnOnce(TcpStream) -> Fut + Send,
-    Fut: Future<Output = ClientRequestAcceptResult> + Send,
+    Incomming: Future<Output = ClientRequestAcceptResult> + Send,
     Connecting: Future<Output = Result<ClientServerConnection>> + Send,
 {
-    let (conn_req, addr) = accept_client_request(stream).await?;
+    let (conn_req, addr) = incomming_request.await?;
 
     let mut outbound = connect_to_server.await.map_err(|e| {
         error!("forward error: {:#}", e);
