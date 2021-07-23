@@ -42,8 +42,8 @@ pub async fn relay_tcp(
                 },
             }
         }
-        #[cfg(feature = "mini_tls")]
-        ClientServerConnection::MiniTLS(_) => todo!(),
+        #[cfg(feature = "lite_tls")]
+        ClientServerConnection::LiteTLS(_) => todo!(),
     }
 }
 
@@ -87,8 +87,8 @@ pub async fn relay_udp(
                 },
             }
         }
-        #[cfg(feature = "mini_tls")]
-        ClientServerConnection::MiniTLS(_) => {
+        #[cfg(feature = "lite_tls")]
+        ClientServerConnection::LiteTLS(_) => {
             unimplemented!("udp in minitls should be treated as tcp_tls")
         }
     }

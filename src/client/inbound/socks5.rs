@@ -13,7 +13,7 @@ use tokio::net::UdpSocket;
 #[cfg(feature = "udp")]
 use tokio::sync::oneshot;
 
-use super::ClientConnectionRequest;
+use crate::client::ClientConnectionRequest;
 use anyhow::{Error, Result};
 use tokio::io::*;
 use tokio::net::TcpStream;

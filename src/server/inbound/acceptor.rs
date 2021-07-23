@@ -1,4 +1,6 @@
 use super::SplitableToAsyncReadWrite;
+#[cfg(not(feature = "udp"))]
+use crate::utils::DummyRequest;
 use crate::{
     expect_buf_len,
     protocol::HASH_LEN,
@@ -12,20 +14,18 @@ use tokio::io::AsyncReadExt;
 use tracing::*;
 #[cfg(feature = "udp")]
 use {super::TrojanUdpStream, crate::utils::new_trojan_udp_stream};
-
 #[cfg(feature = "udp")]
-type ServerConnectionRequest<I> = ConnectionRequest<
-    (
-        <I as SplitableToAsyncReadWrite>::W,
-        BufferedRecv<<I as SplitableToAsyncReadWrite>::R>,
-    ),
-    TrojanUdpStream<<I as SplitableToAsyncReadWrite>::W, <I as SplitableToAsyncReadWrite>::R>,
+#[allow(type_alias_bounds)]
+type ServerConnectionRequest<I: SplitableToAsyncReadWrite> = ConnectionRequest<
+    (I::W, BufferedRecv<I::R>),
+    TrojanUdpStream<I::W, I::R>,
+    (I::W, BufferedRecv<I::R>),
 >;
+
 #[cfg(not(feature = "udp"))]
-type ServerConnectionRequest<I> = ConnectionRequest<(
-    <I as SplitableToAsyncReadWrite>::W,
-    BufferedRecv<<I as SplitableToAsyncReadWrite>::R>,
-)>;
+#[allow(type_alias_bounds)]
+type ServerConnectionRequest<I: SplitableToAsyncReadWrite> =
+    ConnectionRequest<(I::W, BufferedRecv<I::R>), DummyRequest, (I::W, BufferedRecv<I::R>)>;
 #[derive(Default, Debug)]
 pub struct TrojanAcceptor<'a> {
     pub host: MixAddrType,
@@ -160,18 +160,26 @@ impl<'a> TrojanAcceptor<'a> {
             Some((self.cursor, std::mem::take(&mut self.buf)))
         };
 
-        Ok(match self.cmd_code {
+        match self.cmd_code {
             #[cfg(feature = "udp")]
-            0x03 => UDP(new_trojan_udp_stream(
+            0x03 => Ok(UDP(new_trojan_udp_stream(
                 write_half,
                 read_half,
                 buffered_request,
-            )),
-            0x01 => TCP((write_half, BufferedRecv::new(read_half, buffered_request))),
+            ))),
+            #[cfg(not(feature = "udp"))]
+            0x03 => Err(ParserError::Invalid("udp functionality not included")),
+            0x01 => Ok(TCP((
+                write_half,
+                BufferedRecv::new(read_half, buffered_request),
+            ))),
             #[cfg(feature = "quic")]
-            0xff => ECHO((write_half, BufferedRecv::new(read_half, buffered_request))),
+            0xff => Ok(ECHO((
+                write_half,
+                BufferedRecv::new(read_half, buffered_request),
+            ))),
             _ => unreachable!(),
-        })
+        }
     }
 
     pub fn parse(&mut self) -> Result<(), ParserError> {

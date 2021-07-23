@@ -22,8 +22,8 @@ pub async fn trojan_auth(
         ClientServerConnection::TcpTLS(out_write) => {
             send_trojan_auth(mode, addr, out_write, password).await
         }
-        #[cfg(feature = "mini_tls")]
-        ClientServerConnection::MiniTLS(out_write) => {
+        #[cfg(feature = "lite_tls")]
+        ClientServerConnection::LiteTLS(out_write) => {
             send_trojan_auth(mode, addr, out_write, password).await
         }
     }

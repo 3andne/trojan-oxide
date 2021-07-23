@@ -1,4 +1,6 @@
 use crate::args::{Opt, TrojanContext};
+use crate::client::ClientConnectionRequest;
+use crate::utils::{ClientServerConnection, MixAddrType};
 use anyhow::*;
 use lazy_static::lazy_static;
 use quinn::*;
@@ -6,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{net::SocketAddr, sync::atomic::Ordering::SeqCst};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::sleep;
 use tokio::time::timeout;
 use tokio::{fs, io};
@@ -14,8 +16,10 @@ use tracing::*;
 
 use crate::protocol::*;
 
+use super::forward;
+
 lazy_static! {
-    static ref IS_CONNECTION_OPENED: AtomicBool = AtomicBool::new(false);
+    pub static ref IS_CONNECTION_OPENED: AtomicBool = AtomicBool::new(false);
 }
 
 #[derive(Default)]
@@ -44,7 +48,7 @@ impl QuicConnectionWrapper {
     }
 }
 
-async fn new_echo_task(echo_stream: (SendStream, RecvStream), mut echo_rx: mpsc::Receiver<()>) {
+pub async fn send_echo(echo_stream: (SendStream, RecvStream), mut echo_rx: mpsc::Receiver<()>) {
     let (mut write, mut read) = echo_stream;
 
     let mut buf = [0u8; ECHO_PHRASE.len()];
@@ -96,6 +100,7 @@ pub struct EndpointManager {
     remote_url: String,
     password: Arc<String>,
     echo_tx: Option<mpsc::Sender<()>>,
+    shudown_tx: broadcast::Sender<()>,
 }
 
 impl EndpointManager {
@@ -107,7 +112,7 @@ impl EndpointManager {
         let remote_url = context.options.proxy_url.clone();
 
         let password = context.options.password_hash.clone();
-
+        let (shudown_tx, _) = broadcast::channel(1);
         let mut _self = Self {
             inner,
             connection: QuicConnectionWrapper::default(),
@@ -115,6 +120,7 @@ impl EndpointManager {
             remote_url,
             password,
             echo_tx: None,
+            shudown_tx,
         };
 
         _self.new_connection().await?;
@@ -124,33 +130,37 @@ impl EndpointManager {
 
     fn echo_task_status(&self) -> bool {
         match self.echo_tx {
-            Some(ref tx) => {
-                if tx.is_closed() {
-                    false
-                } else {
-                    true
-                }
-            }
+            Some(ref tx) => !tx.is_closed(),
             None => false,
         }
     }
 
     async fn echo(&mut self) -> Result<bool> {
         if !self.echo_task_status() {
-            let mut echo_stream = match self.connection.open_bi() {
-                Some(bi) => bi,
-                None => return Ok(false),
-            }
-            .await?;
-            let buf = [
-                self.password.as_bytes(),
-                &[b'\r', b'\n', 0xff, b'\r', b'\n'],
-            ]
-            .concat();
-            echo_stream.0.write_all(&buf).await?;
+            let open_conn = self.connection.open_bi();
+            let connect_to_server = async move {
+                match open_conn {
+                    Some(bi) => Ok(ClientServerConnection::Quic(bi.await?)),
+                    None => Err::<ClientServerConnection, Error>(anyhow!("failed to open bi conn")),
+                }
+            };
+
             let (echo_tx, echo_rx) = mpsc::channel::<()>(1);
+            let incomming_request = async {
+                Ok((
+                    ClientConnectionRequest::ECHO(echo_rx),
+                    MixAddrType::new_null(),
+                ))
+            };
+
             self.echo_tx = Some(echo_tx);
-            tokio::spawn(new_echo_task(echo_stream, echo_rx));
+
+            tokio::spawn(forward(
+                self.shudown_tx.subscribe(),
+                self.password.clone(),
+                incomming_request,
+                connect_to_server,
+            ));
         }
 
         let _ = self.echo_tx.as_mut().unwrap().try_send(());

@@ -1,5 +1,4 @@
 use crate::utils::BufferedRecv;
-use std::net::SocketAddr;
 use tokio::net::{
     tcp::{ReadHalf, WriteHalf},
     TcpStream,
@@ -19,9 +18,5 @@ impl ClientTcpStream {
             ClientTcpRecvStream::new(read, self.http_request_extension.take().map(|v| (0, v))),
             write,
         )
-    }
-
-    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        self.inner.peer_addr()
     }
 }

@@ -1,4 +1,4 @@
-use super::ClientConnectionRequest;
+use crate::client::ClientConnectionRequest;
 use super::{HttpRequest, Socks5Request};
 use crate::{
     args::TrojanContext,

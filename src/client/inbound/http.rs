@@ -11,7 +11,7 @@ use tokio::io::*;
 use tokio::net::TcpStream;
 use tracing::*;
 
-use super::ClientConnectionRequest;
+use crate::client::ClientConnectionRequest;
 
 pub struct HttpRequest {
     is_https: bool,

@@ -6,3 +6,8 @@ pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 pub const ECHO_PHRASE: &str = "echo";
 pub const MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(600);
 pub const MAX_CONCURRENT_BIDI_STREAMS: usize = 30;
+
+pub const TCP_REQUEST_CMD: u8 = 0x01;
+pub const UDP_REQUEST_CMD: u8 = 0x03;
+pub const ECHO_REQUEST_CMD: u8 = 0xff;
+pub const LITE_TLS_REQUEST_CMD: u8 = 0x11;
