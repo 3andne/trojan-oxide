@@ -38,6 +38,9 @@ pub use udp::{
     udp_traits::{UdpRead, UdpWrite},
 };
 
+#[cfg(feature = "lite_tls")]
+mod lite_tls;
+
 mod copy_tcp;
 pub use copy_tcp::copy_tcp;
 
