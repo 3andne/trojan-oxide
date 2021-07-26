@@ -1,5 +1,5 @@
 use crate::{
-    server::SplitableToAsyncReadWrite,
+    server::Splitable,
     utils::{
         BufferedRecv, CursoredBuffer, ExtendableFromSlice, MixAddrType, ParserError, UdpRead,
         UdpRelayBuffer, UdpWrite,
@@ -20,7 +20,7 @@ pub struct TrojanUdpStream<I> {
     buffered_request: Option<(usize, Vec<u8>)>,
 }
 
-impl<I: SplitableToAsyncReadWrite> TrojanUdpStream<I> {
+impl<I: Splitable> TrojanUdpStream<I> {
     pub fn split(self) -> (TrojanUdpSendStream<I::W>, TrojanUdpRecvStream<I::R>) {
         let (read, write) = self.inner.split();
         (

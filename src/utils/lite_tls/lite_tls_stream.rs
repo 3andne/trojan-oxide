@@ -65,13 +65,12 @@ impl LiteTlsStream {
         }
     }
 
-    async fn client_hello<R, W>(&mut self, inbound: &mut (W, R)) -> Result<()>
+    async fn client_hello<I>(&mut self, inbound: &mut I) -> Result<()>
     where
-        R: AsyncReadExt + Unpin,
-        W: AsyncWriteExt + Unpin,
+        I: AsyncReadExt + AsyncWriteExt + Unpin,
     {
         loop {
-            if inbound.1.read(&mut self.inbound_buf).await? == 0 {
+            if inbound.read(&mut self.inbound_buf).await? == 0 {
                 return Err(EofErr("EOF on Client Hello"));
             }
             match self.inbound_buf.check_client_hello() {
@@ -91,10 +90,9 @@ impl LiteTlsStream {
     ///
     /// if Err(other) is returned, the stream is probably non-recoverable
     /// just quit
-    pub async fn handshake<O, R, W>(&mut self, outbound: &mut O, inbound: &mut (W, R)) -> Result<()>
+    pub async fn handshake<I, O>(&mut self, outbound: &mut O, inbound: &mut I) -> Result<()>
     where
-        R: AsyncReadExt + Unpin,
-        W: AsyncWriteExt + Unpin,
+        I: AsyncReadExt + AsyncWriteExt + Unpin,
         O: AsyncReadExt + AsyncWriteExt + Unpin,
     {
         self.client_hello(inbound).await?;
@@ -112,7 +110,7 @@ impl LiteTlsStream {
 
         loop {
             let (res, dir) = select! {
-                res = inbound.1.read(&mut self.inbound_buf) => {
+                res = inbound.read(&mut self.inbound_buf) => {
                     (res?, Direction::Inbound)
                 }
                 res = outbound.read(&mut self.outbound_buf) => {
@@ -195,8 +193,8 @@ impl LiteTlsStream {
 
                     // write a 0x14 response to client
                     // so that both sides can leave TLS channel
-                    inbound.0.write(&[0x14, 0x03, 0x03, 0, 0x01, 0x01]).await?;
-                    inbound.0.flush().await?;
+                    inbound.write(&[0x14, 0x03, 0x03, 0, 0x01, 0x01]).await?;
+                    inbound.flush().await?;
 
                     return Ok(());
                 }
@@ -207,10 +205,10 @@ impl LiteTlsStream {
                         match self.outbound_buf.check_type_0x16() {
                             Ok(_) => {
                                 // relay till last byte
-                                if inbound.0.write(&self.outbound_buf).await? == 0 {
+                                if inbound.write(&self.outbound_buf).await? == 0 {
                                     return Err(EofErr("EOF on Parsing[3]"));
                                 }
-                                inbound.0.flush().await?;
+                                inbound.flush().await?;
                                 self.outbound_buf.reset();
                                 // then we are safe to leave TLS channel
                                 return Ok(());
@@ -248,20 +246,19 @@ impl LiteTlsStream {
                     self.inbound_buf.pop_checked_packets();
                 }
                 Direction::Outbound => {
-                    if inbound.0.write(self.outbound_buf.checked_packets()).await? == 0 {
+                    if inbound.write(self.outbound_buf.checked_packets()).await? == 0 {
                         return Err(EofErr("EOF on Parsing[6]"));
                     }
-                    inbound.0.flush().await?;
+                    inbound.flush().await?;
                     self.outbound_buf.pop_checked_packets();
                 }
             }
         }
     }
 
-    pub async fn flush<O, R, W>(mut self, outbound: &mut O, inbound: &mut (W, R)) -> Result<()>
+    pub async fn flush<I, O>(mut self, outbound: &mut O, inbound: &mut I) -> Result<()>
     where
-        R: AsyncReadExt + Unpin,
-        W: AsyncWriteExt + Unpin,
+        I: AsyncReadExt + AsyncWriteExt + Unpin,
         O: AsyncReadExt + AsyncWriteExt + Unpin,
     {
         if self.inbound_buf.len() > 0 {
@@ -270,8 +267,8 @@ impl LiteTlsStream {
             self.inbound_buf.reset();
         }
         if self.outbound_buf.len() > 0 {
-            inbound.0.write(&mut self.outbound_buf).await?;
-            inbound.0.flush().await?;
+            inbound.write(&mut self.outbound_buf).await?;
+            inbound.flush().await?;
             self.outbound_buf.reset();
         }
         Ok(())

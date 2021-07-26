@@ -1,6 +1,6 @@
 #[cfg(feature = "udp")]
 use crate::utils::{copy_udp, new_trojan_udp_stream, Socks5UdpStream};
-use crate::utils::{ClientServerConnection, ClientTcpStream, ParserError};
+use crate::utils::{ClientServerConnection, ClientTcpStream, ParserError, WRTuple};
 use tokio::{select, sync::broadcast};
 use tracing::{debug, error};
 #[cfg(feature = "tcp_tls")]
@@ -48,7 +48,7 @@ pub async fn relay_tcp(
         #[cfg(feature = "lite_tls")]
         ClientServerConnection::LiteTLS(mut outbound) => {
             let mut lite_tls_endpoint = LiteTlsStream::new_client_endpoint();
-            let mut inbound = (in_write, in_read);
+            let mut inbound = WRTuple((in_write, in_read));
             match lite_tls_endpoint
                 .handshake(&mut outbound, &mut inbound)
                 .await
@@ -61,7 +61,7 @@ pub async fn relay_tcp(
                     }
 
                     let (mut out_read, mut out_write) = outbound.split();
-                    let (mut in_write, mut in_read) = inbound;
+                    let WRTuple((mut in_write, mut in_read)) = inbound;
                     select! {
                         res = tokio::io::copy(&mut out_read, &mut in_write) => {
                             debug!("tcp relaying download end, {:?}", res);
@@ -83,7 +83,7 @@ pub async fn relay_tcp(
                         }
 
                         let (mut out_read, mut out_write) = split(outbound);
-                        let (mut in_write, mut in_read) = inbound;
+                        let WRTuple((mut in_write, mut in_read)) = inbound;
                         select! {
                             res = tokio::io::copy(&mut out_read, &mut in_write) => {
                                 debug!("tcp relaying download end, {:?}", res);

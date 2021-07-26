@@ -154,19 +154,14 @@ impl<'a> TrojanAcceptor<'a> {
             Some((self.cursor, std::mem::take(&mut self.buf)))
         };
 
+        use TcpOption::*;
         match self.cmd_code {
             #[cfg(feature = "udp")]
             0x03 => Ok(UDP(new_trojan_udp_stream(inbound, buffered_request))),
             #[cfg(not(feature = "udp"))]
             0x03 => Err(ParserError::Invalid("udp functionality not included")),
-            0x01 => Ok(TCP(TcpOption::TLS(BufferedRecv::new(
-                inbound,
-                buffered_request,
-            )))),
-            0x01 => Ok(TCP(TcpOption::LiteTLS(BufferedRecv::new(
-                inbound,
-                buffered_request,
-            )))),
+            0x01 => Ok(TCP(TLS(BufferedRecv::new(inbound, buffered_request)))),
+            0x11 => Ok(TCP(LiteTLS(BufferedRecv::new(inbound, buffered_request)))),
             #[cfg(feature = "quic")]
             0xff => Ok(ECHO(BufferedRecv::new(inbound, buffered_request))),
             _ => unreachable!(),

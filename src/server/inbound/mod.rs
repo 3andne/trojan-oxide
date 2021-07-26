@@ -13,7 +13,7 @@ use crate::utils::{TrojanUdpRecvStream, TrojanUdpSendStream};
 pub use acceptor::TrojanAcceptor;
 #[cfg(feature = "tcp_tls")]
 pub use listener::tcp_tls_listener;
-pub use stream_trait::SplitableToAsyncReadWrite;
+pub use stream_trait::Splitable;
 #[cfg(feature = "quic")]
 pub use {listener::quic_listener, quic::QuicStream};
 

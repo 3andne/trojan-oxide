@@ -10,9 +10,9 @@ use tokio::{
 use crate::utils::WRTuple;
 
 #[cfg(feature = "quic")]
-use {super::QuicStream, quinn::*};
+use quinn::*;
 
-pub trait SplitableToAsyncReadWrite {
+pub trait Splitable {
     type R: AsyncRead + Unpin + Debug + Send + 'static;
     type W: AsyncWrite + Unpin + Debug + Send + 'static;
 
@@ -20,7 +20,7 @@ pub trait SplitableToAsyncReadWrite {
 }
 
 #[cfg(feature = "quic")]
-impl SplitableToAsyncReadWrite for (SendStream, RecvStream) {
+impl Splitable for (SendStream, RecvStream) {
     type R = RecvStream;
     type W = SendStream;
 
@@ -30,7 +30,7 @@ impl SplitableToAsyncReadWrite for (SendStream, RecvStream) {
 }
 
 #[cfg(feature = "quic")]
-impl SplitableToAsyncReadWrite for (RecvStream, SendStream) {
+impl Splitable for (RecvStream, SendStream) {
     type R = RecvStream;
     type W = SendStream;
 
@@ -40,7 +40,7 @@ impl SplitableToAsyncReadWrite for (RecvStream, SendStream) {
 }
 
 #[cfg(feature = "tcp_tls")]
-impl SplitableToAsyncReadWrite for tokio_rustls::server::TlsStream<TcpStream> {
+impl Splitable for tokio_rustls::server::TlsStream<TcpStream> {
     type R = ReadHalf<tokio_rustls::server::TlsStream<TcpStream>>;
     type W = WriteHalf<tokio_rustls::server::TlsStream<TcpStream>>;
 
@@ -50,7 +50,7 @@ impl SplitableToAsyncReadWrite for tokio_rustls::server::TlsStream<TcpStream> {
 }
 
 #[cfg(feature = "tcp_tls")]
-impl SplitableToAsyncReadWrite for tokio_rustls::client::TlsStream<TcpStream> {
+impl Splitable for tokio_rustls::client::TlsStream<TcpStream> {
     type R = ReadHalf<tokio_rustls::client::TlsStream<TcpStream>>;
     type W = WriteHalf<tokio_rustls::client::TlsStream<TcpStream>>;
 
@@ -59,7 +59,7 @@ impl SplitableToAsyncReadWrite for tokio_rustls::client::TlsStream<TcpStream> {
     }
 }
 
-impl<R_, W_> SplitableToAsyncReadWrite for WRTuple<R_, W_>
+impl<R_, W_> Splitable for WRTuple<R_, W_>
 where
     R_: AsyncRead + Send + Debug + Unpin + 'static,
     W_: AsyncWrite + Send + Debug + Unpin + 'static,

@@ -58,7 +58,7 @@ use std::pin::Pin;
 use std::task::Poll;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use crate::server::SplitableToAsyncReadWrite;
+use crate::server::Splitable;
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
@@ -148,8 +148,6 @@ pub enum ConnectionRequest<TcpRequest, UdpRequest, EchoRequest> {
     _PHANTOM((TcpRequest, UdpRequest, EchoRequest)),
 }
 
-pub struct DummyRequest {}
-
 #[derive(Debug)]
 pub struct BufferedRecv<T> {
     buffered_request: Option<(usize, Vec<u8>)>,
@@ -163,11 +161,15 @@ impl<T> BufferedRecv<T> {
             buffered_request,
         }
     }
+
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
 }
 
-impl<T> SplitableToAsyncReadWrite for BufferedRecv<T>
+impl<T> Splitable for BufferedRecv<T>
 where
-    T: SplitableToAsyncReadWrite,
+    T: Splitable,
 {
     type R = BufferedRecv<T::R>;
     type W = T::W;
@@ -197,6 +199,33 @@ where
 
         let reader = Pin::new(&mut self.inner);
         reader.poll_read(cx, buf)
+    }
+}
+
+impl<T> AsyncWrite for BufferedRecv<T>
+where
+    T: AsyncWrite + Unpin,
+{
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 
@@ -231,7 +260,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.0.1).poll_read(cx, buf)
+        Pin::new(&mut self.0 .1).poll_read(cx, buf)
     }
 }
 
