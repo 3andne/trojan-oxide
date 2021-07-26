@@ -1,10 +1,13 @@
 #[cfg(feature = "udp")]
 use crate::utils::{copy_udp, new_trojan_udp_stream, Socks5UdpStream};
-use crate::utils::{ClientServerConnection, ClientTcpStream};
+use crate::utils::{ClientServerConnection, ClientTcpStream, ParserError};
 use tokio::{select, sync::broadcast};
-use tracing::debug;
+use tracing::{debug, error};
 #[cfg(feature = "tcp_tls")]
 use {crate::utils::copy_tcp, tokio::io::split};
+
+#[cfg(feature = "tcp_tls")]
+use crate::utils::lite_tls::LiteTlsStream;
 
 pub async fn relay_tcp(
     mut inbound: ClientTcpStream,
@@ -43,7 +46,59 @@ pub async fn relay_tcp(
             }
         }
         #[cfg(feature = "lite_tls")]
-        ClientServerConnection::LiteTLS(_) => todo!(),
+        ClientServerConnection::LiteTLS(mut outbound) => {
+            let mut lite_tls_endpoint = LiteTlsStream::new_client_endpoint();
+            let mut inbound = (in_write, in_read);
+            match lite_tls_endpoint
+                .handshake(&mut outbound, &mut inbound)
+                .await
+            {
+                Ok(_) => {
+                    let (mut outbound, _) = outbound.into_inner();
+                    if let Err(e) = lite_tls_endpoint.flush(&mut outbound, &mut inbound).await {
+                        error!("flushing failed, {:#}", e);
+                        return;
+                    }
+
+                    let (mut out_read, mut out_write) = outbound.split();
+                    let (mut in_write, mut in_read) = inbound;
+                    select! {
+                        res = tokio::io::copy(&mut out_read, &mut in_write) => {
+                            debug!("tcp relaying download end, {:?}", res);
+                        },
+                        res = tokio::io::copy(&mut in_read, &mut out_write) => {
+                            debug!("tcp relaying upload end, {:?}", res);
+                        },
+                        _ = upper_shutdown.recv() => {
+                            debug!("shutdown signal received");
+                        },
+                    }
+                }
+                Err(e) => {
+                    if let Some(&ParserError::Invalid(x)) = e.downcast_ref::<ParserError>() {
+                        debug!("not tls stream: {}", x);
+                        if let Err(e) = lite_tls_endpoint.flush(&mut outbound, &mut inbound).await {
+                            error!("tcp relaying download end, {:#}", e);
+                            return;
+                        }
+
+                        let (mut out_read, mut out_write) = split(outbound);
+                        let (mut in_write, mut in_read) = inbound;
+                        select! {
+                            res = tokio::io::copy(&mut out_read, &mut in_write) => {
+                                debug!("tcp relaying download end, {:?}", res);
+                            },
+                            res = copy_tcp(&mut in_read, &mut out_write) => {
+                                debug!("tcp relaying upload end, {:?}", res);
+                            },
+                            _ = upper_shutdown.recv() => {
+                                debug!("shutdown signal received");
+                            },
+                        }
+                    }
+                }
+            };
+        }
     }
 }
 
@@ -57,8 +112,8 @@ pub async fn relay_udp(
     let (mut in_write, mut in_read) = inbound.split();
     match outbound {
         #[cfg(feature = "quic")]
-        ClientServerConnection::Quic((out_write, out_read)) => {
-            let (mut out_write, mut out_read) = new_trojan_udp_stream(out_write, out_read, None);
+        ClientServerConnection::Quic(quic_stream) => {
+            let (mut out_write, mut out_read) = new_trojan_udp_stream(quic_stream, None).split();
             select! {
                 res = copy_udp(&mut out_read, &mut in_write, None) => {
                     debug!("tcp relaying download end, {:?}", res);
@@ -73,8 +128,8 @@ pub async fn relay_udp(
         }
         #[cfg(feature = "tcp_tls")]
         ClientServerConnection::TcpTLS(out_tls) => {
-            let (out_read, out_write) = split(out_tls);
-            let (mut out_write, mut out_read) = new_trojan_udp_stream(out_write, out_read, None);
+            // let (out_read, out_write) = split(out_tls);
+            let (mut out_write, mut out_read) = new_trojan_udp_stream(out_tls, None).split();
             select! {
                 res = copy_udp(&mut out_read, &mut in_write, None) => {
                     debug!("tcp relaying download end, {:?}", res);

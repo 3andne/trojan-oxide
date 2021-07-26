@@ -1,27 +1,22 @@
-use super::SplitableToAsyncReadWrite;
+// use super::SplitableToAsyncReadWrite;
 #[cfg(not(feature = "udp"))]
 use crate::utils::DummyRequest;
+#[cfg(feature = "udp")]
+use crate::utils::{new_trojan_udp_stream, TrojanUdpStream};
 use crate::{
     expect_buf_len,
     protocol::HASH_LEN,
-    server::outbound::fallback,
+    server::{inbound::TcpOption, outbound::fallback},
     utils::{BufferedRecv, ConnectionRequest, MixAddrType, ParserError},
 };
 use anyhow::Result;
 use futures::TryFutureExt;
 use std::{fmt::Debug, sync::Arc};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tracing::*;
 #[cfg(feature = "udp")]
-use {super::TrojanUdpStream, crate::utils::new_trojan_udp_stream};
-#[cfg(feature = "udp")]
-#[allow(type_alias_bounds)]
-type ServerConnectionRequest<I: SplitableToAsyncReadWrite> = ConnectionRequest<
-    (I::W, BufferedRecv<I::R>),
-    TrojanUdpStream<I::W, I::R>,
-    (I::W, BufferedRecv<I::R>),
->;
-
+type ServerConnectionRequest<I> =
+    ConnectionRequest<TcpOption<BufferedRecv<I>>, TrojanUdpStream<I>, BufferedRecv<I>>;
 #[cfg(not(feature = "udp"))]
 #[allow(type_alias_bounds)]
 type ServerConnectionRequest<I: SplitableToAsyncReadWrite> =
@@ -41,7 +36,7 @@ impl<'a> TrojanAcceptor<'a> {
         TrojanAcceptor {
             password_hash,
             fallback_port,
-            buf: Vec::with_capacity(128),
+            buf: Vec::with_capacity(1024),
             ..Default::default()
         }
     }
@@ -75,7 +70,7 @@ impl<'a> TrojanAcceptor<'a> {
 
         self.cmd_code = self.buf[HASH_LEN + 2];
         match self.cmd_code {
-            0x01 | 0x03 => {
+            0x01 | 0x03 | 0x11 => {
                 self.host = MixAddrType::from_encoded(&mut (&mut self.cursor, &self.buf))?;
             }
             0xff => (),
@@ -116,13 +111,13 @@ impl<'a> TrojanAcceptor<'a> {
     /// o  DST.ADDR desired destination address
     /// o  DST.PORT desired destination port in network octet order
     /// ```
-    pub async fn accept<I: SplitableToAsyncReadWrite + Debug + Unpin>(
+    pub async fn accept<I: AsyncRead + AsyncWrite + Debug + Unpin + Send + 'static>(
         &mut self,
-        inbound: I,
+        mut inbound: I,
     ) -> Result<ServerConnectionRequest<I>, ParserError> {
-        let (mut read_half, write_half) = inbound.split();
+        // let (mut read_half, write_half) = inbound.split();
         loop {
-            let read = read_half
+            let read = inbound
                 .read_buf(&mut self.buf)
                 .await
                 .map_err(|_| ParserError::Invalid("Target::accept failed to read"))?;
@@ -133,10 +128,9 @@ impl<'a> TrojanAcceptor<'a> {
                         let mut buf = Vec::new();
                         std::mem::swap(&mut buf, &mut self.buf);
                         tokio::spawn(
-                            fallback(buf, self.fallback_port.clone(), read_half, write_half)
-                                .unwrap_or_else(|e| {
-                                    error!("connection to fallback failed {:#}", e)
-                                }),
+                            fallback(buf, self.fallback_port.clone(), inbound).unwrap_or_else(
+                                |e| error!("connection to fallback failed {:#}", e),
+                            ),
                         );
                         return Err(err);
                     }
@@ -162,22 +156,19 @@ impl<'a> TrojanAcceptor<'a> {
 
         match self.cmd_code {
             #[cfg(feature = "udp")]
-            0x03 => Ok(UDP(new_trojan_udp_stream(
-                write_half,
-                read_half,
-                buffered_request,
-            ))),
+            0x03 => Ok(UDP(new_trojan_udp_stream(inbound, buffered_request))),
             #[cfg(not(feature = "udp"))]
             0x03 => Err(ParserError::Invalid("udp functionality not included")),
-            0x01 => Ok(TCP((
-                write_half,
-                BufferedRecv::new(read_half, buffered_request),
-            ))),
+            0x01 => Ok(TCP(TcpOption::TLS(BufferedRecv::new(
+                inbound,
+                buffered_request,
+            )))),
+            0x01 => Ok(TCP(TcpOption::LiteTLS(BufferedRecv::new(
+                inbound,
+                buffered_request,
+            )))),
             #[cfg(feature = "quic")]
-            0xff => Ok(ECHO((
-                write_half,
-                BufferedRecv::new(read_half, buffered_request),
-            ))),
+            0xff => Ok(ECHO(BufferedRecv::new(inbound, buffered_request))),
             _ => unreachable!(),
         }
     }

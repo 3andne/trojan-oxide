@@ -5,7 +5,6 @@ use tokio::{select, sync::broadcast};
 use tracing::{error, info};
 #[cfg(feature = "quic")]
 use {
-    crate::server::inbound::QuicStream,
     futures::{StreamExt, TryFutureExt},
     quinn::*,
 };
@@ -19,6 +18,8 @@ pub async fn handle_quic_connection(
     password_hash: Arc<String>,
     fallback_port: Arc<String>,
 ) -> Result<()> {
+    use crate::utils::WRTuple;
+
     let (shutdown_tx, _) = broadcast::channel(1);
 
     loop {
@@ -43,13 +44,13 @@ pub async fn handle_quic_connection(
             Err(e) => {
                 return Err(anyhow::Error::new(e));
             }
-            Ok(s) => QuicStream::new(s),
+            Ok(s) => s,
         };
         let shutdown = shutdown_tx.subscribe();
         let pass_copy = password_hash.clone();
         let fallback_port_clone = fallback_port.clone();
         tokio::spawn(
-            handle_outbound(stream, shutdown, pass_copy, fallback_port_clone).map_err(|e| {
+            handle_outbound(WRTuple(stream), shutdown, pass_copy, fallback_port_clone).map_err(|e| {
                 error!("handle_quic_outbound quit due to {:#}", e);
                 e
             }),

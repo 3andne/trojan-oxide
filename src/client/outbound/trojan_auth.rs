@@ -59,7 +59,7 @@ where
     //     .map_err(|e| Box::new(e))?;
 
     // writer.flush().await.map_err(|e| Box::new(e))?;
-    outbound.flush().await?;
+    // outbound.flush().await?;
     debug!("trojan packet 0 sent");
 
     Ok(())

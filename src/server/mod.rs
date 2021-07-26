@@ -1,8 +1,9 @@
 #[cfg(feature = "server")]
-
 mod inbound;
 mod outbound;
 mod run;
 
+pub use inbound::{QuicStream, SplitableToAsyncReadWrite};
 pub use run::run_server;
-// use inbound::{QuicStream, SplitableToAsyncReadWrite, TrojanUdpStream};
+
+// pub use inbound::SplitableToAsyncReadWrite;

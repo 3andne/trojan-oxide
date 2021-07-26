@@ -1,6 +1,9 @@
-use crate::utils::{
-    BufferedRecv, CursoredBuffer, ExtendableFromSlice, MixAddrType, ParserError, UdpRead,
-    UdpRelayBuffer, UdpWrite,
+use crate::{
+    server::SplitableToAsyncReadWrite,
+    utils::{
+        BufferedRecv, CursoredBuffer, ExtendableFromSlice, MixAddrType, ParserError, UdpRead,
+        UdpRelayBuffer, UdpWrite,
+    },
 };
 use futures::ready;
 use pin_project_lite::pin_project;
@@ -11,6 +14,21 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::*;
+
+pub struct TrojanUdpStream<I> {
+    inner: I,
+    buffered_request: Option<(usize, Vec<u8>)>,
+}
+
+impl<I: SplitableToAsyncReadWrite> TrojanUdpStream<I> {
+    pub fn split(self) -> (TrojanUdpSendStream<I::W>, TrojanUdpRecvStream<I::R>) {
+        let (read, write) = self.inner.split();
+        (
+            TrojanUdpSendStream::new(write),
+            TrojanUdpRecvStream::new(BufferedRecv::new(read, self.buffered_request)),
+        )
+    }
+}
 
 pin_project! {
     #[derive(Debug)]
@@ -231,13 +249,12 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
     }
 }
 
-pub fn new_trojan_udp_stream<R, W>(
-    write: W,
-    read: R,
+pub fn new_trojan_udp_stream<I>(
+    inner: I,
     buffered_request: Option<(usize, Vec<u8>)>,
-) -> (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>) {
-    (
-        TrojanUdpSendStream::new(write),
-        TrojanUdpRecvStream::new(BufferedRecv::new(read, buffered_request)),
-    )
+) -> TrojanUdpStream<I> {
+    TrojanUdpStream {
+        inner,
+        buffered_request,
+    }
 }

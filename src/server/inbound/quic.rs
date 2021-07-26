@@ -11,7 +11,7 @@ use tokio::{fs, io};
 use tracing::*;
 
 #[derive(Debug)]
-pub struct QuicStream(pub(super) RecvStream, pub(super) SendStream);
+pub struct QuicStream(pub(super) SendStream, pub(super) RecvStream );
 
 
 pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {

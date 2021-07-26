@@ -33,13 +33,15 @@ mod udp;
 #[cfg(feature = "udp")]
 pub use udp::{
     copy_udp::copy_udp,
-    trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream},
+    trojan_udp_stream::{
+        new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream, TrojanUdpStream,
+    },
     udp_relay_buffer::UdpRelayBuffer,
     udp_traits::{UdpRead, UdpWrite},
 };
 
 #[cfg(feature = "lite_tls")]
-mod lite_tls;
+pub mod lite_tls;
 
 mod copy_tcp;
 pub use copy_tcp::copy_tcp;
@@ -54,7 +56,9 @@ pub use timedout_duplex_io::{TimedoutIO, TimeoutMonitor};
 
 use std::pin::Pin;
 use std::task::Poll;
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+use crate::server::SplitableToAsyncReadWrite;
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
@@ -161,6 +165,19 @@ impl<T> BufferedRecv<T> {
     }
 }
 
+impl<T> SplitableToAsyncReadWrite for BufferedRecv<T>
+where
+    T: SplitableToAsyncReadWrite,
+{
+    type R = BufferedRecv<T::R>;
+    type W = T::W;
+
+    fn split(self) -> (Self::R, Self::W) {
+        let (r, w) = self.inner.split();
+        (BufferedRecv::new(r, self.buffered_request), w)
+    }
+}
+
 impl<T> AsyncRead for BufferedRecv<T>
 where
     T: AsyncRead + Unpin,
@@ -199,4 +216,49 @@ pub enum ClientServerConnection {
     TcpTLS(TlsStream<TcpStream>),
     #[cfg(feature = "lite_tls")]
     LiteTLS(TlsStream<TcpStream>),
+}
+
+#[derive(Debug)]
+pub struct WRTuple<W, R>(pub (R, W));
+
+impl<R, W> AsyncRead for WRTuple<R, W>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0.1).poll_read(cx, buf)
+    }
+}
+
+impl<R, W> AsyncWrite for WRTuple<R, W>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.0 .0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.0 .0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.0 .0).poll_shutdown(cx)
+    }
 }

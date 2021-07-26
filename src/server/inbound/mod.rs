@@ -2,6 +2,7 @@ mod acceptor;
 mod handler;
 mod listener;
 mod stream_trait;
+mod lite_tls;
 #[cfg(feature = "quic")]
 mod quic;
 #[cfg(feature = "tcp_tls")]
@@ -26,5 +27,7 @@ pub fn get_server_local_addr(options: &Opt) -> SocketAddr {
         .unwrap()
 }
 
-#[cfg(feature = "udp")]
-pub type TrojanUdpStream<W, R> = (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>);
+// #[cfg(feature = "udp")]
+// pub type TrojanUdpStream<W, R> = (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>);
+
+pub use lite_tls::TcpOption;
