@@ -5,6 +5,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     select,
 };
+use tracing::debug;
 
 #[derive(Debug, Clone, Copy)]
 enum LiteTlsEndpointSide {
@@ -71,11 +72,14 @@ impl LiteTlsStream {
     {
         loop {
             if inbound.read(&mut self.inbound_buf).await? == 0 {
-                return Err(EofErr("EOF on Client Hello"));
+                debug!("EOF on Client Hello");
+                // return Err(EofErr("EOF on Client Hello"));
             }
             match self.inbound_buf.check_client_hello() {
                 Ok(_) => return Ok(()),
-                Err(ParserError::Incomplete(_)) => (),
+                Err(ParserError::Incomplete(e)) => {
+                    debug!("client hello incomplete: {}", e);
+                }
                 // doesn't look like a tls stream, leave it alone
                 Err(e @ ParserError::Invalid(_)) => return Err(Error::new(e)),
             }

@@ -95,6 +95,8 @@ pub async fn relay_tcp(
                                 debug!("shutdown signal received");
                             },
                         }
+                    } else {
+                        error!("lite tls hadnshake error: {:#}", e);
                     }
                 }
             };

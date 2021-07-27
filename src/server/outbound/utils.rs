@@ -2,11 +2,7 @@ use std::{sync::atomic::Ordering, time::Duration};
 
 use crate::{
     server::{outbound::connector::TCP_CONNECTION_COUNTER, Splitable},
-    utils::{
-        copy_tcp,
-        lite_tls::{LeaveTls, LiteTlsStream},
-        BufferedRecv, ConnectionRequest, MixAddrType, ParserError, TimeoutMonitor,
-    },
+    utils::{copy_tcp, MixAddrType, TimeoutMonitor},
 };
 use anyhow::{anyhow, Context, Error, Result};
 use tokio::{net::TcpStream, select, sync::broadcast};
@@ -35,7 +31,7 @@ pub(crate) async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStr
 
 pub(crate) async fn relay_tcp<I: Splitable>(
     inbound: I,
-    mut outbound: TcpStream,
+    outbound: TcpStream,
     target_host: &MixAddrType,
     mut upper_shutdown: broadcast::Receiver<()>,
 ) {

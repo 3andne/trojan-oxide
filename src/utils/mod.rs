@@ -250,9 +250,9 @@ pub enum ClientServerConnection {
 }
 
 #[derive(Debug)]
-pub struct WRTuple<W, R>(pub (R, W));
+pub struct WRTuple<W, R>(pub (W, R));
 
-impl<R, W> AsyncRead for WRTuple<R, W>
+impl<W, R> AsyncRead for WRTuple<W, R>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -266,7 +266,7 @@ where
     }
 }
 
-impl<R, W> AsyncWrite for WRTuple<R, W>
+impl<W, R> AsyncWrite for WRTuple<W, R>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,

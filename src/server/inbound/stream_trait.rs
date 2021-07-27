@@ -62,7 +62,7 @@ impl Splitable for tokio_rustls::client::TlsStream<TcpStream> {
     }
 }
 
-impl<R_, W_> Splitable for WRTuple<R_, W_>
+impl<W_, R_> Splitable for WRTuple<W_, R_>
 where
     R_: AsyncRead + Send + Debug + Unpin + 'static,
     W_: AsyncWrite + Send + Debug + Unpin + 'static,

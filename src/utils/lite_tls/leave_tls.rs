@@ -1,6 +1,6 @@
 use quinn::*;
 use tokio::net::TcpStream;
-use tokio_rustls::{server, client};
+use tokio_rustls::{client, server};
 
 use crate::utils::{TrojanUdpStream, WRTuple};
 
@@ -21,12 +21,12 @@ impl LeaveTls for client::TlsStream<TcpStream> {
 }
 
 impl<I> LeaveTls for TrojanUdpStream<I> {
-   fn leave(self) -> TcpStream {
-       unimplemented!()
-   }
+    fn leave(self) -> TcpStream {
+        unimplemented!()
+    }
 }
 
-impl LeaveTls for WRTuple<RecvStream, SendStream> {
+impl LeaveTls for WRTuple<SendStream, RecvStream> {
     fn leave(self) -> TcpStream {
         unimplemented!()
     }
