@@ -111,10 +111,13 @@ impl<'a> TrojanAcceptor<'a> {
     /// o  DST.ADDR desired destination address
     /// o  DST.PORT desired destination port in network octet order
     /// ```
-    pub async fn accept<I: AsyncRead + AsyncWrite + Debug + Unpin + Send + 'static>(
+    pub async fn accept<I>(
         &mut self,
         mut inbound: I,
-    ) -> Result<ServerConnectionRequest<I>, ParserError> {
+    ) -> Result<ServerConnectionRequest<I>, ParserError>
+    where
+        I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         // let (mut read_half, write_half) = inbound.split();
         loop {
             let read = inbound

@@ -3,7 +3,11 @@ use crate::{
         inbound::{TcpOption, TrojanAcceptor},
         Splitable,
     },
-    utils::{copy_tcp, lite_tls::LiteTlsStream, ConnectionRequest, TimeoutMonitor},
+    utils::{
+        copy_tcp,
+        lite_tls::{LeaveTls, LiteTlsStream},
+        ConnectionRequest, MixAddrType, ParserError, TimeoutMonitor,
+    },
 };
 use anyhow::{anyhow, Context, Error, Result};
 use lazy_static::lazy_static;
@@ -13,7 +17,7 @@ use std::sync::{
 };
 use std::{fmt::Debug, time::Duration};
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{split, AsyncRead, AsyncWrite},
     net::TcpStream,
     select,
     sync::broadcast,
@@ -30,6 +34,27 @@ lazy_static! {
     static ref UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 }
 
+async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStream> {
+    let outbound = if target_host.is_ip() {
+        TcpStream::connect(target_host.to_socket_addrs()).await
+    } else {
+        TcpStream::connect(target_host.host_repr()).await
+    }
+    .map_err(|e| Error::new(e))
+    .with_context(|| anyhow!("failed to connect to {:?}", target_host))?;
+
+    outbound
+        .set_nodelay(true)
+        .map_err(|e| Error::new(e))
+        .with_context(|| {
+            anyhow!(
+                "failed to set tcp_nodelay for outbound stream {:?}",
+                target_host
+            )
+        })?;
+    Ok(outbound)
+}
+
 pub async fn handle_outbound<I>(
     stream: I,
     mut upper_shutdown: broadcast::Receiver<()>,
@@ -37,114 +62,88 @@ pub async fn handle_outbound<I>(
     fallback_port: Arc<String>,
 ) -> Result<()>
 where
-    I: AsyncRead + AsyncWrite + Splitable + Debug + Unpin + Send + 'static,
+    I: AsyncRead + AsyncWrite + Splitable + LeaveTls + Unpin + Send + 'static,
 {
     let mut target = TrojanAcceptor::new(password_hash.as_bytes(), fallback_port);
     use ConnectionRequest::*;
     use TcpOption::*;
     match target.accept(stream).await {
-        Ok(TCP(inbound)) => {
-            let mut outbound = if target.host.is_ip() {
-                TcpStream::connect(target.host.to_socket_addrs()).await
-            } else {
-                TcpStream::connect(target.host.host_repr()).await
-            }
-            .map_err(|e| Error::new(e))
-            .with_context(|| anyhow!("failed to connect to {:?}", target.host))?;
-
-            outbound
-                .set_nodelay(true)
-                .map_err(|e| Error::new(e))
-                .with_context(|| {
-                    anyhow!(
-                        "failed to set tcp_nodelay for outbound stream {:?}",
-                        target.host
-                    )
-                })?;
+        Ok(TCP(TLS(inbound))) => {
+            let mut outbound = outbound_connect(&target.host).await?;
 
             #[cfg(feature = "debug_info")]
             debug!("outbound connected: {:?}", outbound);
 
-            match inbound {
-                TLS(inbound) => {
-                    let (mut in_read, mut in_write) = inbound.split();
-                    let (out_read, out_write) = outbound.split();
-                    let timeout_monitor = TimeoutMonitor::new(Duration::from_secs(5 * 60));
-                    let mut out_read = timeout_monitor.watch(out_read);
-                    let mut out_write = timeout_monitor.watch(out_write);
-                    let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let (mut in_read, mut in_write) = inbound.split();
+            let (out_read, out_write) = outbound.split();
+            let timeout_monitor = TimeoutMonitor::new(Duration::from_secs(5 * 60));
+            let mut out_read = timeout_monitor.watch(out_read);
+            let mut out_write = timeout_monitor.watch(out_write);
+            let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
 
-                    info!("[tcp][{}] => {:?}", conn_id, &target.host);
-                    // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
+            info!("[tcp][{}] => {:?}", conn_id, &target.host);
+            // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
+            select! {
+                _ = copy_tcp(&mut out_read, &mut in_write) => {
+                    info!("[tcp][{}]end downloading", conn_id);
+                },
+                _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+                    info!("[tcp][{}]end uploading", conn_id);
+                },
+                _ = timeout_monitor => {
+                    info!("[tcp][{}]end timeout", conn_id);
+                }
+                _ = upper_shutdown.recv() => {
+                    info!("[tcp][{}]shutdown signal received", conn_id);
+                },
+            }
+        }
+        Ok(TCP(LiteTLS(mut inbound))) => {
+            let mut outbound = outbound_connect(&target.host).await?;
+            let mut lite_tls_endpoint = LiteTlsStream::new_server_endpoint();
+            match lite_tls_endpoint
+                .handshake(&mut outbound, &mut inbound)
+                .await
+            {
+                Ok(_) => {
+                    if let Err(e) = lite_tls_endpoint.flush(&mut outbound, &mut inbound).await {
+                        return Err(e);
+                    }
+
+                    let (mut out_read, mut out_write) = outbound.split();
+                    let mut inbound = inbound.into_inner().leave();
+                    let (mut in_read, mut in_write) = inbound.split();
                     select! {
-                        _ = copy_tcp(&mut out_read, &mut in_write) => {
-                            info!("[tcp][{}]end downloading", conn_id);
+                        res = tokio::io::copy(&mut out_read, &mut in_write) => {
+                            debug!("tcp relaying download end, {:?}", res);
                         },
-                        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                            info!("[tcp][{}]end uploading", conn_id);
+                        res = tokio::io::copy(&mut in_read, &mut out_write) => {
+                            debug!("tcp relaying upload end, {:?}", res);
                         },
-                        _ = timeout_monitor => {
-                            info!("[tcp][{}]end timeout", conn_id);
-                        }
                         _ = upper_shutdown.recv() => {
-                            info!("[tcp][{}]shutdown signal received", conn_id);
+                            debug!("shutdown signal received");
                         },
                     }
                 }
-                LiteTLS(mut inbound) => {
-                    let mut lite_tls_endpoint = LiteTlsStream::new_server_endpoint();
-                    match lite_tls_endpoint
-                        .handshake(&mut outbound, &mut inbound)
-                        .await
-                    {
-                        Ok(_) => {
-                            if let Err(e) =
-                                lite_tls_endpoint.flush(&mut outbound, &mut inbound).await
-                            {
-                                return Err(e);
-                            }
+                Err(e) => {
+                    if let Some(&ParserError::Invalid(x)) = e.downcast_ref::<ParserError>() {
+                        debug!("not tls stream: {}", x);
+                        lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
 
-                            let (mut out_read, mut out_write) = outbound.split();
-                            let (mut in_write, mut in_read) = inbound.into_inner().split();
-                            select! {
-                                res = tokio::io::copy(&mut out_read, &mut in_write) => {
-                                    debug!("tcp relaying download end, {:?}", res);
-                                },
-                                res = tokio::io::copy(&mut in_read, &mut out_write) => {
-                                    debug!("tcp relaying upload end, {:?}", res);
-                                },
-                                _ = upper_shutdown.recv() => {
-                                    debug!("shutdown signal received");
-                                },
-                            }
+                        let (mut out_read, mut out_write) = outbound.split();
+                        let (mut in_read, mut in_write) = split(inbound.into_inner());
+                        select! {
+                            res = tokio::io::copy(&mut out_read, &mut in_write) => {
+                                debug!("tcp relaying download end, {:?}", res);
+                            },
+                            res = copy_tcp(&mut in_read, &mut out_write) => {
+                                debug!("tcp relaying upload end, {:?}", res);
+                            },
+                            _ = upper_shutdown.recv() => {
+                                debug!("shutdown signal received");
+                            },
                         }
-                        Err(e) => {
-                            if let Some(&ParserError::Invalid(x)) = e.downcast_ref::<ParserError>()
-                            {
-                                debug!("not tls stream: {}", x);
-                                if let Err(e) =
-                                    lite_tls_endpoint.flush(&mut outbound, &mut inbound).await
-                                {
-                                    error!("tcp relaying download end, {:#}", e);
-                                    return;
-                                }
-
-                                let (mut out_read, mut out_write) = split(outbound);
-                                let (mut in_write, mut in_read) = inbound;
-                                select! {
-                                    res = tokio::io::copy(&mut out_read, &mut in_write) => {
-                                        debug!("tcp relaying download end, {:?}", res);
-                                    },
-                                    res = copy_tcp(&mut in_read, &mut out_write) => {
-                                        debug!("tcp relaying upload end, {:?}", res);
-                                    },
-                                    _ = upper_shutdown.recv() => {
-                                        debug!("shutdown signal received");
-                                    },
-                                }
-                            }
-                        }
-                    };
+                    }
                 }
             }
         }
