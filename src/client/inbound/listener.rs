@@ -1,5 +1,5 @@
-use crate::client::ClientConnectionRequest;
 use super::{HttpRequest, Socks5Request};
+use crate::client::ClientConnectionRequest;
 use crate::{
     args::TrojanContext,
     client::outbound::forward,
@@ -60,7 +60,23 @@ where
                     shutdown_rx,
                     hash_copy,
                     accept_client_request(stream),
-                    connect_through_tcp_tls(tls_config_copy, domain_string_copy, remote_addr),
+                    connect_through_tcp_tls(
+                        tls_config_copy,
+                        domain_string_copy,
+                        remote_addr,
+                        false,
+                    ),
+                ));
+            }
+            #[cfg(feature = "tcp_tls")]
+            ConnectionMode::LiteTLS => {
+                let tls_config_copy = tls_config.clone();
+                let domain_string_copy = domain_string.clone();
+                tokio::spawn(forward(
+                    shutdown_rx,
+                    hash_copy,
+                    accept_client_request(stream),
+                    connect_through_tcp_tls(tls_config_copy, domain_string_copy, remote_addr, true),
                 ));
             }
             #[cfg(feature = "quic")]

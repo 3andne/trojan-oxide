@@ -23,6 +23,7 @@ pub async fn connect_through_tcp_tls(
     config: Arc<ClientConfig>,
     domain_string: Arc<String>,
     remote_addr: SocketAddr,
+    lite_tls: bool,
 ) -> Result<ClientServerConnection> {
     let domain =
         DNSNameRef::try_from_ascii_str(&domain_string).map_err(|_| anyhow!("invalid dnsname"))?;
@@ -30,5 +31,10 @@ pub async fn connect_through_tcp_tls(
     let stream = TcpStream::connect(remote_addr).await?;
     stream.set_nodelay(true)?;
     let stream = connector.connect(domain, stream).await?;
-    return Ok(ClientServerConnection::TcpTLS(stream));
+    use ClientServerConnection::*;
+    return Ok(if lite_tls {
+        LiteTLS(stream)
+    } else {
+        TcpTLS(stream)
+    });
 }

@@ -30,7 +30,11 @@ async fn main() -> Result<()> {
 
     let collector = tracing_subscriber::fmt()
         .with_max_level(options.log_level)
-        .with_target(false)
+        .with_target(if cfg!(feature = "debug_info") {
+            true
+        } else {
+            false
+        })
         .finish();
     let remote_socket_addr = (if options.proxy_ip.len() > 0 {
         options.proxy_ip.to_owned()

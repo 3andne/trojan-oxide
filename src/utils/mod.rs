@@ -235,6 +235,8 @@ pub enum ConnectionMode {
     TcpTLS,
     #[cfg(feature = "quic")]
     Quic,
+    // #[cfg(feature = "quic")]
+    LiteTLS,
 }
 
 #[cfg(feature = "client")]
