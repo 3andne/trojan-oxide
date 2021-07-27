@@ -1,12 +1,12 @@
 use crate::{
     server::{
         inbound::{TcpOption, TrojanAcceptor},
+        outbound::utils::{outbound_connect, relay_tcp},
         Splitable,
     },
     utils::{
-        copy_tcp,
         lite_tls::{LeaveTls, LiteTlsStream},
-        ConnectionRequest, MixAddrType, ParserError, TimeoutMonitor,
+        ConnectionRequest, ParserError, TimeoutMonitor,
     },
 };
 use anyhow::{anyhow, Context, Error, Result};
@@ -15,14 +15,13 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-use std::{fmt::Debug, time::Duration};
+use std::time::Duration;
 use tokio::{
-    io::{split, AsyncRead, AsyncWrite},
-    net::TcpStream,
+    io::{AsyncRead, AsyncWrite},
     select,
     sync::broadcast,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 #[cfg(feature = "udp")]
 use {
     crate::utils::{copy_udp, ServerUdpStream},
@@ -30,29 +29,8 @@ use {
 };
 
 lazy_static! {
-    static ref TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
-    static ref UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
-}
-
-async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStream> {
-    let outbound = if target_host.is_ip() {
-        TcpStream::connect(target_host.to_socket_addrs()).await
-    } else {
-        TcpStream::connect(target_host.host_repr()).await
-    }
-    .map_err(|e| Error::new(e))
-    .with_context(|| anyhow!("failed to connect to {:?}", target_host))?;
-
-    outbound
-        .set_nodelay(true)
-        .map_err(|e| Error::new(e))
-        .with_context(|| {
-            anyhow!(
-                "failed to set tcp_nodelay for outbound stream {:?}",
-                target_host
-            )
-        })?;
-    Ok(outbound)
+    pub(crate) static ref TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    pub(crate) static ref UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 }
 
 pub async fn handle_outbound<I>(
@@ -69,34 +47,12 @@ where
     use TcpOption::*;
     match target.accept(stream).await {
         Ok(TCP(TLS(inbound))) => {
-            let mut outbound = outbound_connect(&target.host).await?;
+            let outbound = outbound_connect(&target.host).await?;
 
             #[cfg(feature = "debug_info")]
             debug!("outbound connected: {:?}", outbound);
 
-            let (mut in_read, mut in_write) = inbound.split();
-            let (out_read, out_write) = outbound.split();
-            let timeout_monitor = TimeoutMonitor::new(Duration::from_secs(5 * 60));
-            let mut out_read = timeout_monitor.watch(out_read);
-            let mut out_write = timeout_monitor.watch(out_write);
-            let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-
-            info!("[tcp][{}] => {:?}", conn_id, &target.host);
-            // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
-            select! {
-                _ = copy_tcp(&mut out_read, &mut in_write) => {
-                    info!("[tcp][{}]end downloading", conn_id);
-                },
-                _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                    info!("[tcp][{}]end uploading", conn_id);
-                },
-                _ = timeout_monitor => {
-                    info!("[tcp][{}]end timeout", conn_id);
-                }
-                _ = upper_shutdown.recv() => {
-                    info!("[tcp][{}]shutdown signal received", conn_id);
-                },
-            }
+            relay_tcp(inbound, outbound, &target.host, upper_shutdown).await;
         }
         Ok(TCP(LiteTLS(mut inbound))) => {
             let mut outbound = outbound_connect(&target.host).await?;
@@ -106,43 +62,16 @@ where
                 .await
             {
                 Ok(_) => {
-                    if let Err(e) = lite_tls_endpoint.flush(&mut outbound, &mut inbound).await {
-                        return Err(e);
-                    }
-
-                    let (mut out_read, mut out_write) = outbound.split();
-                    let mut inbound = inbound.into_inner().leave();
-                    let (mut in_read, mut in_write) = inbound.split();
-                    select! {
-                        res = tokio::io::copy(&mut out_read, &mut in_write) => {
-                            debug!("tcp relaying download end, {:?}", res);
-                        },
-                        res = tokio::io::copy(&mut in_read, &mut out_write) => {
-                            debug!("tcp relaying upload end, {:?}", res);
-                        },
-                        _ = upper_shutdown.recv() => {
-                            debug!("shutdown signal received");
-                        },
-                    }
+                    lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
+                    let inbound = inbound.into_inner().leave();
+                    relay_tcp(inbound, outbound, &target.host, upper_shutdown).await;
                 }
                 Err(e) => {
                     if let Some(&ParserError::Invalid(x)) = e.downcast_ref::<ParserError>() {
                         debug!("not tls stream: {}", x);
                         lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
 
-                        let (mut out_read, mut out_write) = outbound.split();
-                        let (mut in_read, mut in_write) = split(inbound.into_inner());
-                        select! {
-                            res = tokio::io::copy(&mut out_read, &mut in_write) => {
-                                debug!("tcp relaying download end, {:?}", res);
-                            },
-                            res = copy_tcp(&mut in_read, &mut out_write) => {
-                                debug!("tcp relaying upload end, {:?}", res);
-                            },
-                            _ = upper_shutdown.recv() => {
-                                debug!("shutdown signal received");
-                            },
-                        }
+                        relay_tcp(inbound, outbound, &target.host, upper_shutdown).await;
                     }
                 }
             }

@@ -2,13 +2,17 @@ use std::{io::Cursor, sync::Arc};
 
 use crate::utils::copy_tcp;
 use anyhow::{anyhow, Context, Error, Result};
-use tokio::{io::{AsyncRead, AsyncWrite, AsyncWriteExt, split}, net::TcpStream, select};
+use tokio::{
+    io::{split, AsyncRead, AsyncWrite, AsyncWriteExt},
+    net::TcpStream,
+    select,
+};
 use tracing::*;
 
 pub async fn fallback<I: AsyncRead + AsyncWrite + Unpin>(
     buf: Vec<u8>,
     fallback_port: Arc<String>,
-    mut inbound: I,
+    inbound: I,
 ) -> Result<()> {
     let mut outbound = TcpStream::connect("127.0.0.1:".to_owned() + fallback_port.as_str())
         .await
