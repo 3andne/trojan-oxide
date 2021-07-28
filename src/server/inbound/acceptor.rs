@@ -44,7 +44,7 @@ impl<'a> TrojanAcceptor<'a> {
     fn verify(&mut self) -> Result<(), ParserError> {
         if self.buf.len() < HASH_LEN {
             return Err(ParserError::Incomplete(
-                "Target::verify self.buf.len() < HASH_LEN",
+                "Target::verify self.buf.len() < HASH_LEN".into(),
             ));
         }
 
@@ -52,7 +52,7 @@ impl<'a> TrojanAcceptor<'a> {
             self.cursor = HASH_LEN + 2;
             Ok(())
         } else {
-            Err(ParserError::Invalid("Target::verify hash invalid"))
+            Err(ParserError::Invalid("Target::verify hash invalid".into()))
         }
     }
 
@@ -76,7 +76,7 @@ impl<'a> TrojanAcceptor<'a> {
             0xff => (),
             _ => {
                 return Err(ParserError::Invalid(
-                    "Target::verify invalid connection type",
+                    "Target::verify invalid connection type".into(),
                 ))
             }
         };
@@ -123,7 +123,7 @@ impl<'a> TrojanAcceptor<'a> {
             let read = inbound
                 .read_buf(&mut self.buf)
                 .await
-                .map_err(|_| ParserError::Invalid("Target::accept failed to read"))?;
+                .map_err(|_| ParserError::Invalid("Target::accept failed to read".into()))?;
             if read != 0 {
                 match self.parse() {
                     Err(err @ ParserError::Invalid(_)) => {
@@ -147,7 +147,7 @@ impl<'a> TrojanAcceptor<'a> {
                     }
                 }
             } else {
-                return Err(ParserError::Incomplete("Target::accept EOF"));
+                return Err(ParserError::Incomplete("Target::accept EOF".into()));
             }
         }
         use ConnectionRequest::*;
@@ -162,7 +162,7 @@ impl<'a> TrojanAcceptor<'a> {
             #[cfg(feature = "udp")]
             0x03 => Ok(UDP(new_trojan_udp_stream(inbound, buffered_request))),
             #[cfg(not(feature = "udp"))]
-            0x03 => Err(ParserError::Invalid("udp functionality not included")),
+            0x03 => Err(ParserError::Invalid("udp functionality not included".into())),
             0x01 => Ok(TCP(TLS(BufferedRecv::new(inbound, buffered_request)))),
             0x11 => Ok(TCP(LiteTLS(BufferedRecv::new(inbound, buffered_request)))),
             #[cfg(feature = "quic")]
@@ -198,7 +198,7 @@ impl<'a> TrojanAcceptor<'a> {
             self.cursor += 2;
             Ok(())
         } else {
-            Err(ParserError::Invalid("Target::accept expecting CRLF"))
+            Err(ParserError::Invalid("Target::accept expecting CRLF".into()))
         }
     }
 }

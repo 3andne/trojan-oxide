@@ -37,7 +37,9 @@ impl HttpRequest {
 
     fn set_stream_type(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
         if buf.len() < 4 {
-            return Err(ParserError::Incomplete("HttpRequest::set_stream_type"));
+            return Err(ParserError::Incomplete(
+                "HttpRequest::set_stream_type".into(),
+            ));
         }
 
         if &buf[..4] == b"GET " {
@@ -47,7 +49,9 @@ impl HttpRequest {
         }
 
         if buf.len() < 8 {
-            return Err(ParserError::Incomplete("HttpRequest::set_stream_type"));
+            return Err(ParserError::Incomplete(
+                "HttpRequest::set_stream_type".into(),
+            ));
         }
 
         if &buf[..8] == b"CONNECT " {
@@ -56,7 +60,7 @@ impl HttpRequest {
             return Ok(());
         }
 
-        return Err(ParserError::Invalid("HttpRequest::set_stream_type"));
+        return Err(ParserError::Invalid("HttpRequest::set_stream_type".into()));
     }
 
     fn set_host(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
@@ -71,7 +75,7 @@ impl HttpRequest {
                     self.cursor += 7;
                 }
             } else {
-                return Err(ParserError::Incomplete("HttpRequest::set_host"));
+                return Err(ParserError::Incomplete("HttpRequest::set_host".into()));
             }
         }
 
@@ -82,7 +86,7 @@ impl HttpRequest {
         }
 
         if end == buf.len() {
-            return Err(ParserError::Incomplete("HttpRequest::set_host"));
+            return Err(ParserError::Incomplete("HttpRequest::set_host".into()));
         }
 
         self.addr = MixAddrType::from_http_header(self.is_https, &buf[start..end])?;
@@ -127,7 +131,7 @@ impl HttpRequest {
         unsafe {
             buf.set_len(4);
         }
-        Err(ParserError::Incomplete("HttpRequest::parse"))
+        Err(ParserError::Incomplete("HttpRequest::parse".into()))
     }
 
     pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ClientConnectionRequest> {
@@ -148,7 +152,7 @@ impl HttpRequest {
                 }
             } else {
                 return Err(Error::new(ParserError::Invalid(
-                    "HttpRequest::accept unable to accept before EOF",
+                    "HttpRequest::accept unable to accept before EOF".into(),
                 )));
             }
         }

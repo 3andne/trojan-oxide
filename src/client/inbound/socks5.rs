@@ -85,7 +85,7 @@ impl Socks5Request {
                 }
             } else {
                 return Err(Error::new(ParserError::Invalid(
-                    "Socks5Request::accept unable to accept before EOF",
+                    "Socks5Request::accept unable to accept before EOF".into(),
                 )));
             }
         }
@@ -133,7 +133,7 @@ impl Socks5Request {
                 expect_buf_len!(buf, 2, "Sock5ParsePhase::parse phase 1 incomplete[1]");
                 if buf[SOCKS_VERSION_INDEX] != 5 {
                     return Err(ParserError::Invalid(
-                        "Socks5Request::parse only support socks v5",
+                        "Socks5Request::parse only support socks v5".into(),
                     ));
                 }
                 let num = buf[NUM_SUPPORTED_AUTH_METHOD_INDEX];
@@ -150,13 +150,13 @@ impl Socks5Request {
                         return Ok(());
                     }
                 }
-                return Err(ParserError::Invalid("Socks5Request::parse method invalid"));
+                return Err(ParserError::Invalid("Socks5Request::parse method invalid".into()));
             }
             P2ClientRequest => {
                 expect_buf_len!(buf, 5, "Sock5ParsePhase::parse phase 2 incomplete[1]");
                 if buf[SOCKS_VERSION_INDEX] != 5 {
                     return Err(ParserError::Invalid(
-                        "Socks5Request::parse only support socks v5",
+                        "Socks5Request::parse only support socks v5".into(),
                     ));
                 }
 
@@ -169,7 +169,7 @@ impl Socks5Request {
                     }
                     _ => {
                         return Err(ParserError::Invalid(
-                            "Socks5Request::parse invalid connection type",
+                            "Socks5Request::parse invalid connection type".into(),
                         ));
                     }
                 }

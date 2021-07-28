@@ -67,7 +67,7 @@ where
                     relay_tcp(inbound, outbound, &target.host, upper_shutdown).await;
                 }
                 Err(e) => {
-                    if let Some(&ParserError::Invalid(x)) = e.downcast_ref::<ParserError>() {
+                    if let Some(ParserError::Invalid(x)) = e.downcast_ref::<ParserError>() {
                         debug!("not tls stream: {}", x);
                         lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
 

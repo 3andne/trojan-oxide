@@ -5,6 +5,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+#[derive(Debug)]
 pub struct TlsRelayBuffer {
     inner: Vec<u8>,
     /// read cursor
@@ -70,12 +71,12 @@ impl TlsRelayBuffer {
         expect_buf_len!(self.inner, 5, "client hello incomplete[1]");
         if &self.inner[..3] != &[0x16, 0x03, 0x01] {
             // Not tls 1.2/1.3
-            return Err(ParserError::Invalid("not tls 1.2/1.3[1]"));
+            return Err(ParserError::Invalid("not tls 1.2/1.3[1]".into()));
         }
         self.cursor = 5 + extract_len(&self.inner[3..]);
         if self.cursor != self.inner.len() {
             // Not tls 1.2/1.3
-            return Err(ParserError::Invalid("not tls 1.2/1.3[2]"));
+            return Err(ParserError::Invalid("not tls 1.2/1.3[2]".into()));
         }
         Ok(())
     }
@@ -83,7 +84,7 @@ impl TlsRelayBuffer {
     pub fn check_type_0x14(&mut self) -> Result<(), ParserError> {
         expect_buf_len!(self.inner, self.cursor + 6, "packet 0x14 incomplete");
         if &self.inner[self.cursor..self.cursor + 6] != &[0x14, 0x03, 0x03, 0, 0x01, 0x01] {
-            Err(ParserError::Invalid("packet 0x14 invalid"))
+            Err(ParserError::Invalid("packet 0x14 invalid".into()))
         } else {
             self.cursor += 6;
             Ok(())
@@ -96,7 +97,7 @@ impl TlsRelayBuffer {
             self.cursor + 5,
             "packet 0x16 (or sth) incomplete[1]"
         );
-        self.cursor += 5 + extract_len(&self.inner[self.cursor..]);
+        self.cursor += 5 + extract_len(&self.inner[self.cursor + 3..]);
         expect_buf_len!(
             self.inner,
             self.cursor,
@@ -121,7 +122,7 @@ impl TlsRelayBuffer {
                     self.check_type_0x16()?;
                 }
                 _ => {
-                    return Err(ParserError::Invalid("unexpected tls packet type"));
+                    return Err(ParserError::Invalid("unexpected tls packet type".into()));
                 }
             }
         }

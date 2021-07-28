@@ -1,13 +1,13 @@
 use std::ops::DerefMut;
 
-use super::{error::EofErr, tls_relay_buffer::TlsRelayBuffer};
+use super::{error::eof_err, tls_relay_buffer::TlsRelayBuffer};
 use crate::utils::ParserError;
 use anyhow::{Error, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     select,
 };
-use tracing::debug;
+use tracing::{debug, error};
 
 #[derive(Debug, Clone, Copy)]
 enum LiteTlsEndpointSide {
@@ -75,7 +75,7 @@ impl LiteTlsStream {
         loop {
             if inbound.read_buf(self.inbound_buf.deref_mut()).await? == 0 {
                 // debug!("EOF on Client Hello");
-                return Err(EofErr("EOF on Client Hello"));
+                return Err(eof_err("EOF on Client Hello"));
             }
             match self.inbound_buf.check_client_hello() {
                 Ok(_) => return Ok(()),
@@ -126,10 +126,13 @@ impl LiteTlsStream {
 
             if res == 0 {
                 match dir {
-                    Direction::Inbound => return Err(EofErr("EOF on Parsing[1][I]")),
-                    Direction::Outbound => return Err(EofErr("EOF on Parsing[1][O]")),
+                    Direction::Inbound => return Err(eof_err("EOF on Parsing[1][I]")),
+                    Direction::Outbound => return Err(eof_err("EOF on Parsing[1][O]")),
                 }
             }
+
+            debug!("inbound_buf: {:?}", self.inbound_buf);
+            debug!("outbound_buf: {:?}", self.outbound_buf);
 
             use LiteTlsEndpointSide::*;
             match (
@@ -152,7 +155,7 @@ impl LiteTlsStream {
                     // relay everything till the end of CCS
                     // there might be some 0x17 packets left
                     if outbound.write(self.inbound_buf.checked_packets()).await? == 0 {
-                        return Err(EofErr("EOF on Parsing[2]"));
+                        return Err(eof_err("EOF on Parsing[2]"));
                     }
                     outbound.flush().await?;
                     self.inbound_buf.pop_checked_packets();
@@ -162,7 +165,7 @@ impl LiteTlsStream {
                     // but we have to do this to correctly
                     // leave TLS channel.
                     if outbound.read_buf(self.outbound_buf.deref_mut()).await? == 0 {
-                        return Err(EofErr("EOF on Parsing[7]"));
+                        return Err(eof_err("EOF on Parsing[7]"));
                     }
 
                     // check: x must be 6 and the rsp should
@@ -189,14 +192,14 @@ impl LiteTlsStream {
                     // relay everything till the end of CCS
                     // there might be some 0x17 packets left
                     if outbound.write(self.inbound_buf.checked_packets()).await? == 0 {
-                        return Err(EofErr("EOF on Parsing[2]"));
+                        return Err(eof_err("EOF on Parsing[2]"));
                     }
                     outbound.flush().await?;
                     self.inbound_buf.pop_checked_packets();
 
                     if self.inbound_buf.len() != 0 {
                         return Err(Error::new(ParserError::Invalid(
-                            "buffer not empty after last 0x14",
+                            "buffer not empty after last 0x14".into(),
                         )));
                     }
 
@@ -215,7 +218,7 @@ impl LiteTlsStream {
                             Ok(_) => {
                                 // relay till last byte
                                 if inbound.write(&self.outbound_buf).await? == 0 {
-                                    return Err(EofErr("EOF on Parsing[3]"));
+                                    return Err(eof_err("EOF on Parsing[3]"));
                                 }
                                 inbound.flush().await?;
                                 self.outbound_buf.reset();
@@ -225,7 +228,7 @@ impl LiteTlsStream {
                             Err(ParserError::Incomplete(_)) => {
                                 // let's try to read the last encrypted packet
                                 if outbound.read_buf(self.outbound_buf.deref_mut()).await? == 0 {
-                                    return Err(EofErr("EOF on Parsing[4]"));
+                                    return Err(eof_err("EOF on Parsing[4]"));
                                 }
                             }
                             Err(e @ ParserError::Invalid(_)) => {
@@ -240,7 +243,9 @@ impl LiteTlsStream {
                     // relay pending packets
                 }
                 (Err(e @ ParserError::Invalid(_)), dir, seen, _) => {
-                    return Err(Error::new(e).context(format!("{:?}, {}", dir, seen)));
+                    let e = Error::new(e).context(format!("{:?}, {}", dir, seen));
+                    error!("error: {:#}, dir: {:?}, seen: {}", e, dir, seen);
+                    return Err(e);
                 }
                 _ => unreachable!(),
             }
@@ -249,14 +254,14 @@ impl LiteTlsStream {
             match dir {
                 Direction::Inbound => {
                     if outbound.write(self.inbound_buf.checked_packets()).await? == 0 {
-                        return Err(EofErr("EOF on Parsing[5]"));
+                        return Err(eof_err("EOF on Parsing[5]"));
                     }
                     outbound.flush().await?;
                     self.inbound_buf.pop_checked_packets();
                 }
                 Direction::Outbound => {
                     if inbound.write(self.outbound_buf.checked_packets()).await? == 0 {
-                        return Err(EofErr("EOF on Parsing[6]"));
+                        return Err(eof_err("EOF on Parsing[6]"));
                     }
                     inbound.flush().await?;
                     self.outbound_buf.pop_checked_packets();

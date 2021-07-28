@@ -90,18 +90,18 @@ impl MixAddrType {
 
         if port_idx == 0 {
             return Err(ParserError::Invalid(
-                "MixAddrType::from_http_header empty host name",
+                "MixAddrType::from_http_header empty host name".into(),
             ));
         } else if port_idx + 1 == end {
             return Err(ParserError::Invalid(
-                "MixAddrType::from_http_header port_idx + 1 == end",
+                "MixAddrType::from_http_header port_idx + 1 == end".into(),
             ));
         } else if port_idx == end {
             if !is_https {
                 port = 80;
             } else {
                 return Err(ParserError::Invalid(
-                    "MixAddrType::from_http_header port_idx == end",
+                    "MixAddrType::from_http_header port_idx == end".into(),
                 ));
             }
         } else {
@@ -111,7 +111,7 @@ impl MixAddrType {
                     port = port * 10 + (di - b'0') as u16;
                 } else {
                     return Err(ParserError::Invalid(
-                        "MixAddrType::from_http_header invalid characters",
+                        "MixAddrType::from_http_header invalid characters".into(),
                     ));
                 }
             }
@@ -124,11 +124,11 @@ impl MixAddrType {
             // IPv6: `[real_IPv6_addr]`
             debug!("from_http_header: IPv6");
             let str_buf = std::str::from_utf8(addr).map_err(|_| {
-                ParserError::Invalid("MixAddrType::from_http_header IPv6 Utf8Error")
+                ParserError::Invalid("MixAddrType::from_http_header IPv6 Utf8Error".into())
             })?;
             let v6_addr_u16 = SocketAddrV6::from_str(str_buf)
                 .map_err(|_| {
-                    ParserError::Invalid("MixAddrType::from_http_header IPv6 AddressParseError")
+                    ParserError::Invalid("MixAddrType::from_http_header IPv6 AddressParseError".into())
                 })?
                 .ip()
                 .segments();
@@ -138,7 +138,7 @@ impl MixAddrType {
             debug!("from_http_header: Hostname");
             Ok(Self::Hostname((
                 String::from_utf8(addr.to_vec()).map_err(|_| {
-                    ParserError::Invalid("MixAddrType::from_http_header Hostname Utf8Error")
+                    ParserError::Invalid("MixAddrType::from_http_header Hostname Utf8Error".into())
                 })?,
                 port,
             )))
@@ -146,12 +146,12 @@ impl MixAddrType {
             // IPv4: ends with digit characters
             debug!("from_http_header: IPv4");
             let str_buf = std::str::from_utf8(addr).map_err(|_| {
-                ParserError::Invalid("MixAddrType::from_http_header IPv4 Utf8Error")
+                ParserError::Invalid("MixAddrType::from_http_header IPv4 Utf8Error".into())
             })?;
             Ok(Self::V4((
                 SocketAddrV4::from_str(str_buf)
                     .map_err(|_| {
-                        ParserError::Invalid("MixAddrType::from_http_header IPv4 AddressParseError")
+                        ParserError::Invalid("MixAddrType::from_http_header IPv4 AddressParseError".into())
                     })?
                     .ip()
                     .octets(),
@@ -228,7 +228,7 @@ impl MixAddrType {
                 let host_len = buf[1] as usize;
                 expect_buf_len!(buf, 1 + 1 + host_len + 2, "MixAddrType::from_encoded_bytes Domain Name"); // cmd + host_len + host(host_len bytes) + port
                 let host = String::from_utf8(buf[2..2 + host_len].to_vec()).map_err(|_| {
-                    ParserError::Invalid("MixAddrType::from_encoded_bytes Domain Name Utf8Error")
+                    ParserError::Invalid("MixAddrType::from_encoded_bytes Domain Name Utf8Error".into())
                 })?;
                 let port = u16::from_be_bytes([buf[2 + host_len], buf[2 + host_len + 1]]);
                 Ok((MixAddrType::Hostname((host, port)), 1 + 1 + host_len + 2))
@@ -247,7 +247,7 @@ impl MixAddrType {
             }
             _ => {
                 return Err(ParserError::Invalid(
-                    "MixAddrType::from_encoded_bytes invalid command type",
+                    "MixAddrType::from_encoded_bytes invalid command type".into(),
                 ));
             }
         }

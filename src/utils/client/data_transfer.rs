@@ -75,8 +75,8 @@ pub async fn relay_tcp(
                     }
                 }
                 Err(e) => {
-                    if let Some(&ParserError::Invalid(x)) = e.downcast_ref::<ParserError>() {
-                        debug!("not tls stream: {}", x);
+                    if let Some(e @ ParserError::Invalid(_)) = e.downcast_ref::<ParserError>() {
+                        debug!("not tls stream: {:#}", e);
                         if let Err(e) = lite_tls_endpoint.flush(&mut outbound, &mut inbound).await {
                             error!("tcp relaying download end, {:#}", e);
                             return;

@@ -63,9 +63,9 @@ use crate::server::Splitable;
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
     #[error(display = "ParserError Incomplete: {:?}", _0)]
-    Incomplete(&'static str),
+    Incomplete(String),
     #[error(display = "ParserError Invalid: {:?}", _0)]
-    Invalid(&'static str),
+    Invalid(String),
 }
 
 pub fn transmute_u16s_to_u8s(a: &[u16], b: &mut [u8]) {
@@ -89,7 +89,7 @@ macro_rules! expect_buf_len {
     ($buf:expr, $len:expr, $mark:expr) => {
         if $buf.len() < $len {
             // debug!("expect_buf_len {}", $mark);
-            return Err(ParserError::Incomplete($mark));
+            return Err(ParserError::Incomplete($mark.into()));
         }
     };
 }
