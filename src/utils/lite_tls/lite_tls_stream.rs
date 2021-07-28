@@ -217,16 +217,22 @@ impl LiteTlsStream {
                 }
                 (Ok(_), Direction::Outbound, _) => {
                     // TLS 1.2 full handshake
+                    debug!("[LC2][{}]out buf now: {:?}", packet_id, self.outbound_buf);
+                    debug!("[LC2][{}]in buf now: {:?}", packet_id, self.inbound_buf);
 
                     loop {
                         match self.outbound_buf.check_type_0x16() {
                             Ok(_) => {
                                 // relay till last byte
-                                if inbound.write(&self.outbound_buf).await? == 0 {
+                                if inbound.write(&self.outbound_buf.checked_packets()).await? == 0 {
                                     return Err(eof_err("EOF on Parsing[3]"));
                                 }
                                 inbound.flush().await?;
-                                self.outbound_buf.reset();
+                                self.outbound_buf.pop_checked_packets();
+                                debug!(
+                                    "[LC2][{}]out buf after pop: {:?}",
+                                    packet_id, self.outbound_buf
+                                );
                                 // then we are safe to leave TLS channel
                                 return Ok(());
                             }
