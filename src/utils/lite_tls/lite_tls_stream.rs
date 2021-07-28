@@ -1,3 +1,5 @@
+use std::ops::DerefMut;
+
 use super::{error::EofErr, tls_relay_buffer::TlsRelayBuffer};
 use crate::utils::ParserError;
 use anyhow::{Error, Result};
@@ -24,7 +26,7 @@ enum LiteTlsEndpointSide {
 //     A: Fn(&mut TlsRelayBuffer) -> Result<(), ParserError>,
 // {
 //     loop {
-//         let x = stream.read(buf).await?;
+//         let x = stream.read_buf(buf.deref_mut()).await?;
 //         if x == 0 {
 //             return Err(EofErr(eof_msg));
 //         }
@@ -68,12 +70,12 @@ impl LiteTlsStream {
 
     async fn client_hello<I>(&mut self, inbound: &mut I) -> Result<()>
     where
-        I: AsyncReadExt + AsyncWriteExt + Unpin,
+        I: AsyncReadExt + Unpin,
     {
         loop {
-            if inbound.read(&mut self.inbound_buf).await? == 0 {
-                debug!("EOF on Client Hello");
-                // return Err(EofErr("EOF on Client Hello"));
+            if inbound.read_buf(self.inbound_buf.deref_mut()).await? == 0 {
+                // debug!("EOF on Client Hello");
+                return Err(EofErr("EOF on Client Hello"));
             }
             match self.inbound_buf.check_client_hello() {
                 Ok(_) => return Ok(()),
@@ -114,16 +116,19 @@ impl LiteTlsStream {
 
         loop {
             let (res, dir) = select! {
-                res = inbound.read(&mut self.inbound_buf) => {
+                res = inbound.read_buf(self.inbound_buf.deref_mut()) => {
                     (res?, Direction::Inbound)
                 }
-                res = outbound.read(&mut self.outbound_buf) => {
+                res = outbound.read_buf(self.outbound_buf.deref_mut()) => {
                     (res?, Direction::Outbound)
                 }
             };
 
             if res == 0 {
-                return Err(EofErr("EOF on Parsing[1]"));
+                match dir {
+                    Direction::Inbound => return Err(EofErr("EOF on Parsing[1][I]")),
+                    Direction::Outbound => return Err(EofErr("EOF on Parsing[1][O]")),
+                }
             }
 
             use LiteTlsEndpointSide::*;
@@ -156,7 +161,7 @@ impl LiteTlsStream {
                     // this is not part of the TLS specification,
                     // but we have to do this to correctly
                     // leave TLS channel.
-                    if outbound.read(&mut self.outbound_buf).await? == 0 {
+                    if outbound.read_buf(self.outbound_buf.deref_mut()).await? == 0 {
                         return Err(EofErr("EOF on Parsing[7]"));
                     }
 
@@ -219,7 +224,7 @@ impl LiteTlsStream {
                             }
                             Err(ParserError::Incomplete(_)) => {
                                 // let's try to read the last encrypted packet
-                                if outbound.read(&mut self.outbound_buf).await? == 0 {
+                                if outbound.read_buf(self.outbound_buf.deref_mut()).await? == 0 {
                                     return Err(EofErr("EOF on Parsing[4]"));
                                 }
                             }
