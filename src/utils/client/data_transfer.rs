@@ -54,6 +54,7 @@ pub async fn relay_tcp(
                 .await
             {
                 Ok(_) => {
+                    debug!("lite tls handshake succeed");
                     let (mut outbound, _) = outbound.into_inner();
                     if let Err(e) = lite_tls_endpoint.flush(&mut outbound, &mut inbound).await {
                         error!("flushing failed, {:#}", e);
@@ -62,6 +63,7 @@ pub async fn relay_tcp(
 
                     let (mut out_read, mut out_write) = outbound.split();
                     let WRTuple((mut in_write, mut in_read)) = inbound;
+                    debug!("lite tls start relaying");
                     select! {
                         res = tokio::io::copy(&mut out_read, &mut in_write) => {
                             debug!("tcp relaying download end, {:?}", res);

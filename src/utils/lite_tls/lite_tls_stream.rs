@@ -114,9 +114,11 @@ impl LiteTlsStream {
             Outbound,
         }
 
+        let mut packet_id = 0;
+
         loop {
-            debug!("[0]inbound_buf: {:?}", self.inbound_buf);
-            debug!("[0]outbound_buf: {:?}", self.outbound_buf);
+            debug!("[0][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
+            debug!("[0][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
             let (res, dir) = select! {
                 res = inbound.read_buf(self.inbound_buf.deref_mut()) => {
                     (res?, Direction::Inbound)
@@ -144,8 +146,9 @@ impl LiteTlsStream {
                 self.side,
             ) {
                 (Ok(_), Direction::Inbound, ClientSide) => {
+                    debug!("[LC0][{}]buf now: {:?}", packet_id, self.inbound_buf);
                     // TLS 1.2 with resumption or TLS 1.3
-                    self.change_cipher_recieved = 2;
+
                     // relay everything till the end of CCS
                     // there might be some 0x17 packets left
                     if outbound.write(self.inbound_buf.checked_packets()).await? == 0 {
@@ -154,6 +157,9 @@ impl LiteTlsStream {
                     outbound.flush().await?;
                     self.inbound_buf.pop_checked_packets();
 
+                    debug!("[LC0][{}]buf after pop: {:?}", packet_id, self.inbound_buf);
+
+                    debug!("[LC0][{}]outbound buf: {:?}", packet_id, self.outbound_buf);
                     // wait for server's response
                     // this is not part of the TLS specification,
                     // but we have to do this to correctly
@@ -167,6 +173,8 @@ impl LiteTlsStream {
                     // (change_cipher_spec)
                     match self.outbound_buf.check_type_0x14() {
                         Ok(_) => {
+                            debug!("[LC0][{}] extra CCS ok, leaving", packet_id);
+
                             // clear this, since it's not part of
                             // TLS.
                             self.outbound_buf.reset();
@@ -182,14 +190,16 @@ impl LiteTlsStream {
                 }
                 (Ok(_), Direction::Inbound, ServerSide) => {
                     // TLS 1.2 with resumption or TLS 1.3
-                    self.change_cipher_recieved = 2;
+                    debug!("[LC1][{}]buf now: {:?}", packet_id, self.inbound_buf);
+
                     // relay everything till the end of CCS
-                    // there might be some 0x17 packets left
                     if outbound.write(self.inbound_buf.checked_packets()).await? == 0 {
                         return Err(eof_err("EOF on Parsing[2]"));
                     }
                     outbound.flush().await?;
                     self.inbound_buf.pop_checked_packets();
+
+                    debug!("[LC1][{}]buf after pop: {:?}", packet_id, self.inbound_buf);
 
                     if self.inbound_buf.len() != 0 {
                         return Err(Error::new(ParserError::Invalid(
@@ -202,11 +212,12 @@ impl LiteTlsStream {
                     inbound.write(&[0x14, 0x03, 0x03, 0, 0x01, 0x01]).await?;
                     inbound.flush().await?;
 
+                    debug!("[LC1][{}]last CCS sent, leaving", packet_id);
                     return Ok(());
                 }
                 (Ok(_), Direction::Outbound, _) => {
                     // TLS 1.2 full handshake
-                    self.change_cipher_recieved = 2;
+
                     loop {
                         match self.outbound_buf.check_type_0x16() {
                             Ok(_) => {
@@ -247,8 +258,8 @@ impl LiteTlsStream {
                 }
             }
 
-            debug!("[1]inbound_buf: {:?}", self.inbound_buf);
-            debug!("[1]outbound_buf: {:?}", self.outbound_buf);
+            debug!("[1][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
+            debug!("[1][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
 
             // relay pending bytes
             match dir {
@@ -267,6 +278,8 @@ impl LiteTlsStream {
                     self.outbound_buf.pop_checked_packets();
                 }
             }
+
+            packet_id += 1;
         }
     }
 

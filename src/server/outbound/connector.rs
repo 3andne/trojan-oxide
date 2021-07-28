@@ -62,8 +62,10 @@ where
                 .await
             {
                 Ok(_) => {
+                    debug!("lite tls handshake succeed");
                     lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
                     let inbound = inbound.into_inner().leave();
+                    debug!("lite tls start relaying");
                     relay_tcp(inbound, outbound, &target.host, upper_shutdown).await;
                 }
                 Err(e) => {
