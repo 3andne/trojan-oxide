@@ -139,16 +139,11 @@ impl LiteTlsStream {
                     Direction::Inbound => &mut self.inbound_buf,
                     Direction::Outbound => &mut self.outbound_buf,
                 }
-                .find_change_cipher_spec(),
+                .find_last_change_cipher_spec(&mut self.change_cipher_recieved),
                 dir,
-                self.change_cipher_recieved,
                 self.side,
             ) {
-                (_, _, x, _) if x > 1 => unreachable!(),
-                (Ok(_), _, 0, _) => {
-                    self.change_cipher_recieved = 1;
-                }
-                (Ok(_), Direction::Inbound, 1, ClientSide) => {
+                (Ok(_), Direction::Inbound, ClientSide) => {
                     // TLS 1.2 with resumption or TLS 1.3
                     self.change_cipher_recieved = 2;
                     // relay everything till the end of CCS
@@ -185,7 +180,7 @@ impl LiteTlsStream {
                         }
                     }
                 }
-                (Ok(_), Direction::Inbound, 1, ServerSide) => {
+                (Ok(_), Direction::Inbound, ServerSide) => {
                     // TLS 1.2 with resumption or TLS 1.3
                     self.change_cipher_recieved = 2;
                     // relay everything till the end of CCS
@@ -209,7 +204,7 @@ impl LiteTlsStream {
 
                     return Ok(());
                 }
-                (Ok(_), Direction::Outbound, 1, _) => {
+                (Ok(_), Direction::Outbound, _) => {
                     // TLS 1.2 full handshake
                     self.change_cipher_recieved = 2;
                     loop {
@@ -238,15 +233,18 @@ impl LiteTlsStream {
                         }
                     }
                 }
-                (Err(ParserError::Incomplete(_)), _, _, _) => {
+                (Err(ParserError::Incomplete(_)), _, _) => {
                     // relay pending packets
                 }
-                (Err(e @ ParserError::Invalid(_)), dir, seen, _) => {
-                    let e = Error::new(e).context(format!("{:?}, {}", dir, seen));
-                    error!("error: {:#}, dir: {:?}, seen: {}", e, dir, seen);
+                (Err(e @ ParserError::Invalid(_)), dir, _) => {
+                    let e = Error::new(e)
+                        .context(format!("{:?}, {}", dir, self.change_cipher_recieved));
+                    error!(
+                        "error: {:#}, dir: {:?}, seen: {}",
+                        e, dir, self.change_cipher_recieved
+                    );
                     return Err(e);
                 }
-                _ => unreachable!(),
             }
 
             debug!("[1]inbound_buf: {:?}", self.inbound_buf);

@@ -107,7 +107,10 @@ impl TlsRelayBuffer {
         Ok(())
     }
 
-    pub fn find_change_cipher_spec(&mut self) -> Result<(), ParserError> {
+    pub fn find_last_change_cipher_spec(
+        &mut self,
+        seen_ccs: &mut usize,
+    ) -> Result<(), ParserError> {
         loop {
             expect_buf_len!(
                 self.inner,
@@ -115,9 +118,14 @@ impl TlsRelayBuffer {
                 "find change cipher spec incomplete"
             );
             match self.inner[self.cursor] {
-                0x14 => {
-                    return self.check_type_0x14();
-                }
+                0x14 => match *seen_ccs {
+                    0 => {
+                        *seen_ccs += 1;
+                        self.check_type_0x14()?;
+                    }
+                    1 => return self.check_type_0x14(),
+                    _ => unreachable!(),
+                },
                 0x16 | 0x17 | 0x15 => {
                     // problematic
                     self.check_type_0x16()?;
