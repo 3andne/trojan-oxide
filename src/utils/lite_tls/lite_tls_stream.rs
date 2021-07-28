@@ -115,6 +115,8 @@ impl LiteTlsStream {
         }
 
         loop {
+            debug!("[0]inbound_buf: {:?}", self.inbound_buf);
+            debug!("[0]outbound_buf: {:?}", self.outbound_buf);
             let (res, dir) = select! {
                 res = inbound.read_buf(self.inbound_buf.deref_mut()) => {
                     (res?, Direction::Inbound)
@@ -130,9 +132,6 @@ impl LiteTlsStream {
                     Direction::Outbound => return Err(eof_err("EOF on Parsing[1][O]")),
                 }
             }
-
-            debug!("inbound_buf: {:?}", self.inbound_buf);
-            debug!("outbound_buf: {:?}", self.outbound_buf);
 
             use LiteTlsEndpointSide::*;
             match (
@@ -249,6 +248,9 @@ impl LiteTlsStream {
                 }
                 _ => unreachable!(),
             }
+
+            debug!("[1]inbound_buf: {:?}", self.inbound_buf);
+            debug!("[1]outbound_buf: {:?}", self.outbound_buf);
 
             // relay pending bytes
             match dir {

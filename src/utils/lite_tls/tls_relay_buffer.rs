@@ -61,10 +61,11 @@ impl TlsRelayBuffer {
             self.inner[i] = self.inner[self.cursor + i];
         }
 
+        self.cursor -= self.inner.len() - new_len;
+
         unsafe {
             self.inner.set_len(new_len);
         }
-        self.cursor -= self.inner.len() - new_len;
     }
 
     pub fn check_client_hello(&mut self) -> Result<(), ParserError> {
