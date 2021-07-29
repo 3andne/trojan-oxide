@@ -63,10 +63,8 @@ impl<'a> TrojanAcceptor<'a> {
             "TrojanAcceptor::set_host_and_port cmd"
         ); // HASH + \r\n + cmd(2 bytes) + host_len(1 byte, only valid when address is hostname)
 
-        unsafe {
-            // This is so buggy
-            self.cursor = HASH_LEN + 3;
-        }
+        // unsafe: This is so buggy
+        self.cursor = HASH_LEN + 3;
 
         self.cmd_code = self.buf[HASH_LEN + 2];
         match self.cmd_code {
@@ -162,7 +160,9 @@ impl<'a> TrojanAcceptor<'a> {
             #[cfg(feature = "udp")]
             0x03 => Ok(UDP(new_trojan_udp_stream(inbound, buffered_request))),
             #[cfg(not(feature = "udp"))]
-            0x03 => Err(ParserError::Invalid("udp functionality not included".into())),
+            0x03 => Err(ParserError::Invalid(
+                "udp functionality not included".into(),
+            )),
             0x01 => Ok(TCP(TLS(BufferedRecv::new(inbound, buffered_request)))),
             0x11 => Ok(TCP(LiteTLS(BufferedRecv::new(inbound, buffered_request)))),
             #[cfg(feature = "quic")]

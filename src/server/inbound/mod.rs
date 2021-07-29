@@ -1,15 +1,13 @@
 mod acceptor;
 mod handler;
 mod listener;
-mod stream_trait;
 mod lite_tls;
 #[cfg(feature = "quic")]
 mod quic;
+mod stream_trait;
 #[cfg(feature = "tcp_tls")]
 mod tcp_tls;
 
-#[cfg(feature = "udp")]
-use crate::utils::{TrojanUdpRecvStream, TrojanUdpSendStream};
 pub use acceptor::TrojanAcceptor;
 #[cfg(feature = "tcp_tls")]
 pub use listener::tcp_tls_listener;

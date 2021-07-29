@@ -29,12 +29,11 @@ pub(crate) async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStr
     Ok(outbound)
 }
 
-pub(crate) async fn relay_tcp<I: Splitable>(
+pub(crate) async fn relay_tls_tcp<I: Splitable>(
     inbound: I,
-    outbound: TcpStream,
+    mut outbound: TcpStream,
     target_host: &MixAddrType,
     mut upper_shutdown: broadcast::Receiver<()>,
-    lite_tls: bool
 ) {
     let (mut in_read, mut in_write) = inbound.split();
     let (out_read, out_write) = outbound.split();
@@ -45,36 +44,48 @@ pub(crate) async fn relay_tcp<I: Splitable>(
 
     info!("[tcp][{}] => {:?}", conn_id, target_host);
     // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
-    if lite_tls {
-        select! {
-            _ = tokio::io::copy(&mut out_read, &mut in_write) => {
-                info!("[tcp][{}]end downloading", conn_id);
-            },
-            _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                info!("[tcp][{}]end uploading", conn_id);
-            },
-            _ = timeout_monitor => {
-                info!("[tcp][{}]end timeout", conn_id);
-            }
-            _ = upper_shutdown.recv() => {
-                info!("[tcp][{}]shutdown signal received", conn_id);
-            },
+    select! {
+        _ = copy_tcp(&mut out_read, &mut in_write) => {
+            info!("[tcp][{}]end downloading", conn_id);
+        },
+        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+            info!("[tcp][{}]end uploading", conn_id);
+        },
+        _ = timeout_monitor => {
+            info!("[tcp][{}]end timeout", conn_id);
         }
-    } else {
-        select! {
-            _ = copy_tcp(&mut out_read, &mut in_write) => {
-                info!("[tcp][{}]end downloading", conn_id);
-            },
-            _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                info!("[tcp][{}]end uploading", conn_id);
-            },
-            _ = timeout_monitor => {
-                info!("[tcp][{}]end timeout", conn_id);
-            }
-            _ = upper_shutdown.recv() => {
-                info!("[tcp][{}]shutdown signal received", conn_id);
-            },
+        _ = upper_shutdown.recv() => {
+            info!("[tcp][{}]shutdown signal received", conn_id);
+        },
+    }
+}
+
+pub(crate) async fn relay_tcp_tcp(
+    mut inbound: TcpStream,
+    mut outbound: TcpStream,
+    target_host: &MixAddrType,
+    mut upper_shutdown: broadcast::Receiver<()>,
+) {
+    let (mut in_read, mut in_write) = inbound.split();
+    let (out_read, out_write) = outbound.split();
+    let timeout_monitor = TimeoutMonitor::new(Duration::from_secs(5 * 60));
+    let mut out_read = timeout_monitor.watch(out_read);
+    let mut out_write = timeout_monitor.watch(out_write);
+    let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    info!("[lite][{}] => {:?}", conn_id, target_host);
+    select! {
+        _ = tokio::io::copy(&mut out_read, &mut in_write) => {
+            info!("[lite][{}]end downloading", conn_id);
+        },
+        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+            info!("[lite][{}]end uploading", conn_id);
+        },
+        _ = timeout_monitor => {
+            info!("[lite][{}]end timeout", conn_id);
         }
-    };
-    
+        _ = upper_shutdown.recv() => {
+            info!("[lite][{}]shutdown signal received", conn_id);
+        },
+    }
 }

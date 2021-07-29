@@ -66,10 +66,9 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
         debug!("TrojanUdpSendStream::poll_proxy_stream_write()");
         let just_filled_buf = if self.buffer.is_empty() {
             addr.write_buf(&mut self.buffer);
-            unsafe {
-                self.buffer
-                    .extend_from_slice(&(buf.len() as u16).to_be_bytes());
-            }
+            // unsafe: as u16
+            self.buffer
+                .extend_from_slice(&(buf.len() as u16).to_be_bytes());
             self.buffer.extend_from_slice(&[b'\r', b'\n']);
             self.buffer.extend_from_slice(buf);
             true

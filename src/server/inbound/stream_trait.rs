@@ -1,13 +1,10 @@
 use std::fmt::Debug;
 
+use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(feature = "tcp_tls")]
 use tokio::{
     io::{split, ReadHalf, WriteHalf},
     net::TcpStream,
-};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
 };
 
 use crate::utils::WRTuple;
@@ -71,14 +68,5 @@ where
     type W = W_;
     fn split(self) -> (Self::R, Self::W) {
         (self.0 .1, self.0 .0)
-    }
-}
-
-impl<'a> Splitable for TcpStream {
-    type R = OwnedReadHalf;
-    type W = OwnedWriteHalf;
-
-    fn split(self) -> (Self::R, Self::W) {
-        TcpStream::into_split(self)
     }
 }

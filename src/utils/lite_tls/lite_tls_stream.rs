@@ -15,33 +15,6 @@ enum LiteTlsEndpointSide {
     ServerSide,
 }
 
-// pub async fn fetch_apply<T, A>(
-//     stream: &mut T,
-//     buf: &mut TlsRelayBuffer,
-//     eof_msg: &str,
-//     action: A,
-// ) -> Result<()>
-// where
-//     T: AsyncReadExt + Unpin,
-//     A: Fn(&mut TlsRelayBuffer) -> Result<(), ParserError>,
-// {
-//     loop {
-//         let x = stream.read_buf(buf.deref_mut()).await?;
-//         if x == 0 {
-//             return Err(EofErr(eof_msg));
-//         }
-//         match action(buf) {
-//             Ok(_) => {
-//                 return Ok(());
-//             }
-//             Err(ParserError::Incomplete(_)) => {}
-//             Err(e @ ParserError::Invalid(_)) => {
-//                 return Err(Error::new(e));
-//             }
-//         }
-//     }
-// }
-
 pub struct LiteTlsStream {
     inbound_buf: TlsRelayBuffer,
     outbound_buf: TlsRelayBuffer,
