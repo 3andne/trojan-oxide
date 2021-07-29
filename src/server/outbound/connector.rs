@@ -52,7 +52,7 @@ where
             #[cfg(feature = "debug_info")]
             debug!("outbound connected: {:?}", outbound);
 
-            relay_tcp(inbound, outbound, &target.host, upper_shutdown).await;
+            relay_tcp(inbound, outbound, &target.host, upper_shutdown, false).await;
         }
         Ok(TCP(LiteTLS(mut inbound))) => {
             let mut outbound = outbound_connect(&target.host).await?;
@@ -66,14 +66,14 @@ where
                     lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
                     let inbound = inbound.into_inner().leave();
                     debug!("lite tls start relaying");
-                    relay_tcp(inbound, outbound, &target.host, upper_shutdown).await;
+                    relay_tcp(inbound, outbound, &target.host, upper_shutdown, true).await;
                 }
                 Err(e) => {
                     if let Some(ParserError::Invalid(x)) = e.downcast_ref::<ParserError>() {
                         debug!("not tls stream: {}", x);
                         lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
 
-                        relay_tcp(inbound, outbound, &target.host, upper_shutdown).await;
+                        relay_tcp(inbound, outbound, &target.host, upper_shutdown, false).await;
                     }
                 }
             }

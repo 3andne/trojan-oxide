@@ -34,6 +34,7 @@ pub(crate) async fn relay_tcp<I: Splitable>(
     outbound: TcpStream,
     target_host: &MixAddrType,
     mut upper_shutdown: broadcast::Receiver<()>,
+    lite_tls: bool
 ) {
     let (mut in_read, mut in_write) = inbound.split();
     let (out_read, out_write) = outbound.split();
@@ -44,18 +45,36 @@ pub(crate) async fn relay_tcp<I: Splitable>(
 
     info!("[tcp][{}] => {:?}", conn_id, target_host);
     // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
-    select! {
-        _ = copy_tcp(&mut out_read, &mut in_write) => {
-            info!("[tcp][{}]end downloading", conn_id);
-        },
-        _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-            info!("[tcp][{}]end uploading", conn_id);
-        },
-        _ = timeout_monitor => {
-            info!("[tcp][{}]end timeout", conn_id);
+    if lite_tls {
+        select! {
+            _ = tokio::io::copy(&mut out_read, &mut in_write) => {
+                info!("[tcp][{}]end downloading", conn_id);
+            },
+            _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+                info!("[tcp][{}]end uploading", conn_id);
+            },
+            _ = timeout_monitor => {
+                info!("[tcp][{}]end timeout", conn_id);
+            }
+            _ = upper_shutdown.recv() => {
+                info!("[tcp][{}]shutdown signal received", conn_id);
+            },
         }
-        _ = upper_shutdown.recv() => {
-            info!("[tcp][{}]shutdown signal received", conn_id);
-        },
-    }
+    } else {
+        select! {
+            _ = copy_tcp(&mut out_read, &mut in_write) => {
+                info!("[tcp][{}]end downloading", conn_id);
+            },
+            _ = tokio::io::copy(&mut in_read, &mut out_write) => {
+                info!("[tcp][{}]end uploading", conn_id);
+            },
+            _ = timeout_monitor => {
+                info!("[tcp][{}]end timeout", conn_id);
+            }
+            _ = upper_shutdown.recv() => {
+                info!("[tcp][{}]shutdown signal received", conn_id);
+            },
+        }
+    };
+    
 }
