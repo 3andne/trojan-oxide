@@ -44,11 +44,13 @@ pub use udp::{
 pub mod lite_tls;
 
 mod copy_tcp;
-pub use copy_tcp::copy_tcp;
+pub use copy_tcp::copy_to_tls;
 
 mod macros;
 mod mix_addr;
 pub use mix_addr::MixAddrType;
+
+mod adapter;
 
 use bytes::BufMut;
 
@@ -250,7 +252,13 @@ pub enum ClientServerConnection {
 }
 
 #[derive(Debug)]
-pub struct WRTuple<W, R>(pub (W, R));
+pub struct WRTuple<W, R>(pub W, pub R);
+
+impl<W, R> WRTuple<W, R> {
+    pub fn from_tuple((w, r): (W, R)) -> Self {
+        Self(w, r)
+    }
+}
 
 impl<W, R> AsyncRead for WRTuple<W, R>
 where
@@ -262,7 +270,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.0 .1).poll_read(cx, buf)
+        Pin::new(&mut self.1).poll_read(cx, buf)
     }
 }
 
@@ -276,20 +284,20 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
-        Pin::new(&mut self.0 .0).poll_write(cx, buf)
+        Pin::new(&mut self.0).poll_write(cx, buf)
     }
 
     fn poll_flush(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.0 .0).poll_flush(cx)
+        Pin::new(&mut self.0).poll_flush(cx)
     }
 
     fn poll_shutdown(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.0 .0).poll_shutdown(cx)
+        Pin::new(&mut self.0).poll_shutdown(cx)
     }
 }

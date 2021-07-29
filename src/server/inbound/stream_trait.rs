@@ -67,6 +67,6 @@ where
     type R = R_;
     type W = W_;
     fn split(self) -> (Self::R, Self::W) {
-        (self.0 .1, self.0 .0)
+        (self.1, self.0)
     }
 }

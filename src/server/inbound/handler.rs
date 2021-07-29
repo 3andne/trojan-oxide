@@ -50,7 +50,13 @@ pub async fn handle_quic_connection(
         let pass_copy = password_hash.clone();
         let fallback_port_clone = fallback_port.clone();
         tokio::spawn(
-            handle_outbound(WRTuple(stream), shutdown, pass_copy, fallback_port_clone).map_err(|e| {
+            handle_outbound(
+                WRTuple::from_tuple(stream),
+                shutdown,
+                pass_copy,
+                fallback_port_clone,
+            )
+            .map_err(|e| {
                 error!("handle_quic_outbound quit due to {:#}", e);
                 e
             }),

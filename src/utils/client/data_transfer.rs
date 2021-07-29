@@ -4,7 +4,7 @@ use crate::utils::{ClientServerConnection, ClientTcpStream, ParserError, WRTuple
 use tokio::{select, sync::broadcast};
 use tracing::{debug, error};
 #[cfg(feature = "tcp_tls")]
-use {crate::utils::copy_tcp, tokio::io::split};
+use {crate::utils::copy_to_tls, tokio::io::split};
 
 #[cfg(feature = "tcp_tls")]
 use crate::utils::lite_tls::LiteTlsStream;
@@ -37,7 +37,7 @@ pub async fn relay_tcp(
                 res = tokio::io::copy(&mut out_read, &mut in_write) => {
                     debug!("tcp relaying download end, {:?}", res);
                 },
-                res = copy_tcp(&mut in_read, &mut out_write) => {
+                res = copy_to_tls(&mut in_read, &mut out_write) => {
                     debug!("tcp relaying upload end, {:?}", res);
                 },
                 _ = upper_shutdown.recv() => {
@@ -48,7 +48,7 @@ pub async fn relay_tcp(
         #[cfg(feature = "lite_tls")]
         ClientServerConnection::LiteTLS(mut outbound) => {
             let mut lite_tls_endpoint = LiteTlsStream::new_client_endpoint();
-            let mut inbound = WRTuple((in_write, in_read));
+            let mut inbound = WRTuple(in_write, in_read);
             match lite_tls_endpoint
                 .handshake(&mut outbound, &mut inbound)
                 .await
@@ -62,7 +62,7 @@ pub async fn relay_tcp(
                     }
 
                     let (mut out_read, mut out_write) = outbound.split();
-                    let WRTuple((mut in_write, mut in_read)) = inbound;
+                    let WRTuple(mut in_write, mut in_read) = inbound;
                     debug!("lite tls start relaying");
                     select! {
                         res = tokio::io::copy(&mut out_read, &mut in_write) => {
@@ -85,12 +85,12 @@ pub async fn relay_tcp(
                         }
 
                         let (mut out_read, mut out_write) = split(outbound);
-                        let WRTuple((mut in_write, mut in_read)) = inbound;
+                        let WRTuple(mut in_write, mut in_read) = inbound;
                         select! {
                             res = tokio::io::copy(&mut out_read, &mut in_write) => {
                                 debug!("tcp relaying download end, {:?}", res);
                             },
-                            res = copy_tcp(&mut in_read, &mut out_write) => {
+                            res = copy_to_tls(&mut in_read, &mut out_write) => {
                                 debug!("tcp relaying upload end, {:?}", res);
                             },
                             _ = upper_shutdown.recv() => {

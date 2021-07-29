@@ -1,6 +1,6 @@
 use std::{io::Cursor, sync::Arc};
 
-use crate::utils::copy_tcp;
+use crate::utils::copy_to_tls;
 use anyhow::{anyhow, Context, Error, Result};
 use tokio::{
     io::{split, AsyncRead, AsyncWrite, AsyncWriteExt},
@@ -27,7 +27,7 @@ pub async fn fallback<I: AsyncRead + AsyncWrite + Unpin>(
     let (mut out_read, mut out_write) = outbound.split();
     let (mut in_read, mut in_write) = split(inbound);
     select! {
-        res = copy_tcp(&mut out_read, &mut in_write) => {
+        res = copy_to_tls(&mut out_read, &mut in_write) => {
             debug!("[fallback]relaying download end, {:?}", res);
         },
         res = tokio::io::copy(&mut in_read, &mut out_write) => {

@@ -2,7 +2,7 @@ use std::{sync::atomic::Ordering, time::Duration};
 
 use crate::{
     server::{outbound::connector::TCP_CONNECTION_COUNTER, Splitable},
-    utils::{copy_tcp, MixAddrType, TimeoutMonitor},
+    utils::{copy_to_tls, MixAddrType, TimeoutMonitor},
 };
 use anyhow::{anyhow, Context, Error, Result};
 use tokio::{net::TcpStream, select, sync::broadcast};
@@ -45,7 +45,7 @@ pub(crate) async fn relay_tls_tcp<I: Splitable>(
     info!("[tcp][{}] => {:?}", conn_id, target_host);
     // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
     select! {
-        _ = copy_tcp(&mut out_read, &mut in_write) => {
+        _ = copy_to_tls(&mut out_read, &mut in_write) => {
             info!("[tcp][{}]end downloading", conn_id);
         },
         _ = tokio::io::copy(&mut in_read, &mut out_write) => {
