@@ -52,6 +52,7 @@ pub use mix_addr::MixAddrType;
 
 mod adapter;
 mod either_io;
+pub use adapter::{Adapter, AdapterTlsConfig, StreamStopReasons};
 
 use bytes::BufMut;
 
@@ -256,7 +257,11 @@ pub enum ClientServerConnection {
 pub struct WRTuple<W, R>(pub W, pub R);
 
 impl<W, R> WRTuple<W, R> {
-    pub fn from_tuple((w, r): (W, R)) -> Self {
+    pub fn from_wr_tuple((w, r): (W, R)) -> Self {
+        Self(w, r)
+    }
+
+    pub fn from_rw_tuple((r, w): (R, W)) -> Self {
         Self(w, r)
     }
 }

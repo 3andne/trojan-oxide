@@ -1,109 +1,73 @@
 #[cfg(feature = "udp")]
-use crate::utils::{copy_udp, new_trojan_udp_stream, Socks5UdpStream};
-use crate::utils::{ClientServerConnection, ClientTcpStream, ParserError, WRTuple};
+use crate::utils::{copy_udp, new_trojan_udp_stream, Adapter, Socks5UdpStream};
+use crate::{
+    adapt,
+    server::Splitable,
+    utils::{ClientServerConnection, ClientTcpStream, MixAddrType, ParserError, WRTuple},
+};
+use anyhow::Result;
 use tokio::{select, sync::broadcast};
-use tracing::{debug, error};
-#[cfg(feature = "tcp_tls")]
-use {crate::utils::copy_to_tls, tokio::io::split};
+use tracing::{debug, info};
 
 #[cfg(feature = "tcp_tls")]
 use crate::utils::lite_tls::LiteTlsStream;
 
 pub async fn relay_tcp(
-    mut inbound: ClientTcpStream,
+    inbound: ClientTcpStream,
     outbound: ClientServerConnection,
-    mut upper_shutdown: broadcast::Receiver<()>,
-) {
-    let (mut in_read, mut in_write) = inbound.split();
+    shutdown: broadcast::Receiver<()>,
+    conn_id: usize,
+    target_host: &MixAddrType,
+) -> Result<()> {
     match outbound {
         #[cfg(feature = "quic")]
-        ClientServerConnection::Quic((mut out_write, mut out_read)) => {
-            select! {
-                res = tokio::io::copy(&mut out_read, &mut in_write) => {
-                    debug!("tcp relaying download end, {:?}", res);
-                },
-                res = tokio::io::copy(&mut in_read, &mut out_write) => {
-                    debug!("tcp relaying upload end, {:?}", res);
-                },
-                _ = upper_shutdown.recv() => {
-                    debug!("shutdown signal received");
-                },
-            }
+        ClientServerConnection::Quic(outbound) => {
+            let outbound = WRTuple::from_wr_tuple(outbound);
+            adapt!(["tcp"][conn_id]
+                inbound[Tcp] <=> outbound[Tcp] <=> target_host
+                Until shutdown
+            );
         }
         #[cfg(feature = "tcp_tls")]
-        ClientServerConnection::TcpTLS(out_tls) => {
-            let (mut out_read, mut out_write) = split(out_tls);
-            select! {
-                res = tokio::io::copy(&mut out_read, &mut in_write) => {
-                    debug!("tcp relaying download end, {:?}", res);
-                },
-                res = copy_to_tls(&mut in_read, &mut out_write) => {
-                    debug!("tcp relaying upload end, {:?}", res);
-                },
-                _ = upper_shutdown.recv() => {
-                    debug!("shutdown signal received");
-                },
-            }
+        ClientServerConnection::TcpTLS(outbound) => {
+            adapt!(["tcp"][conn_id]
+                inbound[Tcp] <=> outbound[Tls] <=> target_host
+                Until shutdown
+            );
         }
         #[cfg(feature = "lite_tls")]
         ClientServerConnection::LiteTLS(mut outbound) => {
             let mut lite_tls_endpoint = LiteTlsStream::new_client_endpoint();
-            let mut inbound = WRTuple(in_write, in_read);
+            let mut inbound = WRTuple::from_rw_tuple(inbound.split());
             match lite_tls_endpoint
                 .handshake(&mut outbound, &mut inbound)
                 .await
             {
                 Ok(_) => {
-                    debug!("lite tls handshake succeed");
+                    info!("lite tls handshake succeed");
                     let (mut outbound, _) = outbound.into_inner();
-                    if let Err(e) = lite_tls_endpoint.flush(&mut outbound, &mut inbound).await {
-                        error!("flushing failed, {:#}", e);
-                        return;
-                    }
-
-                    let (mut out_read, mut out_write) = outbound.split();
-                    let WRTuple(mut in_write, mut in_read) = inbound;
-                    debug!("lite tls start relaying");
-                    select! {
-                        res = tokio::io::copy(&mut out_read, &mut in_write) => {
-                            debug!("tcp relaying download end, {:?}", res);
-                        },
-                        res = tokio::io::copy(&mut in_read, &mut out_write) => {
-                            debug!("tcp relaying upload end, {:?}", res);
-                        },
-                        _ = upper_shutdown.recv() => {
-                            debug!("shutdown signal received");
-                        },
-                    }
+                    lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
+                    adapt!(["lite"][conn_id]
+                        inbound[Tcp] <=> outbound[Tcp] <=> target_host
+                        Until shutdown
+                    );
                 }
                 Err(e) => {
                     if let Some(e @ ParserError::Invalid(_)) = e.downcast_ref::<ParserError>() {
-                        debug!("not tls stream: {:#}", e);
-                        if let Err(e) = lite_tls_endpoint.flush(&mut outbound, &mut inbound).await {
-                            error!("tcp relaying download end, {:#}", e);
-                            return;
-                        }
-
-                        let (mut out_read, mut out_write) = split(outbound);
-                        let WRTuple(mut in_write, mut in_read) = inbound;
-                        select! {
-                            res = tokio::io::copy(&mut out_read, &mut in_write) => {
-                                debug!("tcp relaying download end, {:?}", res);
-                            },
-                            res = copy_to_tls(&mut in_read, &mut out_write) => {
-                                debug!("tcp relaying upload end, {:?}", res);
-                            },
-                            _ = upper_shutdown.recv() => {
-                                debug!("shutdown signal received");
-                            },
-                        }
+                        info!("not tls stream: {:#}", e);
+                        lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
+                        adapt!(["lite"][conn_id]
+                            inbound[Tcp] <=> outbound[Tls] <=> target_host
+                            Until shutdown
+                        );
                     } else {
-                        error!("lite tls hadnshake error: {:#}", e);
+                        return Err(e);
                     }
                 }
-            };
+            }
         }
     }
+    Ok(())
 }
 
 #[cfg(feature = "udp")]

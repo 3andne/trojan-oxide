@@ -1,8 +1,6 @@
 use std::mem::MaybeUninit;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use anyhow::Result;
-
 const RELAY_BUFFER_SIZE: usize = 8192;
 pub async fn copy_to_tls<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     r: &mut R,

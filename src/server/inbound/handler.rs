@@ -51,7 +51,7 @@ pub async fn handle_quic_connection(
         let fallback_port_clone = fallback_port.clone();
         tokio::spawn(
             handle_outbound(
-                WRTuple::from_tuple(stream),
+                WRTuple::from_wr_tuple(stream),
                 shutdown,
                 pass_copy,
                 fallback_port_clone,

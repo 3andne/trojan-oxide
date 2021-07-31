@@ -2,12 +2,12 @@ use std::ops::DerefMut;
 
 use super::{error::eof_err, tls_relay_buffer::TlsRelayBuffer};
 use crate::utils::ParserError;
-use anyhow::{Error, Result};
+use anyhow::{anyhow, Context, Error, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     select,
 };
-use tracing::{debug, error};
+use tracing::debug;
 
 #[derive(Debug, Clone, Copy)]
 enum LiteTlsEndpointSide {
@@ -216,9 +216,8 @@ impl LiteTlsStream {
                                 }
                             }
                             Err(e @ ParserError::Invalid(_)) => {
-                                return Err(
-                                    Error::new(e).context("tls 1.2 full handshake last step")
-                                );
+                                return Err(Error::new(e))
+                                    .with_context(|| anyhow!("tls 1.2 full handshake last step"));
                             }
                         }
                     }
@@ -227,13 +226,8 @@ impl LiteTlsStream {
                     // relay pending packets
                 }
                 (Err(e @ ParserError::Invalid(_)), dir, _) => {
-                    let e = Error::new(e)
-                        .context(format!("{:?}, {}", dir, self.change_cipher_recieved));
-                    error!(
-                        "error: {:#}, dir: {:?}, seen: {}",
-                        e, dir, self.change_cipher_recieved
-                    );
-                    return Err(e);
+                    return Err(Error::new(e))
+                        .with_context(|| anyhow!("{:?}, {}", dir, self.change_cipher_recieved));
                 }
             }
 

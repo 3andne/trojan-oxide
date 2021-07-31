@@ -1,13 +1,6 @@
 use crate::{
-    server::{
-        inbound::{TcpOption, TrojanAcceptor},
-        outbound::utils::{outbound_connect, relay_tcp_tcp, relay_tls_tcp},
-        Splitable,
-    },
-    utils::{
-        lite_tls::{LeaveTls, LiteTlsStream},
-        ConnectionRequest, ParserError, TimeoutMonitor,
-    },
+    server::{inbound::TrojanAcceptor, Splitable},
+    utils::{lite_tls::LeaveTls, ConnectionRequest, MixAddrType, TimeoutMonitor},
 };
 use anyhow::{anyhow, Context, Error, Result};
 use lazy_static::lazy_static;
@@ -18,6 +11,7 @@ use std::sync::{
 use std::time::Duration;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
     select,
     sync::broadcast,
 };
@@ -33,6 +27,27 @@ lazy_static! {
     pub(crate) static ref UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 }
 
+async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStream> {
+    let outbound = if target_host.is_ip() {
+        TcpStream::connect(target_host.to_socket_addrs()).await
+    } else {
+        TcpStream::connect(target_host.host_repr()).await
+    }
+    .map_err(|e| Error::new(e))
+    .with_context(|| anyhow!("failed to connect to {:?}", target_host))?;
+
+    outbound
+        .set_nodelay(true)
+        .map_err(|e| Error::new(e))
+        .with_context(|| {
+            anyhow!(
+                "failed to set tcp_nodelay for outbound stream {:?}",
+                target_host
+            )
+        })?;
+    Ok(outbound)
+}
+
 pub async fn handle_outbound<I>(
     stream: I,
     mut upper_shutdown: broadcast::Receiver<()>,
@@ -44,39 +59,13 @@ where
 {
     let mut target = TrojanAcceptor::new(password_hash.as_bytes(), fallback_port);
     use ConnectionRequest::*;
-    use TcpOption::*;
     match target.accept(stream).await {
-        Ok(TCP(TLS(inbound))) => {
+        Ok(TCP(inbound)) => {
             let outbound = outbound_connect(&target.host).await?;
-
-            #[cfg(feature = "debug_info")]
-            debug!("outbound connected: {:?}", outbound);
-
-            relay_tls_tcp(inbound, outbound, &target.host, upper_shutdown).await;
-        }
-        Ok(TCP(LiteTLS(mut inbound))) => {
-            let mut outbound = outbound_connect(&target.host).await?;
-            let mut lite_tls_endpoint = LiteTlsStream::new_server_endpoint();
-            match lite_tls_endpoint
-                .handshake(&mut outbound, &mut inbound)
-                .await
-            {
-                Ok(_) => {
-                    debug!("lite tls handshake succeed");
-                    lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
-                    let inbound = inbound.into_inner().leave();
-                    debug!("lite tls start relaying");
-                    relay_tcp_tcp(inbound, outbound, &target.host, upper_shutdown).await;
-                }
-                Err(e) => {
-                    if let Some(ParserError::Invalid(x)) = e.downcast_ref::<ParserError>() {
-                        debug!("not tls stream: {}", x);
-                        lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
-
-                        relay_tls_tcp(inbound, outbound, &target.host, upper_shutdown).await;
-                    }
-                }
-            }
+            let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            inbound
+                .forward(outbound, &target.host, upper_shutdown, conn_id)
+                .await?;
         }
         #[cfg(feature = "udp")]
         Ok(UDP(inbound)) => {
@@ -126,9 +115,8 @@ where
             unreachable!("")
         }
         Err(e) => {
-            return Err(
-                Error::new(e).context(anyhow!("failed to parse connection to {:?}", target.host))
-            );
+            return Err(Error::new(e))
+                .with_context(|| anyhow!("failed to parse connection to {:?}", target.host));
         }
     }
 

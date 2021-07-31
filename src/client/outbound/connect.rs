@@ -53,9 +53,7 @@ where
     match conn_req {
         TCP(inbound) => {
             let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            info!("[tcp][{}] => {:?}", conn_id, &addr);
-            relay_tcp(inbound, outbound, upper_shutdown).await;
-            debug!("[end][tcp][{}]", conn_id);
+            relay_tcp(inbound, outbound, upper_shutdown, conn_id, &addr).await?;
         }
         #[cfg(feature = "udp")]
         UDP(inbound) => {

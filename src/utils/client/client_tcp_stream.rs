@@ -1,6 +1,6 @@
-use crate::utils::BufferedRecv;
+use crate::{server::Splitable, utils::BufferedRecv};
 use tokio::net::{
-    tcp::{ReadHalf, WriteHalf},
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
     TcpStream,
 };
 
@@ -9,10 +9,13 @@ pub struct ClientTcpStream {
     pub inner: TcpStream,
 }
 
-pub type ClientTcpRecvStream<'a> = BufferedRecv<ReadHalf<'a>>;
+pub type ClientTcpRecvStream = BufferedRecv<OwnedReadHalf>;
 
-impl ClientTcpStream {
-    pub fn split(&mut self) -> (ClientTcpRecvStream, WriteHalf) {
+impl Splitable for ClientTcpStream {
+    type R = ClientTcpRecvStream;
+    type W = OwnedWriteHalf;
+
+    fn split(mut self) -> (Self::R, Self::W) {
         let (read, write) = self.inner.split();
         (
             ClientTcpRecvStream::new(read, self.http_request_extension.take().map(|v| (0, v))),

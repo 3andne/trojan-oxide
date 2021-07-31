@@ -6,7 +6,7 @@ use crate::utils::{new_trojan_udp_stream, TrojanUdpStream};
 use crate::{
     expect_buf_len,
     protocol::HASH_LEN,
-    server::{inbound::TcpOption, outbound::fallback},
+    server::{outbound::fallback, utils::TcpOption},
     utils::{BufferedRecv, ConnectionRequest, MixAddrType, ParserError},
 };
 use anyhow::Result;

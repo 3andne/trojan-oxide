@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use crate::{
     server::Splitable,
@@ -7,27 +7,76 @@ use crate::{
 use anyhow::Result;
 use futures::future::{pending, Either};
 use tokio::{io::copy, select, sync::broadcast};
-use tracing::*;
 
-pub enum AdapterTlsPort {
+pub enum AdapterTlsConfig {
     TcpOnly,
     RustlsUpload,
     RustlsDownload,
 }
 
+#[macro_export]
+macro_rules! adapt {
+    (Tcp, Tcp) => {Adapter::new_tcp_only()};
+    (Tls, Tcp) => {Adapter::new_tls_download()};
+    (Tcp, Tls) => {Adapter::new_tls_upload()};
+    ([$traffic:expr][$conn_id:ident]$inbound:ident[$itype:ident] <=> $outbound:ident[$otype:ident] <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
+        #[allow(unused_mut)]
+        let mut adapter = adapt!($itype, $otype);
+        $(adapter.set_timeout($timeout);)?
+        info!("[{}][{}] => {:?}", $traffic, $conn_id, $target_host);
+        let reason = adapter.relay($inbound, $outbound, $shutdown).await?;
+        info!("[{}][{}] end by {}", $traffic, $conn_id, reason);
+    };
+}
+
+pub enum StreamStopReasons {
+    Upload,
+    Download,
+    Timeout,
+    Shutdown,
+}
+
+impl fmt::Display for StreamStopReasons {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use StreamStopReasons::*;
+        match self {
+            Upload => write!(f, "upload"),
+            Download => write!(f, "download"),
+            Timeout => write!(f, "timeout"),
+            Shutdown => write!(f, "shutdown"),
+        }
+    }
+}
+
 pub struct Adapter {
-    tls_config: AdapterTlsPort,
+    tls_config: AdapterTlsConfig,
     timeout: Option<u16>,
-    conn_id: u32,
 }
 
 impl Adapter {
-    pub fn new(tls_config: AdapterTlsPort, timeout: Option<u16>, conn_id: u32) -> Self {
+    pub fn new_tcp_only() -> Self {
         Self {
-            tls_config,
-            timeout,
-            conn_id,
+            tls_config: AdapterTlsConfig::TcpOnly,
+            timeout: None,
         }
+    }
+
+    pub fn new_tls_download() -> Self {
+        Self {
+            tls_config: AdapterTlsConfig::RustlsDownload,
+            timeout: None,
+        }
+    }
+
+    pub fn new_tls_upload() -> Self {
+        Self {
+            tls_config: AdapterTlsConfig::RustlsUpload,
+            timeout: None,
+        }
+    }
+
+    pub fn set_timeout(&mut self, timeout: u16) {
+        self.timeout = Some(timeout);
     }
 
     pub async fn relay<I, O>(
@@ -35,7 +84,7 @@ impl Adapter {
         inbound: I,
         outbound: O,
         mut shutdown: broadcast::Receiver<()>,
-    ) -> Result<()>
+    ) -> Result<StreamStopReasons>
     where
         I: Splitable,
         O: Splitable,
@@ -58,7 +107,7 @@ impl Adapter {
             ),
         };
 
-        use AdapterTlsPort::*;
+        use AdapterTlsConfig::*;
         use Either::*;
         let download: _ = match self.tls_config {
             RustlsDownload => Left(copy_to_tls(&mut out_read, &mut in_write)),
@@ -70,21 +119,20 @@ impl Adapter {
             _ => Right(copy(&mut in_read, &mut out_write)),
         };
 
-        select! {
-            res = download => {
-                debug!("[{}]tcp relaying download end, {:?}", self.conn_id, res);
+        use StreamStopReasons::*;
+        Ok(select! {
+            _ = download => {
+                Download
             },
-            res = upload => {
-                debug!("[{}]tcp relaying upload end, {:?}", self.conn_id, res);
+            _ = upload => {
+                Upload
             },
             _ = timeout => {
-                debug!("[{}]end timeout", self.conn_id);
+                Timeout
             }
             _ = shutdown.recv() => {
-                debug!("[{}]shutdown signal received", self.conn_id);
+                Shutdown
             },
-        }
-
-        Ok(())
+        })
     }
 }
