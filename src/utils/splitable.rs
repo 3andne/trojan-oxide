@@ -1,13 +1,13 @@
 use std::fmt::Debug;
 
-#[cfg(feature = "tcp_tls")]
-use tokio::{
-    io::{split, ReadHalf, WriteHalf},
-    net::TcpStream,
-};
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
+use tokio::io::{split, ReadHalf, WriteHalf};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream,
+    },
 };
 
 use crate::utils::WRTuple;
@@ -42,7 +42,7 @@ impl Splitable for (RecvStream, SendStream) {
     }
 }
 
-#[cfg(feature = "tcp_tls")]
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 impl Splitable for tokio_rustls::server::TlsStream<TcpStream> {
     type R = ReadHalf<tokio_rustls::server::TlsStream<TcpStream>>;
     type W = WriteHalf<tokio_rustls::server::TlsStream<TcpStream>>;
@@ -52,7 +52,7 @@ impl Splitable for tokio_rustls::server::TlsStream<TcpStream> {
     }
 }
 
-#[cfg(feature = "tcp_tls")]
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 impl Splitable for tokio_rustls::client::TlsStream<TcpStream> {
     type R = ReadHalf<tokio_rustls::client::TlsStream<TcpStream>>;
     type W = WriteHalf<tokio_rustls::client::TlsStream<TcpStream>>;

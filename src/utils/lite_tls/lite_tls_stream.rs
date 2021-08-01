@@ -11,7 +11,9 @@ use tracing::debug;
 
 #[derive(Debug, Clone, Copy)]
 enum LiteTlsEndpointSide {
+    #[cfg(feature = "client")]
     ClientSide,
+    #[cfg(feature = "server")]
     ServerSide,
 }
 
@@ -23,6 +25,7 @@ pub struct LiteTlsStream {
 }
 
 impl LiteTlsStream {
+    #[cfg(feature = "server")]
     pub fn new_server_endpoint() -> Self {
         Self {
             inbound_buf: TlsRelayBuffer::new(),
@@ -32,6 +35,7 @@ impl LiteTlsStream {
         }
     }
 
+    #[cfg(feature = "client")]
     pub fn new_client_endpoint() -> Self {
         Self {
             inbound_buf: TlsRelayBuffer::new(),
@@ -87,11 +91,15 @@ impl LiteTlsStream {
             Outbound,
         }
 
+        #[cfg(feature = "debug_info")]
         let mut packet_id = 0;
 
         loop {
-            debug!("[0][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
-            debug!("[0][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
+            #[cfg(feature = "debug_info")]
+            {
+                debug!("[0][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
+                debug!("[0][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
+            }
             let (res, dir) = select! {
                 res = inbound.read_buf(self.inbound_buf.deref_mut()) => {
                     (res?, Direction::Inbound)
@@ -118,7 +126,9 @@ impl LiteTlsStream {
                 dir,
                 self.side,
             ) {
+                #[cfg(feature = "client")]
                 (Ok(_), Direction::Inbound, ClientSide) => {
+                    #[cfg(feature = "debug_info")]
                     debug!("[LC0][{}]buf now: {:?}", packet_id, self.inbound_buf);
                     // TLS 1.2 with resumption or TLS 1.3
 
@@ -130,9 +140,11 @@ impl LiteTlsStream {
                     outbound.flush().await?;
                     self.inbound_buf.pop_checked_packets();
 
-                    debug!("[LC0][{}]buf after pop: {:?}", packet_id, self.inbound_buf);
-
-                    debug!("[LC0][{}]outbound buf: {:?}", packet_id, self.outbound_buf);
+                    #[cfg(feature = "debug_info")]
+                    {
+                        debug!("[LC0][{}]buf after pop: {:?}", packet_id, self.inbound_buf);
+                        debug!("[LC0][{}]outbound buf: {:?}", packet_id, self.outbound_buf);
+                    }
                     // wait for server's response
                     // this is not part of the TLS specification,
                     // but we have to do this to correctly
@@ -146,6 +158,7 @@ impl LiteTlsStream {
                     // (change_cipher_spec)
                     match self.outbound_buf.check_type_0x14() {
                         Ok(_) => {
+                            #[cfg(feature = "debug_info")]
                             debug!("[LC0][{}] extra CCS ok, leaving", packet_id);
 
                             // clear this, since it's not part of
@@ -161,8 +174,10 @@ impl LiteTlsStream {
                         }
                     }
                 }
+                #[cfg(feature = "server")]
                 (Ok(_), Direction::Inbound, ServerSide) => {
                     // TLS 1.2 with resumption or TLS 1.3
+                    #[cfg(feature = "debug_info")]
                     debug!("[LC1][{}]buf now: {:?}", packet_id, self.inbound_buf);
 
                     // relay everything till the end of CCS
@@ -172,6 +187,7 @@ impl LiteTlsStream {
                     outbound.flush().await?;
                     self.inbound_buf.pop_checked_packets();
 
+                    #[cfg(feature = "debug_info")]
                     debug!("[LC1][{}]buf after pop: {:?}", packet_id, self.inbound_buf);
 
                     if self.inbound_buf.len() != 0 {
@@ -185,13 +201,18 @@ impl LiteTlsStream {
                     inbound.write(&[0x14, 0x03, 0x03, 0, 0x01, 0x01]).await?;
                     inbound.flush().await?;
 
+                    #[cfg(feature = "debug_info")]
                     debug!("[LC1][{}]last CCS sent, leaving", packet_id);
                     return Ok(());
                 }
                 (Ok(_), Direction::Outbound, _) => {
                     // TLS 1.2 full handshake
-                    debug!("[LC2][{}]out buf now: {:?}", packet_id, self.outbound_buf);
-                    debug!("[LC2][{}]in buf now: {:?}", packet_id, self.inbound_buf);
+
+                    #[cfg(feature = "debug_info")]
+                    {
+                        debug!("[LC2][{}]out buf now: {:?}", packet_id, self.outbound_buf);
+                        debug!("[LC2][{}]in buf now: {:?}", packet_id, self.inbound_buf);
+                    }
 
                     loop {
                         match self.outbound_buf.check_type_0x16() {
@@ -202,6 +223,7 @@ impl LiteTlsStream {
                                 }
                                 inbound.flush().await?;
                                 self.outbound_buf.pop_checked_packets();
+                                #[cfg(feature = "debug_info")]
                                 debug!(
                                     "[LC2][{}]out buf after pop: {:?}",
                                     packet_id, self.outbound_buf
@@ -231,9 +253,11 @@ impl LiteTlsStream {
                 }
             }
 
-            debug!("[1][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
-            debug!("[1][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
-
+            #[cfg(feature = "debug_info")]
+            {
+                debug!("[1][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
+                debug!("[1][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
+            }
             // relay pending bytes
             match dir {
                 Direction::Inbound => {
@@ -252,7 +276,10 @@ impl LiteTlsStream {
                 }
             }
 
-            packet_id += 1;
+            #[cfg(feature = "debug_info")]
+            {
+                packet_id += 1;
+            }
         }
     }
 

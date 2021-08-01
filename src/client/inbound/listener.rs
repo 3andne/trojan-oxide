@@ -1,15 +1,18 @@
 use super::{HttpRequest, Socks5Request};
-use crate::client::ClientConnectionRequest;
 use crate::{
     args::TrojanContext,
-    client::outbound::forward,
+    client::{
+        outbound::forward,
+        utils::{ClientConnectionRequest, ClientServerConnection},
+        ConnectionMode,
+    },
     or_continue, try_recv,
-    utils::{ClientServerConnection, ConnectionMode, MixAddrType},
+    utils::MixAddrType,
 };
 
 #[cfg(feature = "quic")]
 use crate::client::outbound::quic::*;
-#[cfg(feature = "tcp_tls")]
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 use crate::client::outbound::tcp_tls::*;
 use anyhow::Result;
 use std::{future::Future, net::SocketAddr, sync::Arc};
@@ -37,7 +40,7 @@ where
     let remote_addr = context.remote_socket_addr;
     let domain_string = Arc::new(context.options.proxy_url.clone());
 
-    #[cfg(feature = "tcp_tls")]
+    #[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
     let tls_config = Arc::new(tls_client_config().await);
 
     #[cfg(feature = "quic")]
@@ -68,7 +71,7 @@ where
                     ),
                 ));
             }
-            #[cfg(feature = "tcp_tls")]
+            #[cfg(feature = "lite_tls")]
             ConnectionMode::LiteTLS => {
                 let tls_config_copy = tls_config.clone();
                 let domain_string_copy = domain_string.clone();

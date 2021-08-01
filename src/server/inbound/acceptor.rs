@@ -1,11 +1,12 @@
-// use super::SplitableToAsyncReadWrite;
 #[cfg(not(feature = "udp"))]
 use crate::utils::DummyRequest;
 #[cfg(feature = "udp")]
 use crate::utils::{new_trojan_udp_stream, TrojanUdpStream};
 use crate::{
     expect_buf_len,
-    protocol::HASH_LEN,
+    protocol::{
+        ECHO_REQUEST_CMD, HASH_LEN, LITE_TLS_REQUEST_CMD, TCP_REQUEST_CMD, UDP_REQUEST_CMD,
+    },
     server::{outbound::fallback, utils::TcpOption},
     utils::{BufferedRecv, ConnectionRequest, MixAddrType, ParserError},
 };
@@ -68,10 +69,10 @@ impl<'a> TrojanAcceptor<'a> {
 
         self.cmd_code = self.buf[HASH_LEN + 2];
         match self.cmd_code {
-            0x01 | 0x03 | 0x11 => {
+            TCP_REQUEST_CMD | UDP_REQUEST_CMD | LITE_TLS_REQUEST_CMD => {
                 self.host = MixAddrType::from_encoded(&mut (&mut self.cursor, &self.buf))?;
             }
-            0xff => (),
+            ECHO_REQUEST_CMD => (),
             _ => {
                 return Err(ParserError::Invalid(
                     "Target::verify invalid connection type".into(),
@@ -158,15 +159,15 @@ impl<'a> TrojanAcceptor<'a> {
         use TcpOption::*;
         match self.cmd_code {
             #[cfg(feature = "udp")]
-            0x03 => Ok(UDP(new_trojan_udp_stream(inbound, buffered_request))),
+            UDP_REQUEST_CMD => Ok(UDP(new_trojan_udp_stream(inbound, buffered_request))),
             #[cfg(not(feature = "udp"))]
-            0x03 => Err(ParserError::Invalid(
+            UDP_REQUEST_CMD => Err(ParserError::Invalid(
                 "udp functionality not included".into(),
             )),
-            0x01 => Ok(TCP(TLS(BufferedRecv::new(inbound, buffered_request)))),
-            0x11 => Ok(TCP(LiteTLS(BufferedRecv::new(inbound, buffered_request)))),
+            TCP_REQUEST_CMD => Ok(TCP(TLS(BufferedRecv::new(inbound, buffered_request)))),
+            LITE_TLS_REQUEST_CMD => Ok(TCP(LiteTLS(BufferedRecv::new(inbound, buffered_request)))),
             #[cfg(feature = "quic")]
-            0xff => Ok(ECHO(BufferedRecv::new(inbound, buffered_request))),
+            ECHO_REQUEST_CMD => Ok(ECHO(BufferedRecv::new(inbound, buffered_request))),
             _ => unreachable!(),
         }
     }

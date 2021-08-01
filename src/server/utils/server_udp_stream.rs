@@ -1,4 +1,4 @@
-use super::{MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
+use crate::utils::{MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
 use futures::{ready, Future};
 use std::net::SocketAddr;
 use std::vec;

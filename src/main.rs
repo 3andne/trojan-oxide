@@ -11,7 +11,7 @@ mod server;
 
 #[cfg(not(any(feature = "client", feature = "server")))]
 mod must_choose_between_client_and_server;
-#[cfg(not(any(feature = "quic", feature = "tcp_tls")))]
+#[cfg(not(any(feature = "quic", feature = "tcp_tls", feature = "lite_tls")))]
 mod must_choose_between_quic_and_tcp_tls;
 
 mod args;

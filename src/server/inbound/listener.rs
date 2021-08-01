@@ -6,11 +6,11 @@ use crate::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use futures::{StreamExt, TryFutureExt};
+use futures::TryFutureExt;
 use tokio::sync::{broadcast, oneshot};
 use tracing::*;
 
-#[cfg(feature = "tcp_tls")]
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 use {
     crate::server::inbound::{
         get_server_local_addr,
@@ -26,6 +26,7 @@ pub async fn quic_listener(
     mut upper_shutdown: oneshot::Receiver<()>,
     context: TrojanContext,
 ) -> Result<()> {
+    use futures::StreamExt;
     let (shutdown_tx, _) = broadcast::channel(1);
     let (endpoint, mut incoming) = quic_tunnel_rx(&context.options).await?;
     info!("listening on [udp]{}", endpoint.local_addr()?);
@@ -47,15 +48,13 @@ pub async fn quic_listener(
         tokio::spawn(async move {
             handle_quic_connection(bi_streams, shutdown_rx, hash_copy, fallback_port)
                 .await
-                .unwrap_or_else(move |e| {
-                    error!("connection failed: {:#}", e)
-                });
+                .unwrap_or_else(move |e| error!("connection failed: {:#}", e));
         });
     }
     Ok(())
 }
 
-#[cfg(feature = "tcp_tls")]
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 pub async fn tcp_tls_listener(
     mut upper_shutdown: oneshot::Receiver<()>,
     context: TrojanContext,

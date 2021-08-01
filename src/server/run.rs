@@ -1,6 +1,6 @@
 #[cfg(feature = "quic")]
 use crate::server::inbound::quic_listener;
-#[cfg(feature = "tcp_tls")]
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 use crate::server::inbound::tcp_tls_listener;
 
 use crate::args::TrojanContext;
@@ -23,9 +23,9 @@ pub async fn run_server(
             .unwrap_or_else(move |e| error!("quic server shutdown due to {:#}", e)),
     );
 
-    #[cfg(feature = "tcp_tls")]
+    #[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
     let (_shutdown_tx2, shutdown_rx2) = oneshot::channel();
-    #[cfg(feature = "tcp_tls")]
+    #[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
     tokio::spawn(
         tcp_tls_listener(shutdown_rx2, context)
             .unwrap_or_else(move |e| error!("tcp_tls server shutdown due to {:#}", e)),

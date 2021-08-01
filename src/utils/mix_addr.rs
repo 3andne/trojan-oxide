@@ -33,6 +33,7 @@ impl MixAddrType {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_ip(&self) -> bool {
         match self {
             MixAddrType::V4(_) => true,
@@ -61,6 +62,7 @@ impl MixAddrType {
         }
     }
 
+    #[allow(dead_code)]
     pub fn to_socket_addrs(&self) -> SocketAddr {
         match self {
             MixAddrType::V4(addr) => addr.to_owned().into(),
@@ -128,7 +130,9 @@ impl MixAddrType {
             })?;
             let v6_addr_u16 = SocketAddrV6::from_str(str_buf)
                 .map_err(|_| {
-                    ParserError::Invalid("MixAddrType::from_http_header IPv6 AddressParseError".into())
+                    ParserError::Invalid(
+                        "MixAddrType::from_http_header IPv6 AddressParseError".into(),
+                    )
                 })?
                 .ip()
                 .segments();
@@ -151,7 +155,9 @@ impl MixAddrType {
             Ok(Self::V4((
                 SocketAddrV4::from_str(str_buf)
                     .map_err(|_| {
-                        ParserError::Invalid("MixAddrType::from_http_header IPv4 AddressParseError".into())
+                        ParserError::Invalid(
+                            "MixAddrType::from_http_header IPv4 AddressParseError".into(),
+                        )
                     })?
                     .ip()
                     .octets(),
@@ -226,9 +232,15 @@ impl MixAddrType {
                 // Domain Name
                 debug!("Domain Name");
                 let host_len = buf[1] as usize;
-                expect_buf_len!(buf, 1 + 1 + host_len + 2, "MixAddrType::from_encoded_bytes Domain Name"); // cmd + host_len + host(host_len bytes) + port
+                expect_buf_len!(
+                    buf,
+                    1 + 1 + host_len + 2,
+                    "MixAddrType::from_encoded_bytes Domain Name"
+                ); // cmd + host_len + host(host_len bytes) + port
                 let host = String::from_utf8(buf[2..2 + host_len].to_vec()).map_err(|_| {
-                    ParserError::Invalid("MixAddrType::from_encoded_bytes Domain Name Utf8Error".into())
+                    ParserError::Invalid(
+                        "MixAddrType::from_encoded_bytes Domain Name Utf8Error".into(),
+                    )
                 })?;
                 let port = u16::from_be_bytes([buf[2 + host_len], buf[2 + host_len + 1]]);
                 Ok((MixAddrType::Hostname((host, port)), 1 + 1 + host_len + 2))

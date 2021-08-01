@@ -1,11 +1,11 @@
 use crate::{
+    client::utils::{ClientConnectionRequest, ClientTcpStream},
     expect_buf_len,
-    utils::ConnectionRequest,
-    utils::{ClientTcpStream, MixAddrType, ParserError},
+    utils::{ConnectionRequest, MixAddrType, ParserError},
 };
 
 #[cfg(feature = "udp")]
-use crate::utils::Socks5UdpStream;
+use crate::client::utils::Socks5UdpStream;
 #[cfg(feature = "udp")]
 use std::net::SocketAddr;
 #[cfg(feature = "udp")]
@@ -13,7 +13,6 @@ use tokio::net::UdpSocket;
 #[cfg(feature = "udp")]
 use tokio::sync::oneshot;
 
-use crate::client::ClientConnectionRequest;
 use anyhow::{Error, Result};
 use tokio::io::*;
 use tokio::net::TcpStream;
@@ -150,7 +149,9 @@ impl Socks5Request {
                         return Ok(());
                     }
                 }
-                return Err(ParserError::Invalid("Socks5Request::parse method invalid".into()));
+                return Err(ParserError::Invalid(
+                    "Socks5Request::parse method invalid".into(),
+                ));
             }
             P2ClientRequest => {
                 expect_buf_len!(buf, 5, "Sock5ParsePhase::parse phase 2 incomplete[1]");

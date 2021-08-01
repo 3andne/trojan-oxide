@@ -1,6 +1,7 @@
 use crate::{
+    client::utils::ClientTcpStream,
     utils::ConnectionRequest,
-    utils::{ClientTcpStream, MixAddrType, ParserError},
+    utils::{MixAddrType, ParserError},
 };
 
 use anyhow::{Error, Result};
@@ -11,7 +12,7 @@ use tokio::io::*;
 use tokio::net::TcpStream;
 use tracing::*;
 
-use crate::client::ClientConnectionRequest;
+use crate::client::utils::ClientConnectionRequest;
 
 pub struct HttpRequest {
     is_https: bool,

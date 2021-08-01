@@ -1,9 +1,6 @@
 use std::{fmt, time::Duration};
 
-use crate::{
-    server::Splitable,
-    utils::{copy_to_tls, either_io::EitherIO, TimeoutMonitor},
-};
+use crate::utils::{copy_to_tls, either_io::EitherIO, Splitable, TimeoutMonitor};
 use anyhow::Result;
 use futures::future::{pending, Either};
 use tokio::{io::copy, select, sync::broadcast};
@@ -61,6 +58,7 @@ impl Adapter {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new_tls_download() -> Self {
         Self {
             tls_config: AdapterTlsConfig::RustlsDownload,
@@ -68,6 +66,7 @@ impl Adapter {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new_tls_upload() -> Self {
         Self {
             tls_config: AdapterTlsConfig::RustlsUpload,
@@ -75,6 +74,7 @@ impl Adapter {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_timeout(&mut self, timeout: u16) {
         self.timeout = Some(timeout);
     }

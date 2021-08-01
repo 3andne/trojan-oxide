@@ -1,15 +1,19 @@
+use super::{ClientServerConnection, ClientTcpStream};
 #[cfg(feature = "udp")]
-use crate::utils::{copy_udp, new_trojan_udp_stream, Adapter, Socks5UdpStream};
+use {
+    super::Socks5UdpStream,
+    crate::utils::{copy_udp, new_trojan_udp_stream},
+};
+
 use crate::{
     adapt,
-    server::Splitable,
-    utils::{ClientServerConnection, ClientTcpStream, MixAddrType, ParserError, WRTuple},
+    utils::{Adapter, MixAddrType, ParserError, Splitable, WRTuple},
 };
 use anyhow::Result;
 use tokio::{select, sync::broadcast};
 use tracing::{debug, info};
 
-#[cfg(feature = "tcp_tls")]
+#[cfg(feature = "lite_tls")]
 use crate::utils::lite_tls::LiteTlsStream;
 
 pub async fn relay_tcp(
@@ -96,7 +100,6 @@ pub async fn relay_udp(
         }
         #[cfg(feature = "tcp_tls")]
         ClientServerConnection::TcpTLS(out_tls) => {
-            // let (out_read, out_write) = split(out_tls);
             let (mut out_write, mut out_read) = new_trojan_udp_stream(out_tls, None).split();
             select! {
                 res = copy_udp(&mut out_read, &mut in_write, None) => {
@@ -111,8 +114,19 @@ pub async fn relay_udp(
             }
         }
         #[cfg(feature = "lite_tls")]
-        ClientServerConnection::LiteTLS(_) => {
-            unimplemented!("udp in minitls should be treated as tcp_tls")
+        ClientServerConnection::LiteTLS(out_tls) => {
+            let (mut out_write, mut out_read) = new_trojan_udp_stream(out_tls, None).split();
+            select! {
+                res = copy_udp(&mut out_read, &mut in_write, None) => {
+                    debug!("tcp relaying download end, {:?}", res);
+                },
+                res = copy_udp(&mut in_read, &mut out_write, Some(conn_id)) => {
+                    debug!("tcp relaying upload end, {:?}", res);
+                },
+                _ = upper_shutdown.recv() => {
+                    debug!("shutdown signal received");
+                },
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
-    server::{inbound::TrojanAcceptor, Splitable},
-    utils::{lite_tls::LeaveTls, ConnectionRequest, MixAddrType, TimeoutMonitor},
+    server::inbound::TrojanAcceptor,
+    utils::{lite_tls::LeaveTls, ConnectionRequest, MixAddrType, Splitable, TimeoutMonitor},
 };
 use anyhow::{anyhow, Context, Error, Result};
 use lazy_static::lazy_static;
@@ -18,7 +18,7 @@ use tokio::{
 use tracing::{debug, info};
 #[cfg(feature = "udp")]
 use {
-    crate::utils::{copy_udp, ServerUdpStream},
+    crate::{server::utils::ServerUdpStream, utils::copy_udp},
     tokio::net::UdpSocket,
 };
 

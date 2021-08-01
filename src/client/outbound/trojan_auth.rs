@@ -1,7 +1,4 @@
-use crate::{
-    protocol::HASH_LEN,
-    utils::{ClientServerConnection, MixAddrType},
-};
+use crate::{client::utils::ClientServerConnection, protocol::HASH_LEN, utils::MixAddrType};
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::io::{AsyncWrite, AsyncWriteExt};

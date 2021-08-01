@@ -7,12 +7,11 @@ use tracing::{debug, info};
 
 use crate::{
     adapt,
-    server::Splitable,
     utils::{
         lite_tls::{LeaveTls, LiteTlsStream},
-        Adapter,
-        BufferedRecv, MixAddrType, ParserError,
+        Adapter, BufferedRecv, MixAddrType, ParserError, Splitable,
     },
+    protocol::TCP_MAX_IDLE_TIMEOUT
 };
 use anyhow::Result;
 
@@ -37,7 +36,7 @@ where
             TLS(inbound) => {
                 adapt!(["tcp"][conn_id]
                     inbound[Tls] <=> outbound[Tcp] <=> target_host
-                    Until shutdown Or Sec 5 * 60
+                    Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                 );
             }
             LiteTLS(mut inbound) => {
@@ -52,7 +51,7 @@ where
                         debug!("lite tls start relaying");
                         adapt!(["lite"][conn_id]
                             inbound[Tcp] <=> outbound[Tcp] <=> target_host
-                            Until shutdown Or Sec 5 * 60
+                            Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                         );
                     }
                     Err(e) => {
@@ -61,7 +60,7 @@ where
                             lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
                             adapt!(["tcp"][conn_id]
                                 inbound[Tls] <=> outbound[Tcp] <=> target_host
-                                Until shutdown Or Sec 5 * 60
+                                Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                             );
                         }
                     }

@@ -27,3 +27,18 @@ macro_rules! or_continue {
         }
     };
 }
+
+#[macro_export]
+macro_rules! expect_buf_len {
+    ($buf:expr, $len:expr) => {
+        if $buf.len() < $len {
+            return Err(ParserError::Incomplete(stringify!($len)));
+        }
+    };
+    ($buf:expr, $len:expr, $mark:expr) => {
+        if $buf.len() < $len {
+            // debug!("expect_buf_len {}", $mark);
+            return Err(ParserError::Incomplete($mark.into()));
+        }
+    };
+}

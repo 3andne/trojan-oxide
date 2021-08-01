@@ -12,6 +12,7 @@ use tokio::{
     time::{sleep_until, Duration, Instant, Sleep},
 };
 
+#[cfg(feature = "udp")]
 use crate::utils::MixAddrType;
 
 #[cfg(feature = "udp")]

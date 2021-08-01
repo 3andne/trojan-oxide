@@ -1,9 +1,6 @@
-use crate::{
-    server::Splitable,
-    utils::{
-        BufferedRecv, CursoredBuffer, ExtendableFromSlice, MixAddrType, ParserError, UdpRead,
-        UdpRelayBuffer, UdpWrite,
-    },
+use crate::utils::{
+    BufferedRecv, CursoredBuffer, ExtendableFromSlice, MixAddrType, ParserError, Splitable,
+    UdpRead, UdpRelayBuffer, UdpWrite,
 };
 use futures::ready;
 use pin_project_lite::pin_project;
@@ -63,6 +60,7 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
         buf: &[u8],
         addr: &MixAddrType,
     ) -> Poll<std::io::Result<usize>> {
+        #[cfg(feature = "debug_info")]
         debug!("TrojanUdpSendStream::poll_proxy_stream_write()");
         let just_filled_buf = if self.buffer.is_empty() {
             addr.write_buf(&mut self.buffer);
@@ -96,6 +94,7 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
                     );
                     me.buffer.advance(x);
                 } else {
+                    #[cfg(feature = "debug_info")]
                     debug!(
                         "TrojanUdpSendStream::poll_proxy_stream_write() reset buffer {:?}",
                         me.buffer
@@ -106,6 +105,7 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
                 }
             }
             Poll::Pending => {
+                #[cfg(feature = "debug_info")]
                 debug!(
                     "TrojanUdpSendStream::poll_proxy_stream_write() pending {:?}",
                     me.buffer
@@ -161,6 +161,7 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
         cx: &mut Context<'_>,
         outer_buf: &mut UdpRelayBuffer, // bug once occured: accidentally used outer_buf as inner_buf
     ) -> Poll<std::io::Result<MixAddrType>> {
+        #[cfg(feature = "debug_info")]
         debug!("TrojanUdpRecvStream::poll_proxy_stream_read()");
         let me = self.project();
         let mut buf_inner = me.buffer.as_read_buf();
@@ -182,6 +183,7 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                     me.buffer.advance_mut(n);
                 }
 
+                #[cfg(feature = "debug_info")]
                 debug!(
                     "TrojanUdpRecvStream::poll_proxy_stream_read() buf {:?}",
                     me.buffer
@@ -190,6 +192,7 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                 if me.addr_buf.is_none() {
                     match MixAddrType::from_encoded(me.buffer) {
                         Ok(addr) => {
+                            #[cfg(feature = "debug_info")]
                             debug!("TrojanUdpRecvStream addr {:?}", addr);
                             *me.addr_buf = addr;
                         }
@@ -204,6 +207,7 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                     }
                 }
 
+                #[cfg(feature = "debug_info")]
                 debug!("TrojanUdpRecvStream buf after addr {:?}", me.buffer);
 
                 if me.expecting.is_none() {
@@ -226,6 +230,7 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                     outer_buf.extend_from_slice(&me.buffer.chunk()[..to_read]);
                     me.buffer.advance(to_read);
                     me.buffer.pump();
+                    #[cfg(feature = "debug_info")]
                     debug!("TrojanUdpRecvStream buffer before return {:?}", me.buffer);
                     if to_read < expecting {
                         *me.expecting = Some(expecting - to_read);
@@ -236,6 +241,7 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                         Poll::Ready(Ok(addr))
                     }
                 } else {
+                    #[cfg(feature = "debug_info")]
                     debug!(
                         "TrojanUdpRecvStream::poll_proxy_stream_read() expecting: {:?}, not long enough",
                         me.expecting

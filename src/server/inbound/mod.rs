@@ -3,14 +3,12 @@ mod handler;
 mod listener;
 #[cfg(feature = "quic")]
 mod quic;
-mod stream_trait;
-#[cfg(feature = "tcp_tls")]
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 mod tcp_tls;
 
 pub use acceptor::TrojanAcceptor;
-#[cfg(feature = "tcp_tls")]
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 pub use listener::tcp_tls_listener;
-pub use stream_trait::Splitable;
 #[cfg(feature = "quic")]
 pub use {listener::quic_listener, quic::QuicStream};
 

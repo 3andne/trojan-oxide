@@ -1,14 +1,14 @@
 use crate::server::outbound::handle_outbound;
 use anyhow::{anyhow, Context, Result};
 use std::sync::Arc;
-use tokio::{select, sync::broadcast};
-use tracing::{error, info};
+use tokio::sync::broadcast;
 #[cfg(feature = "quic")]
 use {
     futures::{StreamExt, TryFutureExt},
     quinn::*,
 };
-#[cfg(feature = "tcp_tls")]
+
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 use {tokio::net::TcpStream, tokio_rustls::TlsAcceptor};
 
 #[cfg(feature = "quic")]
@@ -19,7 +19,8 @@ pub async fn handle_quic_connection(
     fallback_port: Arc<String>,
 ) -> Result<()> {
     use crate::utils::WRTuple;
-
+    use tokio::select;
+    use tracing::{error, info};
     let (shutdown_tx, _) = broadcast::channel(1);
 
     loop {
@@ -65,7 +66,7 @@ pub async fn handle_quic_connection(
     Ok(())
 }
 
-#[cfg(feature = "tcp_tls")]
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 pub async fn handle_tcp_tls_connection(
     stream: TcpStream,
     acceptor: TlsAcceptor,

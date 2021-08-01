@@ -1,4 +1,4 @@
-use crate::utils::ClientServerConnection;
+use crate::client::utils::ClientServerConnection;
 use anyhow::{anyhow, Result};
 use rustls_native_certs;
 use std::net::SocketAddr;
@@ -32,9 +32,12 @@ pub async fn connect_through_tcp_tls(
     stream.set_nodelay(true)?;
     let stream = connector.connect(domain, stream).await?;
     use ClientServerConnection::*;
-    return Ok(if lite_tls {
-        LiteTLS(stream)
-    } else {
-        TcpTLS(stream)
+    return Ok(match lite_tls {
+        #[cfg(feature = "lite_tls")]
+        true => LiteTLS(stream),
+        #[cfg(feature = "tcp_tls")]
+        false => TcpTLS(stream),
+        #[allow(unreachable_patterns)]
+        _ => unreachable!(),
     });
 }

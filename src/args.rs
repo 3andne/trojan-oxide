@@ -1,4 +1,6 @@
-use crate::{protocol::HASH_LEN, utils::ConnectionMode};
+#[cfg(feature = "client")]
+use crate::client::ConnectionMode;
+use crate::protocol::HASH_LEN;
 use sha2::{Digest, Sha224};
 use std::fmt::Write;
 use std::net::SocketAddr;
@@ -17,8 +19,10 @@ fn parse_log_level(l: &str) -> tracing::Level {
     }
 }
 
+#[cfg(feature = "client")]
 fn parse_connection_mode(l: &str) -> ConnectionMode {
     use ConnectionMode::*;
+    #[allow(unreachable_patterns)]
     match &l.to_lowercase()[..] {
         #[cfg(feature = "tcp_tls")]
         "tcp-tls" => TcpTLS,
@@ -32,16 +36,20 @@ fn parse_connection_mode(l: &str) -> ConnectionMode {
         "quic" => Quic,
         #[cfg(feature = "quic")]
         "q" => Quic,
+        #[cfg(feature = "lite_tls")]
         "l" => LiteTLS,
-        #[cfg(not(feature = "quic"))]
+        #[cfg(feature = "tcp_tls")]
         _ => TcpTLS,
-        #[cfg(not(feature = "tcp_tls"))]
-        _ => Quic,
-        #[cfg(all(feature = "tcp_tls", feature = "quic"))]
+        #[cfg(feature = "lite_tls")]
+        #[allow(unreachable_patterns)]
+        _ => LiteTLS,
+        #[cfg(feature = "quic")]
+        #[allow(unreachable_patterns)]
         _ => Quic,
     }
 }
 
+#[cfg(feature = "client")]
 fn parse_addr(l: &str) -> String {
     "127.0.0.1:".to_owned() + l
 }
@@ -69,6 +77,7 @@ fn password_to_hash(s: &str) -> Arc<String> {
     Arc::new(s)
 }
 
+#[cfg(feature = "server")]
 fn arc_string(s: &str) -> Arc<String> {
     Arc::new(s.to_string())
 }

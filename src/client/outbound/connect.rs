@@ -1,13 +1,17 @@
 use super::trojan_auth::trojan_auth;
 
+#[cfg(feature = "quic")]
+use crate::client::outbound::quic::send_echo;
 #[cfg(feature = "udp")]
-use crate::utils::relay_udp;
+use crate::client::utils::relay_udp;
+
 use crate::{
     client::{
         inbound::ClientRequestAcceptResult,
-        outbound::{quic::send_echo, request_cmd::ClientRequestCMD},
+        outbound::request_cmd::ClientRequestCMD,
+        utils::{relay_tcp, ClientServerConnection},
     },
-    utils::{relay_tcp, ClientServerConnection, ConnectionRequest},
+    utils::ConnectionRequest,
 };
 use anyhow::Result;
 use lazy_static::lazy_static;

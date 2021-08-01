@@ -1,6 +1,6 @@
 use crate::args::{Opt, TrojanContext};
-use crate::client::ClientConnectionRequest;
-use crate::utils::{ClientServerConnection, MixAddrType};
+use crate::client::utils::{ClientServerConnection, ClientConnectionRequest};
+use crate::utils::MixAddrType;
 use anyhow::*;
 use lazy_static::lazy_static;
 use quinn::*;
@@ -211,7 +211,7 @@ async fn new_builder(options: &Opt) -> Result<EndpointBuilder> {
         rustls_native_certs::load_native_certs().expect("could not load platform certs");
 
     let transport_cfg = Arc::get_mut(&mut cfg.transport).unwrap();
-    transport_cfg.max_idle_timeout(Some(MAX_IDLE_TIMEOUT))?;
+    transport_cfg.max_idle_timeout(Some(QUIC_MAX_IDLE_TIMEOUT))?;
     transport_cfg.persistent_congestion_threshold(6);
     transport_cfg.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS as u64)?;
     transport_cfg.packet_threshold(4);

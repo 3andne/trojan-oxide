@@ -1,7 +1,9 @@
+#[cfg(feature = "quic")]
 use quinn::*;
 use tokio::net::TcpStream;
 use tokio_rustls::{client, server};
 
+#[cfg(feature = "quic")]
 use crate::utils::{TrojanUdpStream, WRTuple};
 
 pub trait LeaveTls {
@@ -20,12 +22,14 @@ impl LeaveTls for client::TlsStream<TcpStream> {
     }
 }
 
+#[cfg(feature = "quic")]
 impl<I> LeaveTls for TrojanUdpStream<I> {
     fn leave(self) -> TcpStream {
         unimplemented!()
     }
 }
 
+#[cfg(feature = "quic")]
 impl LeaveTls for WRTuple<SendStream, RecvStream> {
     fn leave(self) -> TcpStream {
         unimplemented!()

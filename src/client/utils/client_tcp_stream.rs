@@ -1,4 +1,4 @@
-use crate::{server::Splitable, utils::BufferedRecv};
+use crate::{utils::BufferedRecv, utils::Splitable};
 use tokio::net::{
     tcp::{OwnedReadHalf, OwnedWriteHalf},
     TcpStream,
