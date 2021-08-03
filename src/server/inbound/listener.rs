@@ -59,6 +59,8 @@ pub async fn tcp_tls_listener(
     mut upper_shutdown: oneshot::Receiver<()>,
     context: TrojanContext,
 ) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
     let (shutdown_tx, _) = broadcast::channel(1);
     let config = tls_server_config(&context.options)
         .await
@@ -67,7 +69,8 @@ pub async fn tcp_tls_listener(
     let addr = get_server_local_addr(&context.options);
     let listener = TcpListener::bind(&addr)
         .await
-        .with_context(|| anyhow!("failed to bind port"))?;
+        .with_context(|| anyhow!("failed to bind tcp port"))?;
+    info!("listening on [tcp]{}", listener.local_addr()?);
     loop {
         try_recv!(oneshot, upper_shutdown);
         let (stream, _peer_addr) = listener

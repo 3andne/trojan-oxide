@@ -2,6 +2,7 @@ use crate::utils::{
     BufferedRecv, CursoredBuffer, ExtendableFromSlice, MixAddrType, ParserError, Splitable,
     UdpRead, UdpRelayBuffer, UdpWrite,
 };
+use anyhow::{Error, Result};
 use futures::ready;
 use pin_project_lite::pin_project;
 use std::{
@@ -9,7 +10,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing::*;
 
 pub struct TrojanUdpStream<I> {
@@ -37,12 +38,16 @@ pin_project! {
     }
 }
 
-impl<W> TrojanUdpSendStream<W> {
+impl<W: AsyncWrite + Unpin> TrojanUdpSendStream<W> {
     pub fn new(inner: W) -> Self {
         Self {
             inner,
             buffer: UdpRelayBuffer::new(),
         }
+    }
+
+    pub async fn shutdown(&mut self) -> Result<()> {
+        self.inner.shutdown().await.map_err(|e| Error::new(e))
     }
 }
 
@@ -124,7 +129,32 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.inner).poll_flush(cx)
     }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        todo!()
+    }
 }
+
+// impl<W: AsyncWrite + Unpin> AsyncWrite for TrojanUdpSendStream<W> {
+//     fn poll_write(
+//         self: Pin<&mut Self>,
+//         cx: &mut Context<'_>,
+//         buf: &[u8],
+//     ) -> Poll<Result<usize, std::io::Error>> {
+//         unimplemented!("shoudn't be called")
+//     }
+
+//     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+//         unimplemented!("shoudn't be called")
+//     }
+
+//     fn poll_shutdown(
+//         self: Pin<&mut Self>,
+//         cx: &mut Context<'_>,
+//     ) -> Poll<Result<(), std::io::Error>> {
+//         todo!()
+//     }
+// }
 
 pin_project! {
     #[derive(Debug)]

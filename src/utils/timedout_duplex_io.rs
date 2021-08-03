@@ -126,6 +126,11 @@ impl<T: UdpWrite + Unpin> UdpWrite for TimedoutIO<T> {
     ) -> Poll<std::io::Result<()>> {
         Pin::new(&mut self.inner).poll_flush(cx)
     }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<std::io::Result<()>> {
+        todo!()
+    }
+
 }
 
 impl<T: AsyncRead + Unpin> AsyncRead for TimedoutIO<T> {

@@ -1,9 +1,13 @@
 use std::{fmt, time::Duration};
 
 use crate::utils::{copy_to_tls, either_io::EitherIO, Splitable, TimeoutMonitor};
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use futures::future::{pending, Either};
-use tokio::{io::copy, select, sync::broadcast};
+use tokio::{
+    io::{copy, AsyncWriteExt},
+    select,
+    sync::broadcast,
+};
 
 pub enum AdapterTlsConfig {
     TcpOnly,
@@ -120,7 +124,7 @@ impl Adapter {
         };
 
         use StreamStopReasons::*;
-        Ok(select! {
+        let reason = select! {
             _ = download => {
                 Download
             },
@@ -133,6 +137,15 @@ impl Adapter {
             _ = shutdown.recv() => {
                 Shutdown
             },
-        })
+        };
+        in_write
+            .shutdown()
+            .await
+            .with_context(|| anyhow!("failed to shutdown inbound"))?;
+        out_write
+            .shutdown()
+            .await
+            .with_context(|| anyhow!("failed to shutdown outbound"))?;
+        Ok(reason)
     }
 }

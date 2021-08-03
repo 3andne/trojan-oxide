@@ -9,7 +9,7 @@ use crate::{
     adapt,
     utils::{Adapter, MixAddrType, ParserError, Splitable, WRTuple},
 };
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use tokio::{select, sync::broadcast};
 use tracing::{debug, info};
 
@@ -80,7 +80,9 @@ pub async fn relay_udp(
     outbound: ClientServerConnection,
     mut upper_shutdown: broadcast::Receiver<()>,
     conn_id: usize,
-) {
+) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
     let (mut in_write, mut in_read) = inbound.split();
     match outbound {
         #[cfg(feature = "quic")]
@@ -97,6 +99,14 @@ pub async fn relay_udp(
                     debug!("shutdown signal received");
                 },
             }
+            in_write
+                .shutdown()
+                .await
+                .with_context(|| anyhow!("failed to shutdown quic udp inbound"))?;
+            out_write
+                .shutdown()
+                .await
+                .with_context(|| anyhow!("failed to shutdown quic udp outbound"))?;
         }
         #[cfg(feature = "tcp_tls")]
         ClientServerConnection::TcpTLS(out_tls) => {
@@ -112,6 +122,14 @@ pub async fn relay_udp(
                     debug!("shutdown signal received");
                 },
             }
+            in_write
+                .shutdown()
+                .await
+                .with_context(|| anyhow!("failed to shutdown tcp_tls udp inbound"))?;
+            out_write
+                .shutdown()
+                .await
+                .with_context(|| anyhow!("failed to shutdown tcp_tls udp outbound"))?;
         }
         #[cfg(feature = "lite_tls")]
         ClientServerConnection::LiteTLS(out_tls) => {
@@ -127,6 +145,15 @@ pub async fn relay_udp(
                     debug!("shutdown signal received");
                 },
             }
+            in_write
+                .shutdown()
+                .await
+                .with_context(|| anyhow!("failed to shutdown lite_tls udp inbound"))?;
+            out_write
+                .shutdown()
+                .await
+                .with_context(|| anyhow!("failed to shutdown lite_tls udp outbound"))?;
         }
     }
+    Ok(())
 }

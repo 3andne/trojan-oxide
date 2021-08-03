@@ -96,6 +96,14 @@ where
                     info!("[udp][{}]shutdown signal received", conn_id);
                 },
             }
+            in_write
+                .shutdown()
+                .await
+                .with_context(|| anyhow!("failed to shutdown udp inbound"))?;
+            // out_write
+            //     .shutdown()
+            //     .await
+            //     .with_context(|| anyhow!("failed to shutdown tcp_tls udp outbound"))?;
         }
         #[cfg(feature = "quic")]
         Ok(ECHO(inbound)) => {

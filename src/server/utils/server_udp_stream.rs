@@ -110,6 +110,10 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
     fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         Poll::Ready(Ok(()))
     }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        todo!()
+    }
 }
 
 #[derive(Debug)]

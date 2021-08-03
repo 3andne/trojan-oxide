@@ -2,6 +2,8 @@ use crate::utils::{MixAddrType, UdpRelayBuffer};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use super::udp_shutdown::{shutdown, Shutdown};
+
 pub trait UdpRead {
     /// Should return Poll::Ready(Ok(MixAddrType::None)) when
     /// EOF is seen.
@@ -25,4 +27,18 @@ pub trait UdpWrite {
     /// Should implement this if the underlying object e.g.
     /// TlsStream requires you to manually flush after write
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>>;
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>>;
+}
+
+pub trait UdpWriteExt: UdpWrite {
+    fn shutdown(&mut self) -> Shutdown<'_, Self>
+    where
+        Self: Unpin,
+    {
+        shutdown(self)
+    }
 }

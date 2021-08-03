@@ -125,7 +125,7 @@ pub struct Opt {
     pub password_hash: Arc<String>,
 
     #[cfg(feature = "server")]
-    #[structopt(short = "f", long, parse(from_str = arc_string))]
+    #[structopt(short = "f", long, parse(from_str = arc_string), default_value = "")]
     pub fallback_port: Arc<String>,
 
     #[cfg(feature = "client")]

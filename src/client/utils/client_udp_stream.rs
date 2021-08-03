@@ -1,4 +1,6 @@
-use crate::utils::{CursoredBuffer, ExtendableFromSlice, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
+use crate::utils::{
+    CursoredBuffer, ExtendableFromSlice, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite,
+};
 use futures::ready;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -323,5 +325,9 @@ impl<'a> UdpWrite for Socks5UdpSendStream<'a> {
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         AsyncWrite::poll_flush(self, cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        todo!()
     }
 }
