@@ -19,13 +19,13 @@ impl ServerUdpStream {
         Self { inner }
     }
 
-    pub fn split(&mut self) -> (ServerUdpSendStream, ServerUdpRecvStream) {
+    pub fn split(&mut self) -> (ServerUdpRecvStream, ServerUdpSendStream) {
         (
+            ServerUdpRecvStream { inner: &self.inner },
             ServerUdpSendStream {
                 inner: &self.inner,
                 addr_task: ResolveAddr::None,
             },
-            ServerUdpRecvStream { inner: &self.inner },
         )
     }
 }
@@ -111,8 +111,8 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        todo!()
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
 

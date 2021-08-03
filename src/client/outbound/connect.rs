@@ -63,7 +63,7 @@ where
         UDP(inbound) => {
             let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             info!("[udp][{}] => {:?}", conn_id, &addr);
-            relay_udp(inbound, outbound, upper_shutdown, conn_id).await;
+            relay_udp(inbound, outbound, upper_shutdown, conn_id).await?;
             info!("[end][udp][{}]", conn_id);
         }
         #[cfg(feature = "quic")]

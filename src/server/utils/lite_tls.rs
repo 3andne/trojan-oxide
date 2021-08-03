@@ -7,13 +7,13 @@ use tracing::{debug, info};
 
 use crate::{
     adapt,
+    protocol::TCP_MAX_IDLE_TIMEOUT,
     utils::{
         lite_tls::{LeaveTls, LiteTlsStream},
         Adapter, BufferedRecv, MixAddrType, ParserError, Splitable,
     },
-    protocol::TCP_MAX_IDLE_TIMEOUT
 };
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 
 pub enum TcpOption<I> {
     TLS(I),
@@ -34,7 +34,7 @@ where
         use TcpOption::*;
         match self {
             TLS(inbound) => {
-                adapt!(["tcp"][conn_id]
+                adapt!([tcp][conn_id]
                     inbound[Tls] <=> outbound[Tcp] <=> target_host
                     Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                 );
@@ -47,9 +47,9 @@ where
                 {
                     Ok(_) => {
                         lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
-                        let inbound = inbound.into_inner().leave();
+                        let mut inbound = inbound.into_inner().leave();
                         debug!("lite tls start relaying");
-                        adapt!(["lite"][conn_id]
+                        adapt!([lite][conn_id]
                             inbound[Tcp] <=> outbound[Tcp] <=> target_host
                             Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                         );
@@ -58,7 +58,7 @@ where
                         if let Some(ParserError::Invalid(x)) = e.downcast_ref::<ParserError>() {
                             debug!("not tls stream: {}", x);
                             lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
-                            adapt!(["tcp"][conn_id]
+                            adapt!([tcp][conn_id]
                                 inbound[Tls] <=> outbound[Tcp] <=> target_host
                                 Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                             );

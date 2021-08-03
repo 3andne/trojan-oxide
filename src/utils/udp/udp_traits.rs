@@ -42,3 +42,5 @@ pub trait UdpWriteExt: UdpWrite {
         shutdown(self)
     }
 }
+
+impl<W: UdpWrite + ?Sized> UdpWriteExt for W {}

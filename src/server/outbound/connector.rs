@@ -1,6 +1,8 @@
 use crate::{
+    adapt,
+    protocol::TCP_MAX_IDLE_TIMEOUT,
     server::inbound::TrojanAcceptor,
-    utils::{lite_tls::LeaveTls, ConnectionRequest, MixAddrType, Splitable, TimeoutMonitor},
+    utils::{lite_tls::LeaveTls, Adapter, ConnectionRequest, MixAddrType, Splitable},
 };
 use anyhow::{anyhow, Context, Error, Result};
 use lazy_static::lazy_static;
@@ -8,7 +10,6 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-use std::time::Duration;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
@@ -17,10 +18,7 @@ use tokio::{
 };
 use tracing::{debug, info};
 #[cfg(feature = "udp")]
-use {
-    crate::{server::utils::ServerUdpStream, utils::copy_udp},
-    tokio::net::UdpSocket,
-};
+use {crate::server::utils::ServerUdpStream, tokio::net::UdpSocket};
 
 lazy_static! {
     pub(crate) static ref TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -69,41 +67,17 @@ where
         }
         #[cfg(feature = "udp")]
         Ok(UDP(inbound)) => {
-            let (mut in_write, mut in_read) = inbound.split();
             let outbound = UdpSocket::bind("[::]:0")
                 .await
                 .map_err(|e| Error::new(e))
                 .with_context(|| anyhow!("failed to bind UdpSocket {:?}", target.host))?;
 
+            let mut outbound = ServerUdpStream::new(outbound);
             let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            debug!("[udp][{}] {:?} =>", conn_id, outbound.local_addr());
-            let mut udp_stream = ServerUdpStream::new(outbound);
-            let (out_write, out_read) = udp_stream.split();
-            let timeout_monitor = TimeoutMonitor::new(Duration::from_secs(5 * 60));
-            let mut out_read = timeout_monitor.watch(out_read);
-            let mut out_write = timeout_monitor.watch(out_write);
-            select! {
-                res = copy_udp(&mut out_read, &mut in_write, None) => {
-                    info!("[udp][{}]end downloading: {:?}", conn_id, res);
-                },
-                res = copy_udp(&mut in_read, &mut out_write, Some(conn_id)) => {
-                    info!("[udp][{}]end uploading: {:?}", conn_id, res);
-                },
-                _ = timeout_monitor => {
-                    info!("[udp][{}]end timeout", conn_id);
-                }
-                _ = upper_shutdown.recv() => {
-                    info!("[udp][{}]shutdown signal received", conn_id);
-                },
-            }
-            in_write
-                .shutdown()
-                .await
-                .with_context(|| anyhow!("failed to shutdown udp inbound"))?;
-            // out_write
-            //     .shutdown()
-            //     .await
-            //     .with_context(|| anyhow!("failed to shutdown tcp_tls udp outbound"))?;
+            adapt!([udp][conn_id]
+                inbound <=> outbound
+                Until upper_shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
+            );
         }
         #[cfg(feature = "quic")]
         Ok(ECHO(inbound)) => {

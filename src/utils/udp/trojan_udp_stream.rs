@@ -2,7 +2,6 @@ use crate::utils::{
     BufferedRecv, CursoredBuffer, ExtendableFromSlice, MixAddrType, ParserError, Splitable,
     UdpRead, UdpRelayBuffer, UdpWrite,
 };
-use anyhow::{Error, Result};
 use futures::ready;
 use pin_project_lite::pin_project;
 use std::{
@@ -10,7 +9,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::*;
 
 pub struct TrojanUdpStream<I> {
@@ -19,11 +18,11 @@ pub struct TrojanUdpStream<I> {
 }
 
 impl<I: Splitable> TrojanUdpStream<I> {
-    pub fn split(self) -> (TrojanUdpSendStream<I::W>, TrojanUdpRecvStream<I::R>) {
+    pub fn split(self) -> (TrojanUdpRecvStream<I::R>, TrojanUdpSendStream<I::W>) {
         let (read, write) = self.inner.split();
         (
-            TrojanUdpSendStream::new(write),
             TrojanUdpRecvStream::new(BufferedRecv::new(read, self.buffered_request)),
+            TrojanUdpSendStream::new(write),
         )
     }
 }
@@ -44,10 +43,6 @@ impl<W: AsyncWrite + Unpin> TrojanUdpSendStream<W> {
             inner,
             buffer: UdpRelayBuffer::new(),
         }
-    }
-
-    pub async fn shutdown(&mut self) -> Result<()> {
-        self.inner.shutdown().await.map_err(|e| Error::new(e))
     }
 }
 
@@ -130,31 +125,10 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpSendStream<W> {
         Pin::new(&mut self.inner).poll_flush(cx)
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        todo!()
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
-
-// impl<W: AsyncWrite + Unpin> AsyncWrite for TrojanUdpSendStream<W> {
-//     fn poll_write(
-//         self: Pin<&mut Self>,
-//         cx: &mut Context<'_>,
-//         buf: &[u8],
-//     ) -> Poll<Result<usize, std::io::Error>> {
-//         unimplemented!("shoudn't be called")
-//     }
-
-//     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
-//         unimplemented!("shoudn't be called")
-//     }
-
-//     fn poll_shutdown(
-//         self: Pin<&mut Self>,
-//         cx: &mut Context<'_>,
-//     ) -> Poll<Result<(), std::io::Error>> {
-//         todo!()
-//     }
-// }
 
 pin_project! {
     #[derive(Debug)]

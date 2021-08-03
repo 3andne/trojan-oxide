@@ -1,8 +1,8 @@
 pub mod copy_udp;
 pub mod trojan_udp_stream;
 pub mod udp_relay_buffer;
-pub mod udp_traits;
 pub mod udp_shutdown;
+pub mod udp_traits;
 
 pub use {
     copy_udp::copy_udp,
@@ -10,5 +10,5 @@ pub use {
         new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream, TrojanUdpStream,
     },
     udp_relay_buffer::UdpRelayBuffer,
-    udp_traits::{UdpRead, UdpWrite},
+    udp_traits::{UdpRead, UdpWrite, UdpWriteExt},
 };

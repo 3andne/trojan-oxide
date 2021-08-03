@@ -123,11 +123,11 @@ impl Socks5UdpStream {
         }
     }
 
-    pub fn split<'a>(&'a mut self) -> (Socks5UdpSendStream<'a>, Socks5UdpRecvStream<'a>) {
+    pub fn split<'a>(&'a mut self) -> (Socks5UdpRecvStream<'a>, Socks5UdpSendStream<'a>) {
         let (addr_tx, addr_rx) = oneshot::channel();
         (
-            Socks5UdpSendStream::new(&self.server_udp_socket, addr_rx),
             Socks5UdpRecvStream::new(&self.server_udp_socket, addr_tx, &mut self.signal_reset),
+            Socks5UdpSendStream::new(&self.server_udp_socket, addr_rx),
         )
     }
 }
@@ -327,7 +327,7 @@ impl<'a> UdpWrite for Socks5UdpSendStream<'a> {
         AsyncWrite::poll_flush(self, cx)
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        todo!()
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
