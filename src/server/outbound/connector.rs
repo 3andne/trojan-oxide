@@ -15,6 +15,7 @@ use tokio::{
     net::TcpStream,
     select,
     sync::broadcast,
+    time::{timeout, Duration},
 };
 use tracing::{debug, info};
 #[cfg(feature = "udp")]
@@ -57,9 +58,10 @@ where
 {
     let mut target = TrojanAcceptor::new(password_hash.as_bytes(), fallback_port);
     use ConnectionRequest::*;
-    match target.accept(stream).await {
+    match timeout(Duration::from_secs(5), target.accept(stream)).await? {
         Ok(TCP(inbound)) => {
-            let outbound = outbound_connect(&target.host).await?;
+            let outbound =
+                timeout(Duration::from_secs(2), outbound_connect(&target.host)).await??;
             let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             inbound
                 .forward(outbound, &target.host, upper_shutdown, conn_id)

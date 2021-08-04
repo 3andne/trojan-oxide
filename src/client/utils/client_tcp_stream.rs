@@ -1,4 +1,4 @@
-use crate::{utils::BufferedRecv};
+use crate::utils::BufferedRecv;
 use tokio::net::{
     tcp::{ReadHalf, WriteHalf},
     TcpStream,
