@@ -1,6 +1,9 @@
 use std::ops::DerefMut;
 
-use super::{error::eof_err, tls_relay_buffer::TlsRelayBuffer};
+use super::{
+    error::eof_err,
+    tls_relay_buffer::{TlsRelayBuffer, TlsVersion},
+};
 use crate::utils::ParserError;
 use anyhow::{anyhow, Context, Error, Result};
 use tokio::{
@@ -15,6 +18,12 @@ enum LiteTlsEndpointSide {
     ClientSide,
     #[cfg(feature = "server")]
     ServerSide,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Direction {
+    Inbound,
+    Outbound,
 }
 
 pub struct LiteTlsStream {
@@ -85,12 +94,6 @@ impl LiteTlsStream {
         outbound.flush().await?;
         self.inbound_buf.reset();
 
-        #[derive(Debug, Clone, Copy)]
-        enum Direction {
-            Inbound,
-            Outbound,
-        }
-
         #[cfg(feature = "debug_info")]
         let mut packet_id = 0;
 
@@ -122,12 +125,11 @@ impl LiteTlsStream {
                     Direction::Inbound => &mut self.inbound_buf,
                     Direction::Outbound => &mut self.outbound_buf,
                 }
-                .find_last_change_cipher_spec(&mut self.change_cipher_recieved),
-                dir,
+                .find_last_change_cipher_spec(&mut self.change_cipher_recieved, dir),
                 self.side,
             ) {
                 #[cfg(feature = "client")]
-                (Ok(_), Direction::Inbound, ClientSide) => {
+                (Ok(TlsVersion::Tls13), ClientSide) => {
                     #[cfg(feature = "debug_info")]
                     debug!("[LC0][{}]buf now: {:?}", packet_id, self.inbound_buf);
                     // TLS 1.2 with resumption or TLS 1.3
@@ -175,7 +177,7 @@ impl LiteTlsStream {
                     }
                 }
                 #[cfg(feature = "server")]
-                (Ok(_), Direction::Inbound, ServerSide) => {
+                (Ok(TlsVersion::Tls13), ServerSide) => {
                     // TLS 1.2 with resumption or TLS 1.3
                     #[cfg(feature = "debug_info")]
                     debug!("[LC1][{}]buf now: {:?}", packet_id, self.inbound_buf);
@@ -205,7 +207,7 @@ impl LiteTlsStream {
                     debug!("[LC1][{}]last CCS sent, leaving", packet_id);
                     return Ok(());
                 }
-                (Ok(_), Direction::Outbound, _) => {
+                (Ok(TlsVersion::Tls12), _) => {
                     // TLS 1.2 full handshake
 
                     #[cfg(feature = "debug_info")]
@@ -214,40 +216,21 @@ impl LiteTlsStream {
                         debug!("[LC2][{}]in buf now: {:?}", packet_id, self.inbound_buf);
                     }
 
-                    loop {
-                        match self.outbound_buf.check_type_0x16() {
-                            Ok(_) => {
-                                // relay till last byte
-                                if inbound.write(&self.outbound_buf.checked_packets()).await? == 0 {
-                                    return Err(eof_err("EOF on Parsing[3]"));
-                                }
-                                inbound.flush().await?;
-                                self.outbound_buf.pop_checked_packets();
-                                #[cfg(feature = "debug_info")]
-                                debug!(
-                                    "[LC2][{}]out buf after pop: {:?}",
-                                    packet_id, self.outbound_buf
-                                );
-                                // then we are safe to leave TLS channel
-                                return Ok(());
-                            }
-                            Err(ParserError::Incomplete(_)) => {
-                                // let's try to read the last encrypted packet
-                                if outbound.read_buf(self.outbound_buf.deref_mut()).await? == 0 {
-                                    return Err(eof_err("EOF on Parsing[4]"));
-                                }
-                            }
-                            Err(e @ ParserError::Invalid(_)) => {
-                                return Err(Error::new(e))
-                                    .with_context(|| anyhow!("tls 1.2 full handshake last step"));
-                            }
-                        }
-                    }
+                    // inbound_buf: [{0x14}, {0x16}, ...] -> [...]
+                    // outbound_buf: []
+                    self.inbound_buf.relay_until_0x16(inbound, outbound).await?;
+                    
+                    // inbound_buf: [...]
+                    // outbound_buf: [] -> [{0x14}, {0x16}] -> []
+                    self.outbound_buf.relay_until_0x16(outbound, inbound).await?;
+
+                    // then let's leave TLS channel
+                    return Ok(());
                 }
-                (Err(ParserError::Incomplete(_)), _, _) => {
+                (Err(ParserError::Incomplete(_)), _) => {
                     // relay pending packets
                 }
-                (Err(e @ ParserError::Invalid(_)), dir, _) => {
+                (Err(e @ ParserError::Invalid(_)), _) => {
                     return Err(Error::new(e))
                         .with_context(|| anyhow!("{:?}, {}", dir, self.change_cipher_recieved));
                 }

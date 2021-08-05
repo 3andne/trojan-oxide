@@ -1,9 +1,19 @@
-use crate::{expect_buf_len, utils::ParserError};
-use anyhow::Result;
+use super::lite_tls_stream::Direction;
+use crate::{
+    expect_buf_len,
+    utils::{lite_tls::error::eof_err, ParserError},
+};
+use anyhow::{Error, Result, Context, anyhow};
 use std::{
     cmp::min,
     ops::{Deref, DerefMut},
 };
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
+
+pub(super) enum TlsVersion {
+    Tls12,
+    Tls13,
+}
 
 #[derive(Debug)]
 pub struct TlsRelayBuffer {
@@ -107,10 +117,47 @@ impl TlsRelayBuffer {
         Ok(())
     }
 
-    pub fn find_last_change_cipher_spec(
+    pub(super) async fn relay_until_0x16<R, W>(&mut self, reader: &mut R, writer: &mut W) -> Result<()>
+    where
+        R: AsyncReadExt + Unpin,
+        W: AsyncWriteExt + Unpin,
+    {
+        loop {
+            match self.check_type_0x16() {
+                Ok(_) => {
+                    // relay till last byte
+                    if writer.write(&self.checked_packets()).await? == 0 {
+                        return Err(eof_err("EOF on Parsing[3]"));
+                    }
+                    writer.flush().await?;
+                    self.pop_checked_packets();
+                    #[cfg(feature = "debug_info")]
+                    debug!(
+                        "[LC2][{}]out buf after pop: {:?}",
+                        packet_id, self.outbound_buf
+                    );
+                    // then we are safe to leave TLS channel
+                    return Ok(());
+                }
+                Err(ParserError::Incomplete(_)) => {
+                    // let's try to read the last encrypted packet
+                    if reader.read_buf(self.deref_mut()).await? == 0 {
+                        return Err(eof_err("EOF on Parsing[4]"));
+                    }
+                }
+                Err(e @ ParserError::Invalid(_)) => {
+                    return Err(Error::new(e))
+                        .with_context(|| anyhow!("tls 1.2 full handshake last step"));
+                }
+            }
+        }
+    }
+
+    pub(super) fn find_last_change_cipher_spec(
         &mut self,
         seen_ccs: &mut usize,
-    ) -> Result<(), ParserError> {
+        dir: Direction,
+    ) -> Result<TlsVersion, ParserError> {
         loop {
             expect_buf_len!(
                 self.inner,
@@ -118,14 +165,21 @@ impl TlsRelayBuffer {
                 "find change cipher spec incomplete"
             );
             match self.inner[self.cursor] {
-                0x14 => match *seen_ccs {
-                    0 => {
-                        *seen_ccs += 1;
-                        self.check_type_0x14()?;
+                0x14 => {
+                    self.check_type_0x14()?;
+                    match (*seen_ccs, dir) {
+                        (1, Direction::Inbound) => {
+                            return Ok(TlsVersion::Tls13);
+                        }
+                        (0, Direction::Inbound) => {
+                            return Ok(TlsVersion::Tls12);
+                        }
+                        (0, Direction::Outbound) => {
+                            *seen_ccs += 1;
+                        }
+                        _ => unreachable!(),
                     }
-                    1 => return self.check_type_0x14(),
-                    _ => unreachable!(),
-                },
+                }
                 0x16 | 0x17 | 0x15 => {
                     // problematic
                     self.check_type_0x16()?;
