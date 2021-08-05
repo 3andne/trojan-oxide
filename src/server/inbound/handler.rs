@@ -1,7 +1,10 @@
 use crate::server::outbound::handle_outbound;
 use anyhow::{anyhow, Context, Result};
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::{
+    sync::broadcast,
+    time::{timeout, Duration},
+};
 #[cfg(feature = "quic")]
 use {
     futures::{StreamExt, TryFutureExt},
@@ -75,10 +78,9 @@ pub async fn handle_tcp_tls_connection(
     fallback_port: Arc<String>,
 ) -> Result<()> {
     stream.set_nodelay(true)?;
-    let stream = acceptor
-        .accept(stream)
+    let stream = timeout(Duration::from_secs(5), acceptor.accept(stream))
         .await
-        .with_context(|| anyhow!("failed to accept TlsStream"))?;
+        .with_context(|| anyhow!("failed to accept TlsStream"))??;
     handle_outbound(stream, upper_shutdown, password_hash, fallback_port).await?;
     Ok(())
 }
