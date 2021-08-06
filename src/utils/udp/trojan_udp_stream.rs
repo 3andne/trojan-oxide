@@ -5,7 +5,6 @@ use crate::utils::{
 use futures::ready;
 use pin_project_lite::pin_project;
 use std::{
-    cmp::min,
     pin::Pin,
     task::{Context, Poll},
 };

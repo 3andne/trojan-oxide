@@ -46,7 +46,6 @@ where
                     .await
                 {
                     Ok(_) => {
-                        lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
                         let mut inbound = inbound.into_inner().leave();
                         debug!("lite tls start relaying");
                         adapt!([lite][conn_id]

@@ -3,12 +3,12 @@ use crate::{
     expect_buf_len,
     utils::{lite_tls::error::eof_err, ParserError},
 };
-use anyhow::{Error, Result, Context, anyhow};
+use anyhow::{anyhow, Context, Error, Result};
 use std::{
     cmp::min,
     ops::{Deref, DerefMut},
 };
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub(super) enum TlsVersion {
     Tls12,
@@ -102,7 +102,7 @@ impl TlsRelayBuffer {
         }
     }
 
-    pub fn check_type_0x16(&mut self) -> Result<(), ParserError> {
+    pub fn check_tls_packet(&mut self) -> Result<(), ParserError> {
         expect_buf_len!(
             self.inner,
             self.cursor + 5,
@@ -117,28 +117,19 @@ impl TlsRelayBuffer {
         Ok(())
     }
 
-    pub(super) async fn relay_until_0x16<R, W>(&mut self, reader: &mut R, writer: &mut W) -> Result<()>
+    pub(super) async fn relay_tls_packets<R, W>(
+        &mut self,
+        mut num_of_packets: usize,
+        reader: &mut R,
+        writer: &mut W,
+    ) -> Result<()>
     where
         R: AsyncReadExt + Unpin,
         W: AsyncWriteExt + Unpin,
     {
-        loop {
-            match self.check_type_0x16() {
-                Ok(_) => {
-                    // relay till last byte
-                    if writer.write(&self.checked_packets()).await? == 0 {
-                        return Err(eof_err("EOF on Parsing[3]"));
-                    }
-                    writer.flush().await?;
-                    self.pop_checked_packets();
-                    #[cfg(feature = "debug_info")]
-                    debug!(
-                        "[LC2][{}]out buf after pop: {:?}",
-                        packet_id, self.outbound_buf
-                    );
-                    // then we are safe to leave TLS channel
-                    return Ok(());
-                }
+        while num_of_packets > 0 {
+            match self.check_tls_packet() {
+                Ok(_) => num_of_packets -= 1,
                 Err(ParserError::Incomplete(_)) => {
                     // let's try to read the last encrypted packet
                     if reader.read_buf(self.deref_mut()).await? == 0 {
@@ -151,6 +142,19 @@ impl TlsRelayBuffer {
                 }
             }
         }
+        // relay till last byte
+        if writer.write(&self.checked_packets()).await? == 0 {
+            return Err(eof_err("EOF on Parsing[3]"));
+        }
+        writer.flush().await?;
+        self.pop_checked_packets();
+        #[cfg(feature = "debug_info")]
+        debug!(
+            "[LC2][{}]out buf after pop: {:?}",
+            packet_id, self.outbound_buf
+        );
+        // then we are safe to leave TLS channel
+        return Ok(());
     }
 
     pub(super) fn find_last_change_cipher_spec(
@@ -182,7 +186,7 @@ impl TlsRelayBuffer {
                 }
                 0x16 | 0x17 | 0x15 => {
                     // problematic
-                    self.check_type_0x16()?;
+                    self.check_tls_packet()?;
                 }
                 _ => {
                     return Err(ParserError::Invalid("unexpected tls packet type".into()));

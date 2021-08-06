@@ -8,6 +8,7 @@ use std::{
 };
 use tokio::task::spawn_blocking;
 use tokio::{net::UdpSocket, task::JoinHandle};
+#[cfg(feature = "debug_info")]
 use tracing::*;
 
 pub struct ServerUdpStream {
@@ -134,6 +135,7 @@ impl<'a> UdpRead for ServerUdpRecvStream<'a> {
         cx: &mut Context<'_>,
         buf: &mut UdpRelayBuffer,
     ) -> Poll<std::io::Result<MixAddrType>> {
+        #[cfg(feature = "debug_info")]
         debug!("ServerUdpRecvStream::poll_proxy_stream_read()");
         let mut buf_inner = buf.as_read_buf();
         let ptr = buf_inner.filled().as_ptr();
@@ -155,6 +157,7 @@ impl<'a> UdpRead for ServerUdpRecvStream<'a> {
             buf.advance_mut(n);
         }
 
+        #[cfg(feature = "debug_info")]
         debug!(
             "ServerUdpRecvStream::poll_proxy_stream_read() buf {:?}",
             buf

@@ -129,10 +129,10 @@ impl LiteTlsStream {
                 self.side,
             ) {
                 #[cfg(feature = "client")]
+                // TLS 1.2 with resumption or TLS 1.3
                 (Ok(TlsVersion::Tls13), ClientSide) => {
                     #[cfg(feature = "debug_info")]
                     debug!("[LC0][{}]buf now: {:?}", packet_id, self.inbound_buf);
-                    // TLS 1.2 with resumption or TLS 1.3
 
                     // relay everything till the end of CCS
                     // there might be some 0x17 packets left
@@ -167,6 +167,8 @@ impl LiteTlsStream {
                             // TLS.
                             self.outbound_buf.reset();
                             // Then it's safe for us to leave TLS
+                            // outbound_buf: []
+                            // inbound_buf: [...]
                             return Ok(());
                         }
                         Err(_) => {
@@ -176,9 +178,9 @@ impl LiteTlsStream {
                         }
                     }
                 }
+                // TLS 1.2 with resumption or TLS 1.3
                 #[cfg(feature = "server")]
                 (Ok(TlsVersion::Tls13), ServerSide) => {
-                    // TLS 1.2 with resumption or TLS 1.3
                     #[cfg(feature = "debug_info")]
                     debug!("[LC1][{}]buf now: {:?}", packet_id, self.inbound_buf);
 
@@ -207,22 +209,31 @@ impl LiteTlsStream {
                     debug!("[LC1][{}]last CCS sent, leaving", packet_id);
                     return Ok(());
                 }
+                // TLS 1.2 full handshake
                 (Ok(TlsVersion::Tls12), _) => {
-                    // TLS 1.2 full handshake
-
                     #[cfg(feature = "debug_info")]
                     {
                         debug!("[LC2][{}]out buf now: {:?}", packet_id, self.outbound_buf);
                         debug!("[LC2][{}]in buf now: {:?}", packet_id, self.inbound_buf);
                     }
 
-                    // inbound_buf: [{0x14}, {0x16}, ...] -> [...]
+                    // inbound_buf{client}: [{0x14}, {0x16}, ...] -> [...]
+                    //                 ^        ^
+                    //              checked  unchecked
+                    // inbound_buf{server}: [{0x14}, {0x16}] -> []
+                    //                 ^        ^
+                    //              checked  unchecked
                     // outbound_buf: []
-                    self.inbound_buf.relay_until_0x16(inbound, outbound).await?;
-                    
-                    // inbound_buf: [...]
+                    self.inbound_buf
+                        .relay_tls_packets(1, inbound, outbound)
+                        .await?;
+
+                    // inbound_buf{client}: [...]
+                    // inbound_buf{server}: []
                     // outbound_buf: [] -> [{0x14}, {0x16}] -> []
-                    self.outbound_buf.relay_until_0x16(outbound, inbound).await?;
+                    self.outbound_buf
+                        .relay_tls_packets(2, outbound, inbound)
+                        .await?;
 
                     // then let's leave TLS channel
                     return Ok(());
