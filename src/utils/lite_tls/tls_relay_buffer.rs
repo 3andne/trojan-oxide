@@ -42,15 +42,15 @@ fn extract_len(buf: &[u8]) -> usize {
     buf[0] as usize * 256 + buf[1] as usize
 }
 
-pub enum Expecting {
-    Len(usize),
+pub(super) enum Expecting {
+    Num(usize),
     Packet(u8),
 }
 
 impl Expecting {
     fn is_expected(&self) -> bool {
         match self {
-            Expecting::Len(l) => l == 0,
+            Expecting::Num(l) => *l == 0,
             Expecting::Packet(_) => false,
         }
     }
@@ -135,7 +135,7 @@ impl TlsRelayBuffer {
         Ok(packet_type)
     }
 
-    pub(super) async fn read_tls_packets<R>(
+    pub(super) async fn check_tls_packets<R>(
         &mut self,
         mut expecting: Expecting,
         reader: &mut R,
@@ -145,9 +145,13 @@ impl TlsRelayBuffer {
     {
         while !expecting.is_expected() {
             match self.check_tls_packet() {
-                Ok(p_ty) => match expecting.ref_mut() {
-                    Expecting::Len(l) => l -= 1,
-                    Expecting::Packet(_) => todo!(),
+                Ok(p_ty) => match &mut expecting {
+                    Expecting::Num(l) => *l -= 1,
+                    Expecting::Packet(t) => {
+                        if p_ty == *t {
+                            break;
+                        }
+                    }
                 },
                 Err(ParserError::Incomplete(_)) => {
                     // let's try to read the last encrypted packet
@@ -165,7 +169,7 @@ impl TlsRelayBuffer {
         return Ok(());
     }
 
-    pub async fn write_tls_packets<W>(&mut self, writer: &mut W) -> Result<()>
+    pub async fn write_checked_packets<W>(&mut self, writer: &mut W) -> Result<()>
     where
         W: AsyncWriteExt + Unpin,
     {

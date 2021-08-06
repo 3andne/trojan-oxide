@@ -2,7 +2,7 @@ use std::ops::DerefMut;
 
 use super::{
     error::eof_err,
-    tls_relay_buffer::{TlsRelayBuffer, TlsVersion},
+    tls_relay_buffer::{Expecting, TlsRelayBuffer, TlsVersion},
 };
 use crate::utils::ParserError;
 use anyhow::{anyhow, Context, Error, Result};
@@ -217,23 +217,43 @@ impl LiteTlsStream {
                         debug!("[LC2][{}]in buf now: {:?}", packet_id, self.inbound_buf);
                     }
 
-                    // inbound_buf{client}: [{0x14}, {0x16}, ...] -> [...]
-                    //                 ^        ^
-                    //              checked  unchecked
-                    // inbound_buf{server}: [{0x14}, {0x16}] -> []
-                    //                 ^        ^
-                    //              checked  unchecked
+                    // inbound_buf{client}:
+                    // [{0x14}, {0x16}, ...] -> [{0x14}, {0x16}, ...]
+                    //    ^       ^                        ^
+                    //  checked unchecked                checked
+                    //
+                    // inbound_buf{server}:
+                    // [{0x14}, {0x16}] -> [{0x14}, {0x16}]
+                    //    ^       ^                   ^
+                    //  checked unchecked           checked
+                    //
                     // outbound_buf: []
                     self.inbound_buf
-                        .relay_tls_packets(1, inbound, outbound)
+                        .check_tls_packets(Expecting::Num(1), inbound)
                         .await?;
 
-                    // inbound_buf{client}: [...]
-                    // inbound_buf{server}: []
-                    // outbound_buf: [] -> [..., {0x14}, {0x16}] -> []
+                    // inbound_buf{client}:
+                    // [{0x14}, {0x16}, ...] -> [...]
+                    // inbound_buf{server}:
+                    // [{0x14}, {0x16}] -> []
+                    self.inbound_buf.write_checked_packets(outbound).await?;
+
+                    // outbound_buf: [] -> [..., {0x14}, {0x16}]
+                    //                             ^       ^
+                    //                           checked unchecked
                     self.outbound_buf
-                        .relay_tls_packets(2, outbound, inbound)
+                        .check_tls_packets(Expecting::Packet(0x14), outbound)
                         .await?;
+
+                    // outbound_buf: [] -> [..., {0x14}, {0x16}]
+                    //                                     ^
+                    //                                   checked
+                    self.outbound_buf
+                        .check_tls_packets(Expecting::Num(1), outbound)
+                        .await?;
+
+                    // outbound_buf: [..., {0x14}, {0x16}] -> []
+                    self.outbound_buf.write_checked_packets(inbound).await?;
 
                     // then let's leave TLS channel
                     return Ok(());
