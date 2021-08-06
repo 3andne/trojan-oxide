@@ -228,28 +228,20 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpRecvStream<R> {
                     me.buffer.advance(2); // for `\r\n`
                 }
 
-                if me.buffer.remaining() > 0 {
-                    let expecting = me.expecting.unwrap();
-                    let to_read = min(expecting, me.buffer.remaining());
-                    outer_buf.extend_from_slice(&me.buffer.chunk()[..to_read]);
-                    me.buffer.advance(to_read);
+                let expecting = me.expecting.unwrap();
+                // udp shouldn't be fragmented
+                // we read in the packet as a whole
+                // or we return pending
+                if expecting <= me.buffer.remaining() {
+                    outer_buf.extend_from_slice(&me.buffer.chunk()[..expecting]);
+                    me.buffer.advance(expecting);
                     me.buffer.pump();
+                    *me.expecting = None;
                     #[cfg(feature = "debug_info")]
                     debug!("TrojanUdpRecvStream buffer before return {:?}", me.buffer);
-                    if to_read < expecting {
-                        *me.expecting = Some(expecting - to_read);
-                        Poll::Pending
-                    } else {
-                        *me.expecting = None;
-                        let addr = std::mem::replace(me.addr_buf, MixAddrType::None);
-                        Poll::Ready(Ok(addr))
-                    }
+                    let addr = std::mem::replace(me.addr_buf, MixAddrType::None);
+                    Poll::Ready(Ok(addr))
                 } else {
-                    #[cfg(feature = "debug_info")]
-                    debug!(
-                        "TrojanUdpRecvStream::poll_proxy_stream_read() expecting: {:?}, not long enough",
-                        me.expecting
-                    );
                     Poll::Pending
                 }
             }

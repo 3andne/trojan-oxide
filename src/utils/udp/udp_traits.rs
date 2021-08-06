@@ -7,6 +7,8 @@ use super::udp_shutdown::{shutdown, Shutdown};
 pub trait UdpRead {
     /// Should return Poll::Ready(Ok(MixAddrType::None)) when
     /// EOF is seen.
+    /// Udp packets should be read as a whole.
+    /// If it's not complete, return Pending.
     fn poll_proxy_stream_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,

@@ -46,7 +46,12 @@ where
     ) -> Poll<Self::Output> {
         let me = &mut *self;
         loop {
-            if me.addr.is_none() {
+            if !me.buf.has_remaining() {
+                #[cfg(feature = "debug_info")]
+                debug!("[{:?}]CopyUdp::poll reset buffer", me.conn_id);
+                unsafe {
+                    me.buf.reset();
+                }
                 #[cfg(feature = "debug_info")]
                 debug!("[{:?}]CopyUdp::poll me.addr.is_none()", me.conn_id);
                 let new_addr =
@@ -56,10 +61,11 @@ where
                     debug!("[{:?}]CopyUdp::poll new_addr.is_none()", me.conn_id);
                     break;
                 }
-                if me.conn_id.is_some() {
+                if me.conn_id.is_some() && me.addr.as_ref().map_or(true, |prev| prev != &new_addr)
+                {
                     info!("[udp][{}] => {:?}", me.conn_id.unwrap(), &new_addr);
+                    me.addr = Some(new_addr);
                 }
-                me.addr = Some(new_addr);
             }
 
             #[cfg(feature = "debug_info")]
@@ -83,15 +89,6 @@ where
             #[cfg(feature = "debug_info")]
             debug!("[{:?}]CopyUdp::poll me.buf.advance({})", me.conn_id, x);
             me.buf.advance(x);
-
-            if !me.buf.has_remaining() {
-                #[cfg(feature = "debug_info")]
-                debug!("[{:?}]CopyUdp::poll reset buffer", me.conn_id);
-                me.addr = None;
-                unsafe {
-                    me.buf.reset();
-                }
-            }
 
             ready!(Pin::new(&mut *me.writer).poll_flush(cx))?; // for TlsStream
             me.amt += x as u64;

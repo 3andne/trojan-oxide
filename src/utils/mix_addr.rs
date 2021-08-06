@@ -19,6 +19,19 @@ pub enum MixAddrType {
     None,
 }
 
+impl PartialEq for MixAddrType {
+    fn eq(&self, other: &Self) -> bool {
+        use MixAddrType::*;
+        match (self, other) {
+            (V4(v1), V4(v2)) => v1 == v2,
+            (V6(v1), V6(v2)) => v1 == v2,
+            (Hostname(v1), Hostname(v2)) => v1 == v2,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
 impl Default for MixAddrType {
     fn default() -> Self {
         MixAddrType::None
