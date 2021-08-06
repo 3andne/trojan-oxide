@@ -230,7 +230,7 @@ impl LiteTlsStream {
 
                     // inbound_buf{client}: [...]
                     // inbound_buf{server}: []
-                    // outbound_buf: [] -> [{0x14}, {0x16}] -> []
+                    // outbound_buf: [] -> [..., {0x14}, {0x16}] -> []
                     self.outbound_buf
                         .relay_tls_packets(2, outbound, inbound)
                         .await?;

@@ -10,6 +10,9 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[cfg(feature = "debug_info")]
+use tracing::debug;
+
 pub(super) enum TlsVersion {
     Tls12,
     Tls13,
@@ -37,6 +40,20 @@ impl DerefMut for TlsRelayBuffer {
 
 fn extract_len(buf: &[u8]) -> usize {
     buf[0] as usize * 256 + buf[1] as usize
+}
+
+pub enum Expecting {
+    Len(usize),
+    Packet(u8),
+}
+
+impl Expecting {
+    fn is_expected(&self) -> bool {
+        match self {
+            Expecting::Len(l) => l == 0,
+            Expecting::Packet(_) => false,
+        }
+    }
 }
 
 impl TlsRelayBuffer {
@@ -102,34 +119,36 @@ impl TlsRelayBuffer {
         }
     }
 
-    pub fn check_tls_packet(&mut self) -> Result<(), ParserError> {
+    fn check_tls_packet(&mut self) -> Result<u8, ParserError> {
         expect_buf_len!(
             self.inner,
             self.cursor + 5,
             "packet 0x16 (or sth) incomplete[1]"
         );
+        let packet_type = self.inner[self.cursor];
         self.cursor += 5 + extract_len(&self.inner[self.cursor + 3..]);
         expect_buf_len!(
             self.inner,
             self.cursor,
             "packet 0x16 (or sth) incomplete[2]"
         );
-        Ok(())
+        Ok(packet_type)
     }
 
-    pub(super) async fn relay_tls_packets<R, W>(
+    pub(super) async fn read_tls_packets<R>(
         &mut self,
-        mut num_of_packets: usize,
+        mut expecting: Expecting,
         reader: &mut R,
-        writer: &mut W,
     ) -> Result<()>
     where
         R: AsyncReadExt + Unpin,
-        W: AsyncWriteExt + Unpin,
     {
-        while num_of_packets > 0 {
+        while !expecting.is_expected() {
             match self.check_tls_packet() {
-                Ok(_) => num_of_packets -= 1,
+                Ok(p_ty) => match expecting.ref_mut() {
+                    Expecting::Len(l) => l -= 1,
+                    Expecting::Packet(_) => todo!(),
+                },
                 Err(ParserError::Incomplete(_)) => {
                     // let's try to read the last encrypted packet
                     if reader.read_buf(self.deref_mut()).await? == 0 {
@@ -142,6 +161,16 @@ impl TlsRelayBuffer {
                 }
             }
         }
+
+        return Ok(());
+    }
+
+    pub async fn write_tls_packets<W>(&mut self, writer: &mut W) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        #[cfg(feature = "debug_info")]
+        debug!("[LC2]buf before pop: {:?}", self);
         // relay till last byte
         if writer.write(&self.checked_packets()).await? == 0 {
             return Err(eof_err("EOF on Parsing[3]"));
@@ -149,12 +178,9 @@ impl TlsRelayBuffer {
         writer.flush().await?;
         self.pop_checked_packets();
         #[cfg(feature = "debug_info")]
-        debug!(
-            "[LC2][{}]out buf after pop: {:?}",
-            packet_id, self.outbound_buf
-        );
+        debug!("[LC2]buf after pop: {:?}", self);
         // then we are safe to leave TLS channel
-        return Ok(());
+        Ok(())
     }
 
     pub(super) fn find_last_change_cipher_spec(
