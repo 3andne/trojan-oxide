@@ -103,6 +103,8 @@ impl LiteTlsStream {
         I: AsyncReadExt + AsyncWriteExt + Unpin,
         O: AsyncReadExt + AsyncWriteExt + Unpin,
     {
+        #[cfg(feature = "debug_info")]
+        debug!("lite tls handshake entered");
         self.client_hello(inbound).await?;
 
         // relay packet

@@ -220,6 +220,8 @@ impl TlsRelayBuffer {
                     seen_0x17.witness(dir);
                     if seen_0x17.is_complete() {
                         return Ok(LeaveTlsSide::Active);
+                    } else {
+                        self.check_tls_packet()?;
                     }
                 }
                 0xff => {
