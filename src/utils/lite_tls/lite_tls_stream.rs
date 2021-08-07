@@ -48,9 +48,17 @@ impl LiteTlsStream {
         inbound: &mut I,
     ) -> Result<()>
     where
-        I: AsyncReadExt + AsyncWriteExt + Unpin,
-        O: AsyncReadExt + AsyncWriteExt + Unpin,
+        I: AsyncWriteExt + Unpin,
+        O: AsyncWriteExt + Unpin,
     {
+        #[cfg(feature = "debug_info")]
+        {
+            debug!(
+                "[1]0x17: {:?}, inbound_buf: {:?}",
+                self.recieved_0x17, self.inbound_buf
+            );
+            debug!("[1]outbound_buf: {:?}", self.outbound_buf);
+        }
         match dir {
             Direction::Inbound => {
                 if outbound.write(self.inbound_buf.checked_packets()).await? == 0 {
@@ -118,7 +126,10 @@ impl LiteTlsStream {
         loop {
             #[cfg(feature = "debug_info")]
             {
-                debug!("[0][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
+                debug!(
+                    "[0][{}]0x17: {:?}, inbound_buf: {:?}",
+                    packet_id, self.recieved_0x17, self.inbound_buf
+                );
                 debug!("[0][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
             }
             let (res, dir) = select! {
@@ -159,7 +170,7 @@ impl LiteTlsStream {
                             }
                         }
                         Direction::Outbound => {
-                            if inbound.write(&[0xff, 0x03, 0x03, 0, 0x01, 0x01]).await? == 0 {
+                            if inbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
                                 return Err(eof_err("EOF on Parsing[9]"));
                             }
                             inbound.flush().await?;
@@ -214,12 +225,6 @@ impl LiteTlsStream {
                     return Err(Error::new(e))
                         .with_context(|| anyhow!("{:?}, {:?}", dir, self.recieved_0x17));
                 }
-            }
-
-            #[cfg(feature = "debug_info")]
-            {
-                debug!("[1][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
-                debug!("[1][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
             }
 
             // relay pending bytes

@@ -7,8 +7,8 @@ use std::{
 };
 // use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-// #[cfg(feature = "debug_info")]
-// use tracing::debug;
+#[cfg(feature = "debug_info")]
+use tracing::debug;
 
 // pub(super) enum TlsVersion {
 //     Tls12,
@@ -77,15 +77,6 @@ impl Seen0x17 {
         }
     }
 }
-
-// impl Expecting {
-//     fn is_expected(&self) -> bool {
-//         match self {
-//             Expecting::Num(l) => *l == 0,
-//             Expecting::Packet(_) => false,
-//         }
-//     }
-// }
 
 impl TlsRelayBuffer {
     pub fn new() -> Self {
@@ -156,58 +147,6 @@ impl TlsRelayBuffer {
         Ok(packet_type)
     }
 
-    // pub(super) async fn check_tls_packets<R>(
-    //     &mut self,
-    //     mut expecting: Expecting,
-    //     reader: &mut R,
-    // ) -> Result<()>
-    // where
-    //     R: AsyncReadExt + Unpin,
-    // {
-    //     while !expecting.is_expected() {
-    //         match self.check_tls_packet() {
-    //             Ok(p_ty) => match &mut expecting {
-    //                 Expecting::Num(l) => *l -= 1,
-    //                 Expecting::Packet(t) => {
-    //                     if p_ty == *t {
-    //                         break;
-    //                     }
-    //                 }
-    //             },
-    //             Err(ParserError::Incomplete(_)) => {
-    //                 // let's try to read the last encrypted packet
-    //                 if reader.read_buf(self.deref_mut()).await? == 0 {
-    //                     return Err(eof_err("EOF on Parsing[4]"));
-    //                 }
-    //             }
-    //             Err(e @ ParserError::Invalid(_)) => {
-    //                 return Err(Error::new(e))
-    //                     .with_context(|| anyhow!("tls 1.2 full handshake last step"));
-    //             }
-    //         }
-    //     }
-
-    //     return Ok(());
-    // }
-
-    // pub async fn write_checked_packets<W>(&mut self, writer: &mut W) -> Result<()>
-    // where
-    //     W: AsyncWriteExt + Unpin,
-    // {
-    //     #[cfg(feature = "debug_info")]
-    //     debug!("[LC2]buf before pop: {:?}", self);
-    //     // relay till last byte
-    //     if writer.write(&self.checked_packets()).await? == 0 {
-    //         return Err(eof_err("EOF on Parsing[3]"));
-    //     }
-    //     writer.flush().await?;
-    //     self.pop_checked_packets();
-    //     #[cfg(feature = "debug_info")]
-    //     debug!("[LC2]buf after pop: {:?}", self);
-    //     // then we are safe to leave TLS channel
-    //     Ok(())
-    // }
-
     pub(super) fn find_first_0x17(
         &mut self,
         seen_0x17: &mut Seen0x17,
@@ -217,14 +156,24 @@ impl TlsRelayBuffer {
             expect_buf_len!(self.inner, self.cursor + 1, "find 0x17 incomplete");
             match self.inner[self.cursor] {
                 0x17 => {
+                    #[cfg(feature = "debug_info")]
+                    debug!("found 0x17, already seen: {:?}", seen_0x17);
                     seen_0x17.witness(dir);
+                    #[cfg(feature = "debug_info")]
+                    debug!("now seen 0x17: {:?}", seen_0x17);
                     if seen_0x17.is_complete() {
+                        #[cfg(feature = "debug_info")]
+                        debug!("lite-tls active handshake");
                         return Ok(LeaveTlsSide::Active);
                     } else {
+                        #[cfg(feature = "debug_info")]
+                        debug!("lite-tls first 0x17");
                         self.check_tls_packet()?;
                     }
                 }
                 0xff => {
+                    #[cfg(feature = "debug_info")]
+                    debug!("lite-tls passive handshake");
                     return Ok(LeaveTlsSide::Passive);
                 }
                 0x14 | 0x15 | 0x16 => {
