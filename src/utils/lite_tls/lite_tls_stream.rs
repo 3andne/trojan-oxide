@@ -4,7 +4,7 @@ use super::{
     error::eof_err,
     tls_relay_buffer::{LeaveTlsSide, Seen0x17, TlsRelayBuffer},
 };
-use crate::utils::ParserError;
+use crate::{protocol::LEAVE_TLS_COMMAND, utils::ParserError};
 use anyhow::{anyhow, Context, Error, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -147,19 +147,34 @@ impl LiteTlsStream {
                     // relay all pending packets
                     self.relay_pending(dir, outbound, inbound).await?;
 
+                    let mut tmp = [0u8; 6];
                     match dir {
                         Direction::Inbound => {
-                            if outbound.write(&[0xff, 0x03, 0x03, 0, 0x01, 0x01]).await? == 0 {
+                            if outbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
                                 return Err(eof_err("EOF on Parsing[7]"));
                             }
                             outbound.flush().await?;
+                            if outbound.read(&mut tmp).await? == 0 {
+                                return Err(eof_err("EOF on Parsing[8]"));
+                            }
                         }
                         Direction::Outbound => {
                             if inbound.write(&[0xff, 0x03, 0x03, 0, 0x01, 0x01]).await? == 0 {
-                                return Err(eof_err("EOF on Parsing[8]"));
+                                return Err(eof_err("EOF on Parsing[9]"));
                             }
                             inbound.flush().await?;
+
+                            if inbound.read(&mut tmp).await? == 0 {
+                                return Err(eof_err("EOF on Parsing[10]"));
+                            }
                         }
+                    }
+
+                    if tmp != LEAVE_TLS_COMMAND {
+                        return Err(Error::new(ParserError::Invalid(format!(
+                            "expecting LEAVE_TLS_COMMAND, got: {:?} from {:?}",
+                            tmp, dir
+                        ))));
                     }
 
                     // Then we leave tls tunnel
@@ -172,10 +187,20 @@ impl LiteTlsStream {
                         Direction::Inbound => {
                             self.inbound_buf.check_tls_packet()?;
                             self.inbound_buf.pop_checked_packets();
+
+                            if inbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
+                                return Err(eof_err("EOF on Parsing[11]"));
+                            }
+                            inbound.flush().await?;
                         }
                         Direction::Outbound => {
                             self.outbound_buf.check_tls_packet()?;
                             self.outbound_buf.pop_checked_packets();
+
+                            if outbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
+                                return Err(eof_err("EOF on Parsing[12]"));
+                            }
+                            outbound.flush().await?;
                         }
                     }
 
