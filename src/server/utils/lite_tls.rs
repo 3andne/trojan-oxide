@@ -41,7 +41,7 @@ where
                 );
             }
             LiteTLS(mut inbound) => {
-                let mut lite_tls_endpoint = LiteTlsStream::new_endpoint();
+                let mut lite_tls_endpoint = LiteTlsStream::new_server_endpoint();
                 match timeout(
                     Duration::from_secs(5),
                     lite_tls_endpoint.handshake(&mut outbound, &mut inbound),
