@@ -73,7 +73,7 @@ impl LiteTlsStream {
                 self.inbound_buf.pop_checked_packets();
             }
             Direction::Outbound => {
-                if self.inbound_buf.checked_packets().len() == 0 {
+                if self.outbound_buf.checked_packets().len() == 0 {
                     // don't even try to write, otherwise we may
                     // send an EOF.
                     return Ok(());
