@@ -38,7 +38,7 @@ pub async fn relay_tcp(
         }
         #[cfg(feature = "lite_tls")]
         ClientServerConnection::LiteTLS(mut outbound) => {
-            let mut lite_tls_endpoint = LiteTlsStream::new_client_endpoint();
+            let mut lite_tls_endpoint = LiteTlsStream::new_endpoint();
             let mut inbound_tmp = WRTuple::from_rw_tuple(inbound.split());
             match lite_tls_endpoint
                 .handshake(&mut outbound, &mut inbound_tmp)

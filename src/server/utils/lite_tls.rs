@@ -40,13 +40,14 @@ where
                 );
             }
             LiteTLS(mut inbound) => {
-                let mut lite_tls_endpoint = LiteTlsStream::new_server_endpoint();
+                let mut lite_tls_endpoint = LiteTlsStream::new_endpoint();
                 match lite_tls_endpoint
                     .handshake(&mut outbound, &mut inbound)
                     .await
                 {
                     Ok(_) => {
                         let mut inbound = inbound.into_inner().leave();
+                        lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
                         debug!("lite tls start relaying");
                         adapt!([lite][conn_id]
                             inbound[Tcp] <=> outbound[Tcp] <=> target_host
