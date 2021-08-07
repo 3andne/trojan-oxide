@@ -7,7 +7,10 @@ use crate::{
     utils::{Adapter, MixAddrType, ParserError, Splitable, WRTuple},
 };
 use anyhow::{anyhow, Context, Result};
-use tokio::sync::broadcast;
+use tokio::{
+    sync::broadcast,
+    time::{timeout, Duration},
+};
 use tracing::info;
 
 #[cfg(feature = "lite_tls")]
@@ -40,9 +43,11 @@ pub async fn relay_tcp(
         ClientServerConnection::LiteTLS(mut outbound) => {
             let mut lite_tls_endpoint = LiteTlsStream::new_endpoint();
             let mut inbound_tmp = WRTuple::from_rw_tuple(inbound.split());
-            match lite_tls_endpoint
-                .handshake(&mut outbound, &mut inbound_tmp)
-                .await
+            match timeout(
+                Duration::from_secs(5),
+                lite_tls_endpoint.handshake(&mut outbound, &mut inbound_tmp),
+            )
+            .await?
             {
                 Ok(_) => {
                     info!("lite tls handshake succeed");
