@@ -61,6 +61,11 @@ impl LiteTlsStream {
         }
         match dir {
             Direction::Inbound => {
+                if self.inbound_buf.checked_packets().len() == 0 {
+                    // don't even try to write, otherwise we may
+                    // send an EOF.
+                    return Ok(());
+                }
                 if outbound.write(self.inbound_buf.checked_packets()).await? == 0 {
                     return Err(eof_err("EOF on Parsing[5]"));
                 }
@@ -68,6 +73,11 @@ impl LiteTlsStream {
                 self.inbound_buf.pop_checked_packets();
             }
             Direction::Outbound => {
+                if self.inbound_buf.checked_packets().len() == 0 {
+                    // don't even try to write, otherwise we may
+                    // send an EOF.
+                    return Ok(());
+                }
                 if inbound.write(self.outbound_buf.checked_packets()).await? == 0 {
                     return Err(eof_err("EOF on Parsing[6]"));
                 }
@@ -165,6 +175,11 @@ impl LiteTlsStream {
                                 return Err(eof_err("EOF on Parsing[7]"));
                             }
                             outbound.flush().await?;
+                            // there's a bug here...
+                            // we shouldn't expect the next packet to be
+                            // LEAVE_TLS_COMMAND, it might be a 0x17,
+                            // we should keep reading until we reach the
+                            // LEAVE_TLS_COMMAND
                             if outbound.read(&mut tmp).await? == 0 {
                                 return Err(eof_err("EOF on Parsing[8]"));
                             }
