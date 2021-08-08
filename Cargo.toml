@@ -47,9 +47,9 @@ optional = true
 #harness = false
 
 [profile.release]
-codegen-units = 1
+# codegen-units = 1
 incremental = false
-lto = true
+# lto = true
 opt-level = 3
 
 [features]
