@@ -1,7 +1,7 @@
 use crate::{
     client::utils::{ClientConnectionRequest, ClientTcpStream},
     expect_buf_len,
-    utils::{ConnectionRequest, MixAddrType, ParserError},
+    utils::{CommonParserError, ConnectionRequest, MixAddrType, ParserError},
 };
 
 #[cfg(feature = "udp")]
@@ -77,14 +77,14 @@ impl Socks5Request {
                             }
                         }
                     }
-                    Err(e @ ParserError::Invalid(_)) => {
+                    Err(e @ CommonParserError::Invalid(_)) => {
                         return Err(Error::new(e));
                     }
                     _ => (),
                 }
             } else {
-                return Err(Error::new(ParserError::Invalid(
-                    "Socks5Request::accept unable to accept before EOF".into(),
+                return Err(Error::new(CommonParserError::Invalid(
+                    "Socks5Request::accept unable to accept before EOF",
                 )));
             }
         }
@@ -125,13 +125,13 @@ impl Socks5Request {
         }
     }
 
-    fn parse(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
+    fn parse(&mut self, buf: &Vec<u8>) -> Result<(), CommonParserError> {
         use Sock5ParsePhase::*;
         match self.phase {
             P1ClientHello => {
                 expect_buf_len!(buf, 2, "Sock5ParsePhase::parse phase 1 incomplete[1]");
                 if buf[SOCKS_VERSION_INDEX] != 5 {
-                    return Err(ParserError::Invalid(
+                    return Err(CommonParserError::Invalid(
                         "Socks5Request::parse only support socks v5".into(),
                     ));
                 }
@@ -149,14 +149,14 @@ impl Socks5Request {
                         return Ok(());
                     }
                 }
-                return Err(ParserError::Invalid(
+                return Err(CommonParserError::Invalid(
                     "Socks5Request::parse method invalid".into(),
                 ));
             }
             P2ClientRequest => {
                 expect_buf_len!(buf, 5, "Sock5ParsePhase::parse phase 2 incomplete[1]");
                 if buf[SOCKS_VERSION_INDEX] != 5 {
-                    return Err(ParserError::Invalid(
+                    return Err(CommonParserError::Invalid(
                         "Socks5Request::parse only support socks v5".into(),
                     ));
                 }
@@ -169,7 +169,7 @@ impl Socks5Request {
                         self.is_udp = true;
                     }
                     _ => {
-                        return Err(ParserError::Invalid(
+                        return Err(CommonParserError::Invalid(
                             "Socks5Request::parse invalid connection type".into(),
                         ));
                     }

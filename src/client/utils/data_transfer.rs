@@ -4,7 +4,7 @@ use {super::Socks5UdpStream, crate::utils::new_trojan_udp_stream};
 
 use crate::{
     adapt,
-    utils::{Adapter, MixAddrType, ParserError, Splitable, WRTuple},
+    utils::{Adapter, MixAddrType, CommonParserError, Splitable, WRTuple},
 };
 use anyhow::{anyhow, Context, Result};
 use tokio::{
@@ -52,6 +52,7 @@ pub async fn relay_tcp(
                 Ok(_) => {
                     info!("lite tls handshake succeed");
                     let (mut outbound, _) = outbound.into_inner();
+                    // outbound.
                     lite_tls_endpoint
                         .flush(&mut outbound, &mut inbound_tmp)
                         .await?;
@@ -61,7 +62,7 @@ pub async fn relay_tcp(
                     );
                 }
                 Err(e) => {
-                    if let Some(e @ ParserError::Invalid(_)) = e.downcast_ref::<ParserError>() {
+                    if let Some(e @ CommonParserError::Invalid(_)) = e.downcast_ref::<CommonParserError>() {
                         info!("not tls stream: {:#}", e);
                         lite_tls_endpoint
                             .flush(&mut outbound, &mut inbound_tmp)

@@ -3,7 +3,7 @@ use super::{
     lite_tls_stream::{Direction, LiteTlsEndpointSide},
 };
 use crate::{expect_buf_len, utils::ParserError};
-use anyhow::{anyhow, Context, Error, Result};
+use anyhow::Result;
 use std::{
     cmp::min,
     ops::{Deref, DerefMut},
@@ -91,6 +91,21 @@ impl Seen0x17 {
     }
 }
 
+#[derive(Debug)]
+pub(super) enum TlsIncomplete {
+    IncompleteHeader,
+    IncompleteData,
+}
+
+type TlsParserError = ParserError<TlsIncomplete, &'static str>;
+
+use TlsIncomplete::*;
+
+pub(super) enum Expecting {
+    Num(usize),
+    Type(u8),
+}
+
 impl TlsRelayBuffer {
     pub fn new() -> Self {
         Self {
@@ -130,8 +145,8 @@ impl TlsRelayBuffer {
         }
     }
 
-    pub fn check_client_hello(&mut self) -> Result<(), ParserError> {
-        expect_buf_len!(self.inner, 5, "client hello incomplete[1]");
+    pub(super) fn check_client_hello(&mut self) -> Result<(), TlsParserError> {
+        expect_buf_len!(self.inner, 5, IncompleteHeader);
         if &self.inner[..3] != &[0x16, 0x03, 0x01] {
             // Not tls 1.2/1.3
             return Err(ParserError::Invalid("not tls 1.2/1.3[1]".into()));
@@ -144,23 +159,11 @@ impl TlsRelayBuffer {
         Ok(())
     }
 
-    fn peek_tls_type(&self) -> Result<u8, ParserError> {
-        expect_buf_len!(self.inner, self.cursor + 5, "packet incomplete[1]");
-        let packet_type = self.inner[self.cursor];
-        let cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
-        expect_buf_len!(self.inner, cursor, "packet 0x16 (or sth) incomplete[2]");
-        Ok(packet_type)
-    }
-
-    pub(super) fn check_tls_packet(&mut self) -> Result<u8, ParserError> {
-        expect_buf_len!(self.inner, self.cursor + 5, "packet incomplete[1]");
+    pub(super) fn check_tls_packet(&mut self) -> Result<u8, TlsParserError> {
+        expect_buf_len!(self.inner, self.cursor + 5, IncompleteHeader);
         let packet_type = self.inner[self.cursor];
         self.cursor += 5 + extract_len(&self.inner[self.cursor + 3..]);
-        expect_buf_len!(
-            self.inner,
-            self.cursor,
-            "packet 0x16 (or sth) incomplete[2]"
-        );
+        expect_buf_len!(self.inner, self.cursor, IncompleteData);
         Ok(packet_type)
     }
 
@@ -169,12 +172,11 @@ impl TlsRelayBuffer {
         seen_0x17: &mut Seen0x17,
         dir: Direction,
         side: LiteTlsEndpointSide,
-    ) -> Result<LeaveTlsMode, ParserError> {
+    ) -> Result<LeaveTlsMode, TlsParserError> {
         loop {
-            expect_buf_len!(self.inner, self.cursor + 1, "find 0x17 incomplete");
+            expect_buf_len!(self.inner, self.cursor + 1, IncompleteHeader);
             match self.inner[self.cursor] {
                 0x17 => {
-                    self.check_tls_packet()?;
                     #[cfg(feature = "debug_info")]
                     debug!("found 0x17, already seen: {:?}", seen_0x17);
                     seen_0x17.witness(dir, side);
@@ -188,6 +190,7 @@ impl TlsRelayBuffer {
                     } else {
                         #[cfg(feature = "debug_info")]
                         debug!("lite-tls first 0x17");
+                        self.check_tls_packet()?;
                     }
                 }
                 0x14 | 0x15 | 0x16 => {
@@ -200,8 +203,9 @@ impl TlsRelayBuffer {
         }
     }
 
-    pub(super) async fn relay_until_0xff<R, W>(
+    pub(super) async fn relay_until_expected<R, W>(
         &mut self,
+        expecting: Expecting,
         reader: &mut R,
         writer: &mut W,
     ) -> Result<()>
@@ -209,29 +213,50 @@ impl TlsRelayBuffer {
         R: AsyncReadExt + Unpin,
         W: AsyncWriteExt + Unpin,
     {
-        loop {
-            match self.peek_tls_type() {
-                Ok(p_ty) => {
-                    if p_ty == 0xff {
+        match expecting {
+            Expecting::Num(mut n) => {
+                while n > 0 {
+                    while self.inner.len() < self.cursor + 5 {
                         self.flush_checked(writer).await?;
-                        self.check_tls_packet()?;
-                        self.pop_checked_packets();
-                        return Ok(());
-                    } else {
-                        self.check_tls_packet()?;
+                        if reader.read_buf(self.deref_mut()).await? == 0 {
+                            return Err(eof_err("EOF on Parsing[]"));
+                        }
                     }
+                    self.cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
+                    n -= 1;
                 }
-                Err(ParserError::Incomplete(_)) => {
+
+                // we don't need to check next packet, so we only need to
+                // ensure the length to be the length of current packet.
+                while self.inner.len() < self.cursor {
                     self.flush_checked(writer).await?;
                     if reader.read_buf(self.deref_mut()).await? == 0 {
                         return Err(eof_err("EOF on Parsing[]"));
                     }
                 }
-                Err(e @ ParserError::Invalid(_)) => {
-                    return Err(Error::new(e))
-                        .with_context(|| anyhow!("tls 1.2 full handshake last step"));
-                }
+                self.flush_checked(writer).await?;
+                return Ok(());
             }
+            Expecting::Type(ty) => loop {
+                while self.inner.len() < self.cursor + 5 {
+                    self.flush_checked(writer).await?;
+                    if reader.read_buf(self.deref_mut()).await? == 0 {
+                        return Err(eof_err("EOF on Parsing[]"));
+                    }
+                }
+                if self.inner[self.cursor] == ty {
+                    self.flush_checked(writer).await?;
+                    let next_cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
+                    while self.inner.len() < next_cursor {
+                        if reader.read_buf(self.deref_mut()).await? == 0 {
+                            return Err(eof_err("EOF on Parsing[]"));
+                        }
+                    }
+                    return Ok(());
+                } else {
+                    self.cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
+                }
+            },
         }
     }
 

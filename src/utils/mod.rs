@@ -21,8 +21,8 @@ pub use adapter::*;
 mod timedout_duplex_io;
 pub use timedout_duplex_io::*;
 
-use std::pin::Pin;
 use std::task::Poll;
+use std::{fmt, pin::Pin};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 mod splitable;
@@ -32,12 +32,14 @@ mod buffers;
 pub use buffers::*;
 
 #[derive(Debug, err_derive::Error)]
-pub enum ParserError {
+pub enum ParserError<Msg1: fmt::Debug, Msg2: fmt::Debug> {
     #[error(display = "ParserError Incomplete: {:?}", _0)]
-    Incomplete(String),
+    Incomplete(Msg1),
     #[error(display = "ParserError Invalid: {:?}", _0)]
-    Invalid(String),
+    Invalid(Msg2),
 }
+
+pub type CommonParserError = ParserError<&'static str, &'static str>;
 
 pub fn transmute_u16s_to_u8s(a: &[u16], b: &mut [u8]) {
     if b.len() < a.len() * 2 {

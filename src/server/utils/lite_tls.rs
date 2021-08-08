@@ -11,7 +11,7 @@ use crate::{
     protocol::TCP_MAX_IDLE_TIMEOUT,
     utils::{
         lite_tls::{LeaveTls, LiteTlsStream},
-        Adapter, BufferedRecv, MixAddrType, ParserError, Splitable,
+        Adapter, BufferedRecv, CommonParserError, MixAddrType, Splitable,
     },
 };
 use anyhow::{anyhow, Context, Result};
@@ -58,7 +58,9 @@ where
                         );
                     }
                     Err(e) => {
-                        if let Some(ParserError::Invalid(x)) = e.downcast_ref::<ParserError>() {
+                        if let Some(CommonParserError::Invalid(x)) =
+                            e.downcast_ref::<CommonParserError>()
+                        {
                             debug!("not tls stream: {}", x);
                             lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
                             adapt!([tcp][conn_id]

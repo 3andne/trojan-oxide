@@ -1,4 +1,3 @@
-
 #[macro_export]
 macro_rules! try_recv {
     ($T:tt, $instance:expr) => {
@@ -38,7 +37,7 @@ macro_rules! expect_buf_len {
     ($buf:expr, $len:expr, $mark:expr) => {
         if $buf.len() < $len {
             // debug!("expect_buf_len {}", $mark);
-            return Err(ParserError::Incomplete($mark.into()));
+            return Err(ParserError::Incomplete($mark));
         }
     };
 }

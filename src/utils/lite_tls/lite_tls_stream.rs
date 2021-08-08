@@ -4,14 +4,17 @@ use super::{
     error::eof_err,
     tls_relay_buffer::{LeaveTlsMode, Seen0x17, TlsRelayBuffer},
 };
-use crate::{protocol::LEAVE_TLS_COMMAND, utils::ParserError};
+use crate::{
+    protocol::LEAVE_TLS_COMMAND,
+    utils::{lite_tls::tls_relay_buffer::Expecting, ParserError},
+};
 use anyhow::{anyhow, Context, Error, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     select,
-    time::{sleep, Duration, Instant},
+    // time::{sleep, Duration},
 };
-use tracing::{debug, info};
+use tracing::debug;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum LiteTlsEndpointSide {
@@ -33,6 +36,15 @@ pub struct LiteTlsStream {
     recieved_0x17: Seen0x17,
     side: LiteTlsEndpointSide,
 }
+
+// macro_rules! dir_buf {
+//     ($self:ident, $dir:ident) => {
+//         match $dir {
+//             Direction::Inbound => $self.inbound_buf,
+//             Direction::Outbound => $self.outbound_buf,
+//         }
+//     };
+// }
 
 impl LiteTlsStream {
     pub fn new_server_endpoint() -> Self {
@@ -112,7 +124,7 @@ impl LiteTlsStream {
             match self.inbound_buf.check_client_hello() {
                 Ok(_) => return Ok(()),
                 Err(ParserError::Incomplete(e)) => {
-                    debug!("client hello incomplete: {}", e);
+                    debug!("client hello incomplete: {:?}", e);
                 }
                 // doesn't look like a tls stream, leave it alone
                 Err(e @ ParserError::Invalid(_)) => return Err(Error::new(e)),
@@ -208,8 +220,6 @@ impl LiteTlsStream {
                     //    {dir}_buf is the buffer used by current direction,
                     //    {!dir}_buf is the other buffer
                     // )
-                    // relay all pending packets
-                    self.relay_pending(dir, outbound, inbound).await?;
 
                     // {dir}_buf: [] or [{0x17}]
                     // {!dir}_buf: []
@@ -217,12 +227,24 @@ impl LiteTlsStream {
                     // {!dir}_buf: [] -> [..., {0xff}] -> [{0xff}] -> []
                     match dir {
                         Direction::Inbound => {
-                            self.outbound_buf
-                                .relay_until_0xff(outbound, inbound)
+                            self.inbound_buf
+                                .relay_until_expected(Expecting::Num(1), inbound, outbound)
                                 .await?;
+                            self.outbound_buf
+                                .relay_until_expected(Expecting::Type(0xff), outbound, inbound)
+                                .await?;
+                            self.outbound_buf.check_tls_packet()?;
+                            self.outbound_buf.pop_checked_packets();
                         }
                         Direction::Outbound => {
-                            self.inbound_buf.relay_until_0xff(inbound, outbound).await?;
+                            self.outbound_buf
+                                .relay_until_expected(Expecting::Num(1), outbound, inbound)
+                                .await?;
+                            self.inbound_buf
+                                .relay_until_expected(Expecting::Type(0xff), inbound, outbound)
+                                .await?;
+                            self.inbound_buf.check_tls_packet()?;
+                            self.inbound_buf.pop_checked_packets();
                         }
                     }
 
@@ -236,22 +258,27 @@ impl LiteTlsStream {
                                 return Err(eof_err("EOF on Parsing[11]"));
                             }
                             inbound.flush().await?;
+
+                            self.inbound_buf
+                                .relay_until_expected(Expecting::Num(1), inbound, outbound)
+                                .await?;
                         }
                         Direction::Outbound => {
                             if outbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
                                 return Err(eof_err("EOF on Parsing[12]"));
                             }
                             outbound.flush().await?;
-                            #[cfg(feature = "client")]
-                            {
-                                info!("waiting for 20 millis");
-                                sleep(Duration::from_millis(20)).await;
-                            }
+                            // #[cfg(feature = "client")]
+                            // {
+                            //     info!("waiting for 20 millis");
+                            //     sleep(Duration::from_millis(20)).await;
+                            // }
+                            self.outbound_buf
+                                .relay_until_expected(Expecting::Num(1), outbound, inbound)
+                                .await?;
                         }
                     }
 
-                    // relay all pending packets
-                    self.relay_pending(dir, outbound, inbound).await?;
                     // Then we leave tls tunnel
                     return Ok(());
                 }

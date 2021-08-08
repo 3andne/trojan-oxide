@@ -8,7 +8,7 @@ use crate::{
         ECHO_REQUEST_CMD, HASH_LEN, LITE_TLS_REQUEST_CMD, TCP_REQUEST_CMD, UDP_REQUEST_CMD,
     },
     server::{outbound::fallback, utils::TcpOption},
-    utils::{BufferedRecv, ConnectionRequest, MixAddrType, ParserError},
+    utils::{BufferedRecv, CommonParserError, ConnectionRequest, MixAddrType, ParserError},
 };
 use anyhow::Result;
 use futures::TryFutureExt;
@@ -42,9 +42,9 @@ impl<'a> TrojanAcceptor<'a> {
         }
     }
 
-    fn verify(&mut self) -> Result<(), ParserError> {
+    fn verify(&mut self) -> Result<(), CommonParserError> {
         if self.buf.len() < HASH_LEN {
-            return Err(ParserError::Incomplete(
+            return Err(CommonParserError::Incomplete(
                 "Target::verify self.buf.len() < HASH_LEN".into(),
             ));
         }
@@ -53,11 +53,13 @@ impl<'a> TrojanAcceptor<'a> {
             self.cursor = HASH_LEN + 2;
             Ok(())
         } else {
-            Err(ParserError::Invalid("Target::verify hash invalid".into()))
+            Err(CommonParserError::Invalid(
+                "Target::verify hash invalid".into(),
+            ))
         }
     }
 
-    fn set_host_and_port(&mut self) -> Result<(), ParserError> {
+    fn set_host_and_port(&mut self) -> Result<(), CommonParserError> {
         expect_buf_len!(
             self.buf,
             HASH_LEN + 5,
@@ -74,7 +76,7 @@ impl<'a> TrojanAcceptor<'a> {
             }
             ECHO_REQUEST_CMD => (),
             _ => {
-                return Err(ParserError::Invalid(
+                return Err(CommonParserError::Invalid(
                     "Target::verify invalid connection type".into(),
                 ))
             }
@@ -113,7 +115,7 @@ impl<'a> TrojanAcceptor<'a> {
     pub async fn accept<I>(
         &mut self,
         mut inbound: I,
-    ) -> Result<ServerConnectionRequest<I>, ParserError>
+    ) -> Result<ServerConnectionRequest<I>, CommonParserError>
     where
         I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
@@ -122,10 +124,10 @@ impl<'a> TrojanAcceptor<'a> {
             let read = inbound
                 .read_buf(&mut self.buf)
                 .await
-                .map_err(|_| ParserError::Invalid("Target::accept failed to read".into()))?;
+                .map_err(|_| CommonParserError::Invalid("Target::accept failed to read".into()))?;
             if read != 0 {
                 match self.parse() {
-                    Err(err @ ParserError::Invalid(_)) => {
+                    Err(err @ CommonParserError::Invalid(_)) => {
                         error!("Target::accept failed: {:#}", err);
                         let mut buf = Vec::new();
                         std::mem::swap(&mut buf, &mut self.buf);
@@ -136,7 +138,7 @@ impl<'a> TrojanAcceptor<'a> {
                         );
                         return Err(err);
                     }
-                    Err(err @ ParserError::Incomplete(_)) => {
+                    Err(err @ CommonParserError::Incomplete(_)) => {
                         debug!("Target::accept failed: {:?}", err);
                         continue;
                     }
@@ -146,7 +148,7 @@ impl<'a> TrojanAcceptor<'a> {
                     }
                 }
             } else {
-                return Err(ParserError::Incomplete("Target::accept EOF".into()));
+                return Err(CommonParserError::Incomplete("Target::accept EOF".into()));
             }
         }
         use ConnectionRequest::*;
@@ -161,7 +163,7 @@ impl<'a> TrojanAcceptor<'a> {
             #[cfg(feature = "udp")]
             UDP_REQUEST_CMD => Ok(UDP(new_trojan_udp_stream(inbound, buffered_request))),
             #[cfg(not(feature = "udp"))]
-            UDP_REQUEST_CMD => Err(ParserError::Invalid(
+            UDP_REQUEST_CMD => Err(CommonParserError::Invalid(
                 "udp functionality not included".into(),
             )),
             TCP_REQUEST_CMD => Ok(TCP(TLS(BufferedRecv::new(inbound, buffered_request)))),
@@ -172,7 +174,7 @@ impl<'a> TrojanAcceptor<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> Result<(), ParserError> {
+    pub fn parse(&mut self) -> Result<(), CommonParserError> {
         #[cfg(feature = "debug_info")]
         debug!(
             "parse begin, cursor {}, buffer({}): {:?}",
@@ -199,7 +201,9 @@ impl<'a> TrojanAcceptor<'a> {
             self.cursor += 2;
             Ok(())
         } else {
-            Err(ParserError::Invalid("Target::accept expecting CRLF".into()))
+            Err(CommonParserError::Invalid(
+                "Target::accept expecting CRLF".into(),
+            ))
         }
     }
 }

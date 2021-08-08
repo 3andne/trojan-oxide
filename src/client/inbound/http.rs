@@ -1,7 +1,7 @@
 use crate::{
     client::utils::ClientTcpStream,
     utils::ConnectionRequest,
-    utils::{MixAddrType, ParserError},
+    utils::{CommonParserError, MixAddrType},
 };
 
 use anyhow::{Error, Result};
@@ -36,9 +36,9 @@ impl HttpRequest {
         self.addr
     }
 
-    fn set_stream_type(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
+    fn set_stream_type(&mut self, buf: &Vec<u8>) -> Result<(), CommonParserError> {
         if buf.len() < 4 {
-            return Err(ParserError::Incomplete(
+            return Err(CommonParserError::Incomplete(
                 "HttpRequest::set_stream_type".into(),
             ));
         }
@@ -50,7 +50,7 @@ impl HttpRequest {
         }
 
         if buf.len() < 8 {
-            return Err(ParserError::Incomplete(
+            return Err(CommonParserError::Incomplete(
                 "HttpRequest::set_stream_type".into(),
             ));
         }
@@ -61,10 +61,12 @@ impl HttpRequest {
             return Ok(());
         }
 
-        return Err(ParserError::Invalid("HttpRequest::set_stream_type".into()));
+        return Err(CommonParserError::Invalid(
+            "HttpRequest::set_stream_type".into(),
+        ));
     }
 
-    fn set_host(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
+    fn set_host(&mut self, buf: &Vec<u8>) -> Result<(), CommonParserError> {
         #[cfg(feature = "debug_info")]
         debug!("set_host entered");
         while self.cursor < buf.len() && buf[self.cursor] == b' ' {
@@ -76,7 +78,9 @@ impl HttpRequest {
                     self.cursor += 7;
                 }
             } else {
-                return Err(ParserError::Incomplete("HttpRequest::set_host".into()));
+                return Err(CommonParserError::Incomplete(
+                    "HttpRequest::set_host".into(),
+                ));
             }
         }
 
@@ -87,14 +91,16 @@ impl HttpRequest {
         }
 
         if end == buf.len() {
-            return Err(ParserError::Incomplete("HttpRequest::set_host".into()));
+            return Err(CommonParserError::Incomplete(
+                "HttpRequest::set_host".into(),
+            ));
         }
 
         self.addr = MixAddrType::from_http_header(self.is_https, &buf[start..end])?;
         return Ok(());
     }
 
-    fn parse(&mut self, buf: &mut Vec<u8>) -> Result<(), ParserError> {
+    fn parse(&mut self, buf: &mut Vec<u8>) -> Result<(), CommonParserError> {
         #[cfg(feature = "debug_info")]
         debug!("parsing: {:?}", String::from_utf8(buf.clone()));
         if self.cursor == 0 {
@@ -132,7 +138,7 @@ impl HttpRequest {
         unsafe {
             buf.set_len(4);
         }
-        Err(ParserError::Incomplete("HttpRequest::parse".into()))
+        Err(CommonParserError::Incomplete("HttpRequest::parse".into()))
     }
 
     pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ClientConnectionRequest> {
@@ -146,14 +152,14 @@ impl HttpRequest {
                         debug!("http request parsed");
                         break;
                     }
-                    Err(e @ ParserError::Invalid(_)) => {
+                    Err(e @ CommonParserError::Invalid(_)) => {
                         return Err(Error::new(e));
                     }
                     _ => (),
                 }
             } else {
-                return Err(Error::new(ParserError::Invalid(
-                    "HttpRequest::accept unable to accept before EOF".into(),
+                return Err(Error::new(CommonParserError::Invalid(
+                    "HttpRequest::accept unable to accept before EOF",
                 )));
             }
         }

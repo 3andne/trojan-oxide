@@ -9,6 +9,9 @@ use crate::{
     expect_buf_len,
     utils::{transmute_u16s_to_u8s, CursoredBuffer, ExtendableFromSlice, ParserError},
 };
+
+type MixAddrParserError = ParserError<&'static str, &'static str>;
+
 use std::net::SocketAddr;
 use tracing::*;
 #[derive(Debug, Clone)]
@@ -87,7 +90,7 @@ impl MixAddrType {
     }
 
     #[cfg(feature = "client")]
-    pub fn from_http_header(is_https: bool, buf: &[u8]) -> Result<Self, ParserError> {
+    pub fn from_http_header(is_https: bool, buf: &[u8]) -> Result<Self, MixAddrParserError> {
         debug!(
             "from_http_header: entered, buf: {:?}",
             std::str::from_utf8(buf)
@@ -228,7 +231,7 @@ impl MixAddrType {
     ///       o  DST.PORT desired destination port in network octet
     ///          order
     ///```
-    pub fn from_encoded_bytes(buf: &[u8]) -> Result<(MixAddrType, usize), ParserError> {
+    pub fn from_encoded_bytes(buf: &[u8]) -> Result<(MixAddrType, usize), MixAddrParserError> {
         debug!("MixAddrType::from_encoded_bytes buf: {:?}", buf);
         expect_buf_len!(buf, 2, "MixAddrType::from_encoded_bytes cmd");
         match buf[0] {
@@ -280,7 +283,7 @@ impl MixAddrType {
 
     pub fn from_encoded<T: CursoredBuffer>(
         cursored_buf: &mut T,
-    ) -> Result<MixAddrType, ParserError> {
+    ) -> Result<MixAddrType, MixAddrParserError> {
         let buf = cursored_buf.chunk();
         Self::from_encoded_bytes(buf).map(|(addr, len)| {
             cursored_buf.advance(len);
