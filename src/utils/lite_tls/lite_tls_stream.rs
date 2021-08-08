@@ -12,9 +12,9 @@ use anyhow::{anyhow, Context, Error, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     select,
-    // time::{sleep, Duration},
+    time::{sleep, Duration},
 };
-use tracing::debug;
+use tracing::{debug, info};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum LiteTlsEndpointSide {
@@ -225,16 +225,28 @@ impl LiteTlsStream {
                     // {!dir}_buf: []
 
                     // {!dir}_buf: [] -> [..., {0xff}] -> [{0xff}] -> []
+
+                    #[cfg(feature = "debug_info")]
+                    {
+                        debug!("[2][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
+                        debug!("[2][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
+                    }
                     match dir {
                         Direction::Inbound => {
                             self.inbound_buf
                                 .relay_until_expected(Expecting::Num(1), inbound, outbound)
                                 .await?;
+                            #[cfg(feature = "debug_info")]
+                            debug!("[3][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
                             self.outbound_buf
                                 .relay_until_expected(Expecting::Type(0xff), outbound, inbound)
                                 .await?;
+                            #[cfg(feature = "debug_info")]
+                            debug!("[3][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
                             self.outbound_buf.check_tls_packet()?;
                             self.outbound_buf.pop_checked_packets();
+                            #[cfg(feature = "debug_info")]
+                            debug!("[4][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
                         }
                         Direction::Outbound => {
                             self.outbound_buf
@@ -252,6 +264,11 @@ impl LiteTlsStream {
                     return Ok(());
                 }
                 Ok(LeaveTlsMode::Passive) => {
+                    #[cfg(feature = "debug_info")]
+                    {
+                        debug!("[2][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
+                        debug!("[2][{}]outbound_buf: {:?}", packet_id, self.outbound_buf);
+                    }
                     match dir {
                         Direction::Inbound => {
                             if inbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
@@ -262,17 +279,19 @@ impl LiteTlsStream {
                             self.inbound_buf
                                 .relay_until_expected(Expecting::Num(1), inbound, outbound)
                                 .await?;
+                            #[cfg(feature = "debug_info")]
+                            debug!("[3][{}]inbound_buf: {:?}", packet_id, self.inbound_buf);
                         }
                         Direction::Outbound => {
                             if outbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
                                 return Err(eof_err("EOF on Parsing[12]"));
                             }
                             outbound.flush().await?;
-                            // #[cfg(feature = "client")]
-                            // {
-                            //     info!("waiting for 20 millis");
-                            //     sleep(Duration::from_millis(20)).await;
-                            // }
+                            #[cfg(feature = "client")]
+                            {
+                                info!("waiting for 20 millis");
+                                sleep(Duration::from_millis(20)).await;
+                            }
                             self.outbound_buf
                                 .relay_until_expected(Expecting::Num(1), outbound, inbound)
                                 .await?;
