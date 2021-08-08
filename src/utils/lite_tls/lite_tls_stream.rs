@@ -9,8 +9,9 @@ use anyhow::{anyhow, Context, Error, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     select,
+    time::{sleep, Duration, Instant},
 };
-use tracing::debug;
+use tracing::{debug, info};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum LiteTlsEndpointSide {
@@ -229,8 +230,6 @@ impl LiteTlsStream {
                     return Ok(());
                 }
                 Ok(LeaveTlsMode::Passive) => {
-                    // relay all pending packets
-                    self.relay_pending(dir, outbound, inbound).await?;
                     match dir {
                         Direction::Inbound => {
                             if inbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
@@ -243,9 +242,16 @@ impl LiteTlsStream {
                                 return Err(eof_err("EOF on Parsing[12]"));
                             }
                             outbound.flush().await?;
+                            #[cfg(feature = "client")]
+                            {
+                                info!("waiting for 20 millis");
+                                sleep(Duration::from_millis(20)).await;
+                            }
                         }
                     }
 
+                    // relay all pending packets
+                    self.relay_pending(dir, outbound, inbound).await?;
                     // Then we leave tls tunnel
                     return Ok(());
                 }
