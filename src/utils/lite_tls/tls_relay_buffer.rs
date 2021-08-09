@@ -1,15 +1,11 @@
-use super::{
-    error::eof_err,
-    lite_tls_stream::{Direction, LiteTlsEndpointSide},
-};
+use super::{error::eof_err, lite_tls_stream::Direction};
 use crate::{expect_buf_len, utils::ParserError};
 use anyhow::Result;
 use std::{
     cmp::min,
     ops::{Deref, DerefMut},
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-// use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 #[cfg(feature = "debug_info")]
 use tracing::debug;
@@ -50,10 +46,10 @@ fn extract_len(buf: &[u8]) -> usize {
 //     Packet(u8),
 // }
 
-pub(super) enum LeaveTlsMode {
-    Passive,
-    Active,
-}
+// pub(super) enum LeaveTlsMode {
+//     Passive,
+//     Active,
+// }
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Seen0x17 {
@@ -162,12 +158,11 @@ impl TlsRelayBuffer {
         Ok(packet_type)
     }
 
-    pub(super) fn find_first_0x17(
+    pub(super) fn find_key_packets(
         &mut self,
         seen_0x17: &mut Seen0x17,
         dir: Direction,
-        side: LiteTlsEndpointSide,
-    ) -> Result<(LeaveTlsMode, TlsVersion), ParserError> {
+    ) -> Result<TlsVersion, ParserError> {
         loop {
             expect_buf_len!(self.inner, self.cursor + 1, "find 0x17 incomplete");
             match self.inner[self.cursor] {
@@ -180,7 +175,7 @@ impl TlsRelayBuffer {
                     if seen_0x17.is_complete() {
                         #[cfg(feature = "debug_info")]
                         debug!("lite-tls active handshake");
-                        return Ok((LeaveTlsMode::Active, TlsVersion::Tls12));
+                        return Ok(TlsVersion::Tls12);
                     } else {
                         #[cfg(feature = "debug_info")]
                         debug!("lite-tls 0x17 in first direction");
@@ -191,23 +186,14 @@ impl TlsRelayBuffer {
                 0xff => {
                     #[cfg(feature = "debug_info")]
                     debug!("lite-tls passive handshake");
-                    return Ok((LeaveTlsMode::Passive, TlsVersion::Tls12));
+                    return Ok(TlsVersion::Tls12);
                 }
                 0x14 => {
                     match self.version {
                         Some(TlsVersion::Tls13) => {
                             // we have a 0.5 rtt version for
                             // tls 1.3
-                            use LeaveTlsMode::*;
-                            use LiteTlsEndpointSide::*;
-                            match side {
-                                ClientSide => {
-                                    return Ok((Active, TlsVersion::Tls12));
-                                }
-                                ServerSide => {
-                                    return Ok((Passive, TlsVersion::Tls12));
-                                }
-                            }
+                            return Ok(TlsVersion::Tls13);
                         }
                         _ => {
                             self.check_tls_packet()?;
@@ -236,41 +222,5 @@ impl TlsRelayBuffer {
             self.pop_checked_packets();
         }
         Ok(())
-    }
-
-    pub(super) async fn relay_until_expected<R, W>(
-        &mut self,
-        expecting: u8,
-        reader: &mut R,
-        writer: &mut W,
-    ) -> Result<()>
-    where
-        R: AsyncReadExt + Unpin,
-        W: AsyncWriteExt + Unpin,
-    {
-        loop {
-            while self.inner.len() < self.cursor + 5 {
-                if self.checked_packets().len() > 0 {
-                    self.flush_checked(writer).await?;
-                }
-                if reader.read_buf(self.deref_mut()).await? == 0 {
-                    return Err(eof_err("EOF on Parsing[]"));
-                }
-            }
-            if self.inner[self.cursor] == expecting {
-                if self.checked_packets().len() > 0 {
-                    self.flush_checked(writer).await?;
-                }
-                let next_cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
-                while self.inner.len() < next_cursor {
-                    if reader.read_buf(self.deref_mut()).await? == 0 {
-                        return Err(eof_err("EOF on Parsing[]"));
-                    }
-                }
-                return Ok(());
-            } else {
-                self.cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
-            }
-        }
     }
 }
