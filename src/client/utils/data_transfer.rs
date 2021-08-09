@@ -47,6 +47,12 @@ pub async fn relay_tcp(
                 Duration::from_secs(30),
                 lite_tls_endpoint.handshake(&mut outbound, &mut inbound_tmp),
             )
+            // there is a potential bug here, if timeout is too short for a
+            // valid handshake, it closes unexpectedly and immediately try for
+            // another time. However for the second time, it is not recognised
+            // as a tls stream and therefore fails again.
+            // I set a reasonably large timeout here to avoid such problem,
+            // but the reason for the failed second round is currently unknown.
             .await?
             {
                 Ok(_) => {
