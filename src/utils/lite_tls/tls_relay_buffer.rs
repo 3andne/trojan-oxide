@@ -10,7 +10,7 @@ use tokio::io::AsyncWriteExt;
 #[cfg(feature = "debug_info")]
 use tracing::debug;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(super) enum TlsVersion {
     Tls12,
     Tls13,
@@ -21,7 +21,6 @@ pub struct TlsRelayBuffer {
     inner: Vec<u8>,
     /// read cursor
     cursor: usize,
-    version: Option<TlsVersion>,
 }
 
 impl Deref for TlsRelayBuffer {
@@ -72,14 +71,6 @@ impl Seen0x17 {
         };
     }
 
-    fn determine_tls_version(&self) -> TlsVersion {
-        match self {
-            Seen0x17::FromInbound => TlsVersion::Tls12,
-            Seen0x17::FromOutbound => TlsVersion::Tls13,
-            _ => unreachable!(),
-        }
-    }
-
     fn is_complete(&self) -> bool {
         match self {
             &Seen0x17::BothDirections => true,
@@ -93,7 +84,6 @@ impl TlsRelayBuffer {
         Self {
             inner: Vec::with_capacity(2048),
             cursor: 0,
-            version: None,
         }
     }
     pub fn len(&self) -> usize {
@@ -179,7 +169,6 @@ impl TlsRelayBuffer {
                     } else {
                         #[cfg(feature = "debug_info")]
                         debug!("lite-tls 0x17 in first direction");
-                        self.version = Some(seen_0x17.determine_tls_version());
                         self.check_tls_packet()?;
                     }
                 }
@@ -189,8 +178,8 @@ impl TlsRelayBuffer {
                     return Ok(TlsVersion::Tls12);
                 }
                 0x14 => {
-                    match self.version {
-                        Some(TlsVersion::Tls13) => {
+                    match seen_0x17 {
+                        Seen0x17::FromOutbound => {
                             // we have a 0.5 rtt version for
                             // tls 1.3
                             return Ok(TlsVersion::Tls13);
