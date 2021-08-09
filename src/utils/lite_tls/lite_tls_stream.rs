@@ -134,7 +134,7 @@ impl LiteTlsStream {
         }
         inbound.flush().await?;
 
-        if inbound.read(self.inbound_buf.deref_mut()).await? == 0 {
+        if inbound.read_buf(self.inbound_buf.deref_mut()).await? == 0 {
             return Err(eof_err("EOF on Parsing[10]"));
         }
 
