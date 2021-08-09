@@ -24,6 +24,10 @@ use anyhow::anyhow;
 use anyhow::Result;
 use std::net::ToSocketAddrs;
 
+#[cfg(feature = "lite_tls")]
+use glommio::{Local, LocalExecutorBuilder};
+use tokio::sync::mpsc;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let options = Opt::from_args();
@@ -45,9 +49,26 @@ async fn main() -> Result<()> {
     .to_socket_addrs()?
     .next()
     .ok_or(anyhow!("invalid remote address"))?;
-    let context = TrojanContext {
-        options,
-        remote_socket_addr,
+
+    let context = if cfg!(target_os = "macos") {
+        let numc = num_cpus::get();
+        let tcp_submit = Vec::with_capacity(numc);
+        for i in 0..numc {
+            let (tcp_tx, tcp_rx) = mpsc::channel(100);
+            tcp_submit.push(tcp_tx);
+            std::thread::spawn(move || {
+                let ex = LocalExecutorBuilder::new().pin_to_cpu(i).make().unwrap();
+                ex.run(Local::local(async {
+                    tcp_rx;
+                    println!("polled");
+                }))
+            });
+        }
+        TrojanContext {
+            options,
+            remote_socket_addr,
+            tcp_submit,
+        }
     };
 
     let _ = tracing::subscriber::set_global_default(collector);

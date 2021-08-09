@@ -31,6 +31,8 @@ pub use splitable::Splitable;
 mod buffers;
 pub use buffers::*;
 
+mod glommio;
+
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
     #[error(display = "ParserError Incomplete: {:?}", _0)]
