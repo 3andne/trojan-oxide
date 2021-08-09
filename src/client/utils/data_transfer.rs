@@ -44,7 +44,7 @@ pub async fn relay_tcp(
             let mut lite_tls_endpoint = LiteTlsStream::new_client_endpoint();
             let mut inbound_tmp = WRTuple::from_rw_tuple(inbound.split());
             match timeout(
-                Duration::from_secs(5),
+                Duration::from_secs(30),
                 lite_tls_endpoint.handshake(&mut outbound, &mut inbound_tmp),
             )
             .await?
