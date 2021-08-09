@@ -2,7 +2,7 @@ use std::ops::DerefMut;
 
 use super::{
     error::eof_err,
-    tls_relay_buffer::{LeaveTlsSide, Seen0x17, TlsRelayBuffer},
+    tls_relay_buffer::{LeaveTlsMode, Seen0x17, TlsRelayBuffer, TlsVersion},
 };
 use crate::{protocol::LEAVE_TLS_COMMAND, utils::ParserError};
 use anyhow::{anyhow, Context, Error, Result};
@@ -12,13 +12,13 @@ use tokio::{
 };
 use tracing::debug;
 
-// #[derive(Debug, Clone, Copy)]
-// enum LiteTlsEndpointSide {
-//     #[cfg(feature = "client")]
-//     ClientSide,
-//     #[cfg(feature = "server")]
-//     ServerSide,
-// }
+#[derive(Debug, Clone, Copy)]
+pub enum LiteTlsEndpointSide {
+    #[cfg(feature = "client")]
+    ClientSide,
+    #[cfg(feature = "server")]
+    ServerSide,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Direction {
@@ -30,14 +30,25 @@ pub struct LiteTlsStream {
     inbound_buf: TlsRelayBuffer,
     outbound_buf: TlsRelayBuffer,
     recieved_0x17: Seen0x17,
+    side: LiteTlsEndpointSide,
 }
 
 impl LiteTlsStream {
-    pub fn new_endpoint() -> Self {
+    pub fn new_client_endpoint() -> Self {
         Self {
             inbound_buf: TlsRelayBuffer::new(),
             outbound_buf: TlsRelayBuffer::new(),
             recieved_0x17: Seen0x17::None,
+            side: LiteTlsEndpointSide::ClientSide,
+        }
+    }
+
+    pub fn new_server_endpoint() -> Self {
+        Self {
+            inbound_buf: TlsRelayBuffer::new(),
+            outbound_buf: TlsRelayBuffer::new(),
+            recieved_0x17: Seen0x17::None,
+            side: LiteTlsEndpointSide::ServerSide,
         }
     }
 
@@ -157,32 +168,29 @@ impl LiteTlsStream {
                     Direction::Outbound => return Err(eof_err("EOF on Parsing[1][O]")),
                 }
             }
-
+            use LeaveTlsMode::*;
+            use TlsVersion::*;
             match match dir {
                 Direction::Inbound => &mut self.inbound_buf,
                 Direction::Outbound => &mut self.outbound_buf,
             }
-            .find_first_0x17(&mut self.recieved_0x17, dir)
+            .find_first_0x17(&mut self.recieved_0x17, dir, self.side)
             {
-                Ok(LeaveTlsSide::Active) => {
+                Ok((Active, Tls12)) => {
                     // relay all pending packets
                     self.relay_pending(dir, outbound, inbound).await?;
 
-                    let mut tmp = [0u8; 6];
                     match dir {
                         Direction::Inbound => {
                             if outbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
                                 return Err(eof_err("EOF on Parsing[7]"));
                             }
                             outbound.flush().await?;
-                            // there's a bug here...
-                            // we shouldn't expect the next packet to be
-                            // LEAVE_TLS_COMMAND, it might be a 0x17,
-                            // we should keep reading until we reach the
-                            // LEAVE_TLS_COMMAND
-                            if outbound.read(&mut tmp).await? == 0 {
-                                return Err(eof_err("EOF on Parsing[8]"));
-                            }
+                            self.outbound_buf
+                                .relay_until_expected(0xff, outbound, inbound)
+                                .await?;
+                            self.outbound_buf.check_tls_packet()?;
+                            self.outbound_buf.pop_checked_packets();
                         }
                         Direction::Outbound => {
                             if inbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
@@ -190,23 +198,18 @@ impl LiteTlsStream {
                             }
                             inbound.flush().await?;
 
-                            if inbound.read(&mut tmp).await? == 0 {
-                                return Err(eof_err("EOF on Parsing[10]"));
-                            }
+                            self.inbound_buf
+                                .relay_until_expected(0xff, outbound, inbound)
+                                .await?;
+                            self.inbound_buf.check_tls_packet()?;
+                            self.inbound_buf.pop_checked_packets();
                         }
-                    }
-
-                    if tmp != LEAVE_TLS_COMMAND {
-                        return Err(Error::new(ParserError::Invalid(format!(
-                            "expecting LEAVE_TLS_COMMAND, got: {:?} from {:?}",
-                            tmp, dir
-                        ))));
                     }
 
                     // Then we leave tls tunnel
                     return Ok(());
                 }
-                Ok(LeaveTlsSide::Passive) => {
+                Ok((Passive, Tls12)) => {
                     // relay all pending packets
                     self.relay_pending(dir, outbound, inbound).await?;
                     match dir {
@@ -232,6 +235,55 @@ impl LiteTlsStream {
 
                     // Then we leave tls tunnel
                     return Ok(());
+                }
+                Ok((Active, Tls13)) => {
+                    #[cfg(feature = "debug_info")]
+                    debug!("[LC0][{}]buf now: {:?}", packet_id, self.inbound_buf);
+
+                    // relay everything till the end of CCS
+                    // there might be some 0x17 packets left
+                    self.inbound_buf
+                        .relay_until_expected(0x14, inbound, outbound)
+                        .await?;
+
+                    #[cfg(feature = "debug_info")]
+                    {
+                        debug!("[LC0][{}]buf after pop: {:?}", packet_id, self.inbound_buf);
+                        debug!("[LC0][{}]outbound buf: {:?}", packet_id, self.outbound_buf);
+                    }
+                    // wait for server's response
+                    // this is not part of the TLS specification,
+                    // but we have to do this to correctly
+                    // leave TLS channel.
+                    if outbound.read_buf(self.outbound_buf.deref_mut()).await? == 0 {
+                        return Err(eof_err("EOF on Parsing[7]"));
+                    }
+
+                    // check: x must be 6 and the rsp should
+                    // be [0x14, 0x03, 0x03, 0, 0x01, 0x01]
+                    // (change_cipher_spec)
+                    match self.outbound_buf.check_type_0x14() {
+                        Ok(_) => {
+                            #[cfg(feature = "debug_info")]
+                            debug!("[LC0][{}] extra CCS ok, leaving", packet_id);
+
+                            // clear this, since it's not part of
+                            // TLS.
+                            self.outbound_buf.reset();
+                            // Then it's safe for us to leave TLS
+                            // outbound_buf: []
+                            // inbound_buf: [...]
+                            return Ok(());
+                        }
+                        Err(_) => {
+                            // Something's wrong, which I'm not
+                            // sure what it is currently.
+                            todo!()
+                        }
+                    }
+                }
+                Ok((Passive, Tls13)) => {
+                    todo!();
                 }
                 Err(ParserError::Incomplete(_)) => {
                     // relay pending packets

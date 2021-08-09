@@ -1,25 +1,31 @@
-use super::lite_tls_stream::Direction;
+use super::{
+    error::eof_err,
+    lite_tls_stream::{Direction, LiteTlsEndpointSide},
+};
 use crate::{expect_buf_len, utils::ParserError};
 use anyhow::Result;
 use std::{
     cmp::min,
     ops::{Deref, DerefMut},
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 // use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[cfg(feature = "debug_info")]
 use tracing::debug;
 
-// pub(super) enum TlsVersion {
-//     Tls12,
-//     Tls13,
-// }
+#[derive(Debug)]
+pub(super) enum TlsVersion {
+    Tls12,
+    Tls13,
+}
 
 #[derive(Debug)]
 pub struct TlsRelayBuffer {
     inner: Vec<u8>,
     /// read cursor
     cursor: usize,
+    version: Option<TlsVersion>,
 }
 
 impl Deref for TlsRelayBuffer {
@@ -44,17 +50,17 @@ fn extract_len(buf: &[u8]) -> usize {
 //     Packet(u8),
 // }
 
+pub(super) enum LeaveTlsMode {
+    Passive,
+    Active,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Seen0x17 {
     None,
     FromInbound,
     FromOutbound,
     BothDirections,
-}
-
-pub(super) enum LeaveTlsSide {
-    Active,
-    Passive,
 }
 
 impl Seen0x17 {
@@ -70,6 +76,14 @@ impl Seen0x17 {
         };
     }
 
+    fn determine_tls_version(&self) -> TlsVersion {
+        match self {
+            Seen0x17::FromInbound => TlsVersion::Tls12,
+            Seen0x17::FromOutbound => TlsVersion::Tls13,
+            _ => unreachable!(),
+        }
+    }
+
     fn is_complete(&self) -> bool {
         match self {
             &Seen0x17::BothDirections => true,
@@ -83,6 +97,7 @@ impl TlsRelayBuffer {
         Self {
             inner: Vec::with_capacity(2048),
             cursor: 0,
+            version: None,
         }
     }
     pub fn len(&self) -> usize {
@@ -151,7 +166,8 @@ impl TlsRelayBuffer {
         &mut self,
         seen_0x17: &mut Seen0x17,
         dir: Direction,
-    ) -> Result<LeaveTlsSide, ParserError> {
+        side: LiteTlsEndpointSide,
+    ) -> Result<(LeaveTlsMode, TlsVersion), ParserError> {
         loop {
             expect_buf_len!(self.inner, self.cursor + 1, "find 0x17 incomplete");
             match self.inner[self.cursor] {
@@ -164,24 +180,96 @@ impl TlsRelayBuffer {
                     if seen_0x17.is_complete() {
                         #[cfg(feature = "debug_info")]
                         debug!("lite-tls active handshake");
-                        return Ok(LeaveTlsSide::Active);
+                        return Ok((LeaveTlsMode::Active, TlsVersion::Tls12));
                     } else {
                         #[cfg(feature = "debug_info")]
-                        debug!("lite-tls first 0x17");
+                        debug!("lite-tls 0x17 in first direction");
+                        self.version = Some(seen_0x17.determine_tls_version());
                         self.check_tls_packet()?;
                     }
                 }
                 0xff => {
                     #[cfg(feature = "debug_info")]
                     debug!("lite-tls passive handshake");
-                    return Ok(LeaveTlsSide::Passive);
+                    return Ok((LeaveTlsMode::Passive, TlsVersion::Tls12));
                 }
-                0x14 | 0x15 | 0x16 => {
+                0x14 => {
+                    match self.version {
+                        Some(TlsVersion::Tls13) => {
+                            // we have a 0.5 rtt version for
+                            // tls 1.3
+                            use LeaveTlsMode::*;
+                            use LiteTlsEndpointSide::*;
+                            match side {
+                                ClientSide => {
+                                    return Ok((Active, TlsVersion::Tls12));
+                                }
+                                ServerSide => {
+                                    return Ok((Passive, TlsVersion::Tls12));
+                                }
+                            }
+                        }
+                        _ => {
+                            self.check_tls_packet()?;
+                        }
+                    }
+                }
+                0x15 | 0x16 => {
                     self.check_tls_packet()?;
                 }
                 _ => {
                     return Err(ParserError::Invalid("unexpected tls packet type".into()));
                 }
+            }
+        }
+    }
+
+    pub(super) async fn flush_checked<W>(&mut self, writer: &mut W) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        if self.checked_packets().len() > 0 {
+            if writer.write(self.checked_packets()).await? == 0 {
+                return Err(eof_err("EOF on Parsing[]"));
+            }
+            writer.flush().await?;
+            self.pop_checked_packets();
+        }
+        Ok(())
+    }
+
+    pub(super) async fn relay_until_expected<R, W>(
+        &mut self,
+        expecting: u8,
+        reader: &mut R,
+        writer: &mut W,
+    ) -> Result<()>
+    where
+        R: AsyncReadExt + Unpin,
+        W: AsyncWriteExt + Unpin,
+    {
+        loop {
+            while self.inner.len() < self.cursor + 5 {
+                if self.checked_packets().len() > 0 {
+                    self.flush_checked(writer).await?;
+                }
+                if reader.read_buf(self.deref_mut()).await? == 0 {
+                    return Err(eof_err("EOF on Parsing[]"));
+                }
+            }
+            if self.inner[self.cursor] == expecting {
+                if self.checked_packets().len() > 0 {
+                    self.flush_checked(writer).await?;
+                }
+                let next_cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
+                while self.inner.len() < next_cursor {
+                    if reader.read_buf(self.deref_mut()).await? == 0 {
+                        return Err(eof_err("EOF on Parsing[]"));
+                    }
+                }
+                return Ok(());
+            } else {
+                self.cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
             }
         }
     }
