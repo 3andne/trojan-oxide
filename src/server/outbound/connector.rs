@@ -1,3 +1,4 @@
+// use crate::utils::TcpTx;
 use crate::{
     adapt,
     protocol::TCP_MAX_IDLE_TIMEOUT,
@@ -5,7 +6,7 @@ use crate::{
     utils::{lite_tls::LeaveTls, Adapter, ConnectionRequest, MixAddrType, Splitable},
 };
 use anyhow::{anyhow, Context, Error, Result};
-use lazy_static::lazy_static;
+// use lazy_static::lazy_static;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -21,10 +22,8 @@ use tracing::{debug, info};
 #[cfg(feature = "udp")]
 use {crate::server::utils::ServerUdpStream, tokio::net::UdpSocket};
 
-lazy_static! {
-    pub(crate) static ref TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
-    pub(crate) static ref UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
-}
+pub(crate) static TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStream> {
     let outbound = if target_host.is_ip() {

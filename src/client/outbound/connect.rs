@@ -14,7 +14,6 @@ use crate::{
     utils::ConnectionRequest,
 };
 use anyhow::Result;
-use lazy_static::lazy_static;
 use std::{
     future::Future,
     sync::{
@@ -25,10 +24,8 @@ use std::{
 use tokio::sync::broadcast;
 use tracing::*;
 
-lazy_static! {
-    static ref TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
-    static ref UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
-}
+static TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 pub async fn forward<Incomming, Connecting>(
     upper_shutdown: broadcast::Receiver<()>,

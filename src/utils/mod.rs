@@ -31,7 +31,8 @@ pub use splitable::Splitable;
 mod buffers;
 pub use buffers::*;
 
-mod glommio;
+mod glommio_utils;
+pub use glommio_utils::*;
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {

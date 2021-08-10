@@ -1,13 +1,19 @@
 use std::{fmt, time::Duration};
 
-use crate::utils::{copy_to_tls, copy_udp, either_io::EitherIO, TimeoutMonitor};
-use anyhow::{anyhow, Context, Result};
+use crate::{
+    utils::{copy_to_tls, copy_udp, either_io::EitherIO, TimeoutMonitor},
+    VEC_TCP_TX,
+};
+use anyhow::{anyhow, Context, Error, Result};
 use futures::future::{pending, Either};
 use tokio::{
     io::{copy, AsyncRead, AsyncWrite, AsyncWriteExt},
+    net::TcpStream,
     select,
-    sync::broadcast,
+    sync::{broadcast, oneshot},
 };
+
+use std::os::unix::io::AsRawFd;
 
 use super::{UdpRead, UdpWrite, UdpWriteExt};
 
@@ -34,6 +40,22 @@ macro_rules! adapt {
         let reason = adapter.relay_udp(inbound, outbound, $shutdown, $conn_id).await.with_context(|| anyhow!("[udp][{}] failed", $conn_id))?;
         info!("[udp][{}] end by {}", $conn_id, reason);
     };
+    ([lite][$conn_id:ident]$inbound:ident[Tcp] <=> $outbound:ident[Tcp] <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
+        if cfg!(all(target_host = "linux", feature="zio")) {
+            info!("[lite+][{}] => {:?}", $conn_id, $target_host);
+            let reason = Adapter::relay_tcp_zio($inbound, $outbound, $conn_id).await?;
+            info!("[lite+][{}] end by {}", $conn_id, reason);
+        } else {
+            #[allow(unused_mut)]
+            let mut adapter = Adapter::new_tcp_only();
+            $(adapter.set_timeout($timeout);)?
+            info!("[lite][{}] => {:?}", $conn_id, $target_host);
+            let inbound = $inbound.split();
+            let outbound = $outbound.split();
+            let reason = adapter.relay_tcp(inbound, outbound, $shutdown).await.with_context(|| anyhow!("[lite][{}] failed", $conn_id))?;
+            info!("[lite][{}] end by {}", $conn_id, reason);
+        }
+    };
     ([$traffic:ident][$conn_id:ident]$inbound:ident[$itype:ident] <=> $outbound:ident[$otype:ident] <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
         #[allow(unused_mut)]
         let mut adapter = adapt!($itype, $otype);
@@ -46,6 +68,7 @@ macro_rules! adapt {
     };
 }
 
+#[derive(Debug)]
 pub enum StreamStopReasons {
     Upload,
     Download,
@@ -216,5 +239,22 @@ impl Adapter {
             .await
             .with_context(|| anyhow!("failed to shutdown outbound"))?;
         Ok(reason)
+    }
+
+    pub async fn relay_tcp_zio(
+        inbound: TcpStream,
+        outbound: TcpStream,
+        conn_id: usize,
+    ) -> Result<StreamStopReasons> {
+        let vec_tcp_tx = VEC_TCP_TX.get().unwrap();
+        let tcp_tx = vec_tcp_tx[conn_id % vec_tcp_tx.len()].clone();
+        let inbound_fd = inbound.as_raw_fd();
+        let outbound_fd = outbound.as_raw_fd();
+        let (ret_tx, ret_rx) = oneshot::channel();
+        tcp_tx
+            .send((inbound_fd, outbound_fd, ret_tx))
+            .await
+            .map_err(|e| Error::new(e))?;
+        ret_rx.await.map_err(|e| Error::new(e))
     }
 }

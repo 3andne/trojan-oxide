@@ -1,7 +1,5 @@
 /// this is a replica of tokio::io::copy_bidirectional
 /// but based on `futures` traits
-use glommio::net::TcpStream;
-
 use super::copy_buf::CopyBuffer;
 
 use futures::{ready, AsyncRead, AsyncWrite};
@@ -44,7 +42,7 @@ where
                 *state = TransferState::ShuttingDown(count);
             }
             TransferState::ShuttingDown(count) => {
-                ready!(w.as_mut().poll_shutdown(cx))?;
+                ready!(w.as_mut().poll_close(cx))?;
 
                 *state = TransferState::Done(*count);
             }
@@ -81,7 +79,10 @@ where
     }
 }
 
-pub async fn copy_bidirectional<A, B>(a: &mut A, b: &mut B) -> Result<(u64, u64), std::io::Error>
+pub async fn glommio_copy_bidirectional<A, B>(
+    a: &mut A,
+    b: &mut B,
+) -> Result<(u64, u64), std::io::Error>
 where
     A: AsyncRead + AsyncWrite + Unpin + ?Sized,
     B: AsyncRead + AsyncWrite + Unpin + ?Sized,

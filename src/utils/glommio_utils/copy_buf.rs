@@ -1,5 +1,4 @@
 use futures::{ready, AsyncRead, AsyncWrite};
-use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -37,8 +36,7 @@ impl CopyBuffer {
             // If our buffer is empty, then we need to read some data to
             // continue.
             if self.pos == self.cap && !self.read_done {
-                let me = &mut *self;
-                let n = ready!(reader.as_mut().poll_read(cx, &mut *me.buf))?;
+                let n = ready!(reader.as_mut().poll_read(cx, &mut *self.buf))?;
                 if n == 0 {
                     self.read_done = true;
                 } else {

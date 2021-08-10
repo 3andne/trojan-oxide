@@ -3,11 +3,10 @@ use crate::client::ConnectionMode;
 use crate::protocol::HASH_LEN;
 use sha2::{Digest, Sha224};
 use std::fmt::Write;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::{net::SocketAddr, os::unix::io::RawFd};
 use structopt::StructOpt;
-use tokio::sync::mpsc;
 
 fn parse_log_level(l: &str) -> tracing::Level {
     match &l.to_lowercase()[..] {
@@ -138,6 +137,4 @@ pub struct Opt {
 pub struct TrojanContext {
     pub options: Opt,
     pub remote_socket_addr: SocketAddr,
-    #[cfg(target_os = "macos")]
-    pub tcp_submit: Vec<mpsc::Sender<RawFd>>,
 }
