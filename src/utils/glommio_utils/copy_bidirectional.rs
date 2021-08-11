@@ -9,6 +9,8 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use tracing::debug;
+
 enum TransferState {
     Running(CopyBuffer),
     ShuttingDown(u64),
@@ -38,10 +40,12 @@ where
     loop {
         match state {
             TransferState::Running(buf) => {
+                debug!("transfer_one_direction: running");
                 let count = ready!(buf.poll_copy(cx, r.as_mut(), w.as_mut()))?;
                 *state = TransferState::ShuttingDown(count);
             }
             TransferState::ShuttingDown(count) => {
+                debug!("transfer_one_direction: ShuttingDown");
                 ready!(w.as_mut().poll_close(cx))?;
 
                 *state = TransferState::Done(*count);

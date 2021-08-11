@@ -36,15 +36,7 @@ pub static VEC_TCP_TX: OnceCell<Vec<TcpTx>> = OnceCell::const_new();
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    #[cfg(all(target_os = "linux", feature = "zio"))]
-    {
-        let tcp_submit = start_tcp_relay_threads();
-        let _ = VEC_TCP_TX.set(tcp_submit);
-        info!("glommio runtime started");
-    }
-
     let options = Opt::from_args();
-
     let collector = tracing_subscriber::fmt()
         .with_max_level(options.log_level)
         .with_target(if cfg!(feature = "debug_info") {
@@ -53,6 +45,15 @@ async fn main() -> Result<()> {
             false
         })
         .finish();
+    let _ = tracing::subscriber::set_global_default(collector);
+
+    #[cfg(all(target_os = "linux", feature = "zio"))]
+    {
+        let tcp_submit = start_tcp_relay_threads();
+        let _ = VEC_TCP_TX.set(tcp_submit);
+        info!("glommio runtime started");
+    }
+
     let remote_socket_addr = (if options.proxy_ip.len() > 0 {
         options.proxy_ip.to_owned()
     } else {
@@ -68,7 +69,6 @@ async fn main() -> Result<()> {
         remote_socket_addr,
     };
 
-    let _ = tracing::subscriber::set_global_default(collector);
     let _ = proxy::build_tunnel(tokio::signal::ctrl_c(), context).await;
     Ok(())
 }

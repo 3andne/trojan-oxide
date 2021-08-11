@@ -2,6 +2,7 @@ use futures::{ready, AsyncRead, AsyncWrite};
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use tracing::debug;
 
 pub(super) struct CopyBuffer {
     read_done: bool,
@@ -36,7 +37,9 @@ impl CopyBuffer {
             // If our buffer is empty, then we need to read some data to
             // continue.
             if self.pos == self.cap && !self.read_done {
+                debug!("poll_copy: poll_read");
                 let n = ready!(reader.as_mut().poll_read(cx, &mut *self.buf))?;
+                debug!("poll_copy: poll_read {}", n);
                 if n == 0 {
                     self.read_done = true;
                 } else {
@@ -47,9 +50,11 @@ impl CopyBuffer {
 
             // If our buffer has some data, let's write it out!
             while self.pos < self.cap {
+                debug!("poll_copy: poll_write");
                 let i = ready!(writer
                     .as_mut()
                     .poll_write(cx, &self.buf[self.pos..self.cap]))?;
+                debug!("poll_copy: poll_write {}", i);
                 if i == 0 {
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::WriteZero,

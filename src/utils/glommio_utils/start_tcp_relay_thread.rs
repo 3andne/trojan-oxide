@@ -17,8 +17,10 @@ use tracing::*;
 use crate::utils::StreamStopReasons;
 
 async fn tcp_relay_task(mut inbound: TcpStream, mut outbound: TcpStream, ret: TcpTaskRet) {
+    debug!("tcp_relay_task: entered");
     match glommio_copy_bidirectional(&mut inbound, &mut outbound).await {
         Ok(_) => {
+            debug!("tcp_relay_task: Ok");
             let _ = ret.send(StreamStopReasons::Download);
         }
         Err(e) => {
@@ -69,7 +71,7 @@ pub fn start_tcp_relay_threads() -> Vec<TcpTx> {
         tcp_submit.push(tcp_tx);
         std::thread::spawn(move || {
             let ex = LocalExecutorBuilder::new().pin_to_cpu(i).make().unwrap();
-            ex.run(Local::local(worker(tcp_rx)));
+            ex.run(worker(tcp_rx));
         });
     }
     tcp_submit
