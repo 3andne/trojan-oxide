@@ -19,19 +19,26 @@ use args::{Opt, TrojanContext};
 use structopt::StructOpt;
 
 mod utils;
-use tokio::sync::OnceCell;
-use utils::start_tcp_relay_threads;
-use utils::TcpTx;
 
 use anyhow::anyhow;
 use anyhow::Result;
 use std::net::ToSocketAddrs;
 
+#[cfg(all(target_os = "linux", feature = "zio"))]
+use {
+    tokio::sync::OnceCell,
+    utils::{start_tcp_relay_threads, TcpTx},
+};
+
+#[cfg(all(target_os = "linux", feature = "zio"))]
 pub static VEC_TCP_TX: OnceCell<Vec<TcpTx>> = OnceCell::const_new();
 
 fn main() -> Result<()> {
-    let tcp_submit = start_tcp_relay_threads();
-    let _ = VEC_TCP_TX.set(tcp_submit);
+    #[cfg(all(target_os = "linux", feature = "zio"))]
+    {
+        let tcp_submit = start_tcp_relay_threads();
+        let _ = VEC_TCP_TX.set(tcp_submit);
+    }
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

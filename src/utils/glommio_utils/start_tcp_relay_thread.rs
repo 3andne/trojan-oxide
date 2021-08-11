@@ -1,4 +1,6 @@
-use std::os::unix::io::{FromRawFd, RawFd};
+// use std::net::TcpStream;
+use std::os::unix::io::FromRawFd;
+use std::os::unix::prelude::IntoRawFd;
 use std::time::Duration;
 
 use glommio::net::TcpStream;
@@ -7,9 +9,10 @@ use tokio::sync::mpsc;
 
 use super::copy_bidirectional::glommio_copy_bidirectional;
 use super::{TcpRx, TcpTaskRet, TcpTx};
-// use anyhow::{anyhow, Context, Result};
 use glommio::Result;
 use tracing::*;
+
+// use tokio::net::TcpStream;
 
 use crate::utils::StreamStopReasons;
 
@@ -24,8 +27,13 @@ async fn tcp_relay_task(mut inbound: TcpStream, mut outbound: TcpStream, ret: Tc
     }
 }
 
-fn init_tcp_stream(raw_fd: RawFd) -> Result<TcpStream, ()> {
-    let stream: TcpStream = unsafe { TcpStream::from_raw_fd(raw_fd) };
+fn init_tcp_stream(std_tcp_stream: std::net::TcpStream) -> Result<TcpStream, ()> {
+    let stream: TcpStream = unsafe {
+        // safety: both steps are infallible, therefore the socket
+        // will always be under control.
+        let raw_fd = std_tcp_stream.into_raw_fd();
+        TcpStream::from_raw_fd(raw_fd)
+    };
     stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(Duration::from_secs(60)))?;
     stream.set_write_timeout(Some(Duration::from_secs(60)))?;

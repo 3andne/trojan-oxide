@@ -1,19 +1,21 @@
 use std::{fmt, time::Duration};
 
-use crate::{
-    utils::{copy_to_tls, copy_udp, either_io::EitherIO, TimeoutMonitor},
-    VEC_TCP_TX,
-};
-use anyhow::{anyhow, Context, Error, Result};
+use crate::utils::{copy_to_tls, copy_udp, either_io::EitherIO, TimeoutMonitor};
+
+use anyhow::{anyhow, Context, Result};
 use futures::future::{pending, Either};
 use tokio::{
     io::{copy, AsyncRead, AsyncWrite, AsyncWriteExt},
-    net::TcpStream,
     select,
-    sync::{broadcast, oneshot},
+    sync::broadcast,
 };
 
-use std::os::unix::io::AsRawFd;
+#[cfg(all(target_os = "linux", feature = "zio"))]
+use {
+    crate::VEC_TCP_TX,
+    anyhow::Error,
+    tokio::{net::TcpStream, sync::oneshot},
+};
 
 use super::{UdpRead, UdpWrite, UdpWriteExt};
 
@@ -41,11 +43,15 @@ macro_rules! adapt {
         info!("[udp][{}] end by {}", $conn_id, reason);
     };
     ([lite][$conn_id:ident]$inbound:ident[Tcp] <=> $outbound:ident[Tcp] <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
-        if cfg!(all(target_host = "linux", feature="zio")) {
+        #[cfg(all(target_os = "linux", feature = "zio"))]
+        {
             info!("[lite+][{}] => {:?}", $conn_id, $target_host);
             let reason = Adapter::relay_tcp_zio($inbound, $outbound, $conn_id).await?;
             info!("[lite+][{}] end by {}", $conn_id, reason);
-        } else {
+        }
+
+        #[cfg(not(all(target_os = "linux", feature = "zio")))]
+        {
             #[allow(unused_mut)]
             let mut adapter = Adapter::new_tcp_only();
             $(adapter.set_timeout($timeout);)?
@@ -241,6 +247,7 @@ impl Adapter {
         Ok(reason)
     }
 
+    #[cfg(all(target_os = "linux", feature = "zio"))]
     pub async fn relay_tcp_zio(
         inbound: TcpStream,
         outbound: TcpStream,
@@ -248,11 +255,15 @@ impl Adapter {
     ) -> Result<StreamStopReasons> {
         let vec_tcp_tx = VEC_TCP_TX.get().unwrap();
         let tcp_tx = vec_tcp_tx[conn_id % vec_tcp_tx.len()].clone();
-        let inbound_fd = inbound.as_raw_fd();
-        let outbound_fd = outbound.as_raw_fd();
+
+        // we transfer the ownership of the socket to glommio by sending
+        // its std representation. tokio is no longer responsible for
+        // releasing the socket.
+        let inbound_std = inbound.into_std()?;
+        let outbound_std = outbound.into_std()?;
         let (ret_tx, ret_rx) = oneshot::channel();
         tcp_tx
-            .send((inbound_fd, outbound_fd, ret_tx))
+            .send((inbound_std, outbound_std, ret_tx))
             .await
             .map_err(|e| Error::new(e))?;
         ret_rx.await.map_err(|e| Error::new(e))

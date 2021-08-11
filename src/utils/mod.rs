@@ -1,6 +1,5 @@
 #[cfg(feature = "udp")]
 mod udp;
-
 #[cfg(feature = "udp")]
 pub use udp::*;
 
@@ -31,7 +30,9 @@ pub use splitable::Splitable;
 mod buffers;
 pub use buffers::*;
 
+#[cfg(all(target_os = "linux", feature = "zio"))]
 mod glommio_utils;
+#[cfg(all(target_os = "linux", feature = "zio"))]
 pub use glommio_utils::*;
 
 #[derive(Debug, err_derive::Error)]
