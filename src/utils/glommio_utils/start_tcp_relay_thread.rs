@@ -62,9 +62,9 @@ async fn worker(mut tcp_rx: TcpRx) {
 
 pub fn start_tcp_relay_threads() -> Vec<TcpTx> {
     let numc = num_cpus::get();
-    // tokio::spawn(future);
     let mut tcp_submit = Vec::with_capacity(numc);
     for i in 0..numc {
+        debug!("starting glommio runtime: {}", i);
         let (tcp_tx, tcp_rx) = mpsc::channel(100);
         tcp_submit.push(tcp_tx);
         std::thread::spawn(move || {

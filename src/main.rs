@@ -23,6 +23,7 @@ mod utils;
 use anyhow::anyhow;
 use anyhow::Result;
 use std::net::ToSocketAddrs;
+use tracing::info;
 
 #[cfg(all(target_os = "linux", feature = "zio"))]
 use {
@@ -33,20 +34,15 @@ use {
 #[cfg(all(target_os = "linux", feature = "zio"))]
 pub static VEC_TCP_TX: OnceCell<Vec<TcpTx>> = OnceCell::const_new();
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     #[cfg(all(target_os = "linux", feature = "zio"))]
     {
         let tcp_submit = start_tcp_relay_threads();
         let _ = VEC_TCP_TX.set(tcp_submit);
+        info!("glommio runtime started");
     }
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(tokio_main())
-}
 
-async fn tokio_main() -> Result<()> {
     let options = Opt::from_args();
 
     let collector = tracing_subscriber::fmt()
