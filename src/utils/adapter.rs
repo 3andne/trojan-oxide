@@ -265,7 +265,9 @@ impl Adapter {
         tcp_tx
             .send((inbound_std, outbound_std, ret_tx))
             .await
-            .map_err(|e| Error::new(e))?;
-        ret_rx.await.map_err(|e| Error::new(e))
+            .map_err(|e| Error::new(e).context("failed on sending"))?;
+        ret_rx
+            .await
+            .map_err(|e| Error::new(e).context("failed on receiving"))
     }
 }
