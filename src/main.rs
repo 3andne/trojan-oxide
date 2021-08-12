@@ -23,7 +23,6 @@ mod utils;
 use anyhow::anyhow;
 use anyhow::Result;
 use std::net::ToSocketAddrs;
-use tracing::info;
 
 #[cfg(all(target_os = "linux", feature = "zio"))]
 use {
@@ -49,6 +48,7 @@ async fn main() -> Result<()> {
 
     #[cfg(all(target_os = "linux", feature = "zio"))]
     {
+        use tracing::info;
         let tcp_submit = start_tcp_relay_threads();
         let _ = VEC_TCP_TX.set(tcp_submit);
         info!("glommio runtime started");

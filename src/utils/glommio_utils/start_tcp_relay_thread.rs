@@ -76,3 +76,100 @@ pub fn start_tcp_relay_threads() -> Vec<TcpTx> {
     }
     tcp_submit
 }
+
+#[tokio::test]
+async fn test_glommio() {
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
+    use crate::VEC_TCP_TX;
+
+    let collector = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .finish();
+    let _ = tracing::subscriber::set_global_default(collector);
+
+    let tcp_submit = start_tcp_relay_threads();
+    let _ = VEC_TCP_TX.set(tcp_submit);
+
+    // spawn a server in tokio
+    tokio::spawn(async move {
+        let server_listener = tokio::net::TcpListener::bind("0.0.0.0:5555").await.unwrap();
+        info!("server started");
+        loop {
+            let mut stream = match server_listener.accept().await {
+                Ok((s, _)) => s,
+                Err(_) => continue,
+            };
+            info!("server incoming");
+
+            tokio::spawn(async move {
+                let mut buf = [0u8; 2048];
+                loop {
+                    let n = match stream.read(&mut buf).await {
+                        Ok(n) => n,
+                        Err(_) => return,
+                    };
+
+                    let _ = stream.write(&buf[..n]).await;
+                }
+            });
+        }
+    });
+
+    // start the proxy
+    tokio::spawn(async move {
+        let proxy_listener = tokio::net::TcpListener::bind("0.0.0.0:6666").await.unwrap();
+        info!("proxy started");
+
+        let mut conn_id = 0;
+        loop {
+            let inbound = match proxy_listener.accept().await {
+                Ok((s, _)) => s,
+                Err(_) => continue,
+            };
+            info!("proxy incoming");
+
+            conn_id += 1;
+
+            tokio::spawn(async move {
+                let outbound = tokio::net::TcpStream::connect("0.0.0.0:5555")
+                    .await
+                    .unwrap();
+                let vec_tcp_tx = VEC_TCP_TX.get().unwrap();
+                let tcp_tx = vec_tcp_tx[conn_id % vec_tcp_tx.len()].clone();
+
+                // we transfer the ownership of the socket to glommio by sending
+                // its std representation. tokio is no longer responsible for
+                // releasing the socket.
+                let inbound_std = inbound.into_std().unwrap();
+                let outbound_std = outbound.into_std().unwrap();
+                let (ret_tx, ret_rx) = tokio::sync::oneshot::channel();
+                let _ = tcp_tx.send((inbound_std, outbound_std, ret_tx)).await;
+                let _ = ret_rx.await;
+            });
+        }
+    });
+
+    // spawn 100 clients in tokio
+    let mut client_handles = Vec::new();
+    for _ in 0..100 {
+        client_handles.push(tokio::spawn(async move {
+            let mut client_sender = tokio::net::TcpStream::connect("127.0.0.1:6666")
+                .await
+                .unwrap();
+            let data = [1u8; 2000];
+            let mut buf = [0u8; 2048];
+            for _ in 0..3 {
+                let _ = client_sender.write(&data).await;
+                let _ = client_sender.read(&mut buf).await;
+            }
+        }));
+    }
+
+    let mut i = 0;
+    for handles in client_handles {
+        info!("client {}", i);
+        i += 1;
+        let _ = handles.await;
+    }
+}
