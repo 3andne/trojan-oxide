@@ -1,14 +1,18 @@
-use std::ops::DerefMut;
+use std::{ops::DerefMut, time::Duration};
 
 use super::{
     error::eof_err,
     tls_relay_buffer::{Seen0x17, TlsRelayBuffer, TlsVersion},
 };
-use crate::{protocol::LEAVE_TLS_COMMAND, utils::ParserError};
+use crate::{
+    protocol::{LEAVE_TLS_COMMAND, LITE_TLS_HANDSHAKE_TIMEOUT},
+    utils::ParserError,
+};
 use anyhow::{anyhow, Context, Error, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     select,
+    time::timeout,
 };
 use tracing::debug;
 
@@ -286,6 +290,19 @@ impl LiteTlsStream {
         };
     }
 
+    pub async fn handshake_timeout<I, O>(&mut self, outbound: &mut O, inbound: &mut I) -> Result<()>
+    where
+        I: AsyncReadExt + AsyncWriteExt + Unpin,
+        O: AsyncReadExt + AsyncWriteExt + Unpin,
+    {
+        timeout(
+            Duration::from_secs(LITE_TLS_HANDSHAKE_TIMEOUT),
+            self.handshake(outbound, inbound),
+        )
+        .await
+        .map_err(|e| Error::new(e))?
+    }
+
     /// if Ok(_) is returned, then quit TLS channel, relay the remaining
     /// packets through TCP
     ///
@@ -294,7 +311,7 @@ impl LiteTlsStream {
     ///
     /// if Err(other) is returned, the stream is probably non-recoverable
     /// just quit
-    pub async fn handshake<I, O>(&mut self, outbound: &mut O, inbound: &mut I) -> Result<()>
+    async fn handshake<I, O>(&mut self, outbound: &mut O, inbound: &mut I) -> Result<()>
     where
         I: AsyncReadExt + AsyncWriteExt + Unpin,
         O: AsyncReadExt + AsyncWriteExt + Unpin,

@@ -7,10 +7,7 @@ use crate::{
     utils::{Adapter, MixAddrType, ParserError, Splitable, WRTuple},
 };
 use anyhow::{anyhow, Context, Result};
-use tokio::{
-    sync::broadcast,
-    time::{timeout, Duration},
-};
+use tokio::sync::broadcast;
 use tracing::info;
 
 #[cfg(feature = "lite_tls")]
@@ -43,17 +40,16 @@ pub async fn relay_tcp(
         ClientServerConnection::LiteTLS(mut outbound) => {
             let mut lite_tls_endpoint = LiteTlsStream::new_client_endpoint();
             let mut inbound_tmp = WRTuple::from_rw_tuple(inbound.split());
-            match timeout(
-                Duration::from_secs(30),
-                lite_tls_endpoint.handshake(&mut outbound, &mut inbound_tmp),
-            )
+
             // there is a potential bug here, if timeout is too short for a
             // valid handshake, it closes unexpectedly and immediately try for
             // another time. However for the second time, it is not recognised
             // as a tls stream and therefore fails again.
             // I set a reasonably large timeout here to avoid such problem,
             // but the reason for the failed second round is currently unknown.
-            .await?
+            match lite_tls_endpoint
+                .handshake_timeout(&mut outbound, &mut inbound_tmp)
+                .await
             {
                 Ok(_) => {
                     info!("lite tls handshake succeed");
@@ -61,6 +57,7 @@ pub async fn relay_tcp(
                     lite_tls_endpoint
                         .flush(&mut outbound, &mut inbound_tmp)
                         .await?;
+                    let inbound = inbound.inner;
                     adapt!([lite][conn_id]
                         inbound[Tcp] <=> outbound[Tcp] <=> target_host
                         Until shutdown

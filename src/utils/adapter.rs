@@ -1,6 +1,7 @@
 use std::{fmt, time::Duration};
 
 use crate::utils::{copy_to_tls, copy_udp, either_io::EitherIO, TimeoutMonitor};
+
 use anyhow::{anyhow, Context, Result};
 use futures::future::{pending, Either};
 use tokio::{
@@ -8,6 +9,9 @@ use tokio::{
     select,
     sync::broadcast,
 };
+
+#[cfg(all(target_os = "linux", feature = "zio"))]
+use {crate::VEC_TCP_TX, anyhow::Error, tokio::net::TcpStream};
 
 use super::{UdpRead, UdpWrite, UdpWriteExt};
 
@@ -34,6 +38,31 @@ macro_rules! adapt {
         let reason = adapter.relay_udp(inbound, outbound, $shutdown, $conn_id).await.with_context(|| anyhow!("[udp][{}] failed", $conn_id))?;
         info!("[udp][{}] end by {}", $conn_id, reason);
     };
+    ([lite][$conn_id:ident]$inbound:ident[Tcp] <=> $outbound:ident[Tcp] <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
+        #[cfg(all(target_os = "linux", feature = "zio"))]
+        {
+            // timeout is not used here. In glommio, we set tcp socket's
+            // timeout instead.
+            info!("[lite+][{}] => {:?}", $conn_id, $target_host);
+            let _ = Adapter::relay_tcp_zio($inbound, $outbound, $conn_id).await?;
+            // the ending message is printed by glommio, since
+            // it's not yet possible to get the reason back from glommio.
+            // // info!("[lite+][{}] end by {}", $conn_id, reason);
+        }
+
+        #[cfg(not(all(target_os = "linux", feature = "zio")))]
+        {
+            #[allow(unused_mut)]
+            let mut adapter = Adapter::new_tcp_only();
+            $(adapter.set_timeout($timeout);)?
+            info!("[lite][{}] => {:?}", $conn_id, $target_host);
+            let mut inbound = $inbound;
+            let inbound = inbound.split();
+            let outbound = $outbound.split();
+            let reason = adapter.relay_tcp(inbound, outbound, $shutdown).await.with_context(|| anyhow!("[lite][{}] failed", $conn_id))?;
+            info!("[lite][{}] end by {}", $conn_id, reason);
+        }
+    };
     ([$traffic:ident][$conn_id:ident]$inbound:ident[$itype:ident] <=> $outbound:ident[$otype:ident] <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
         #[allow(unused_mut)]
         let mut adapter = adapt!($itype, $otype);
@@ -46,6 +75,7 @@ macro_rules! adapt {
     };
 }
 
+#[derive(Debug, Clone)]
 pub enum StreamStopReasons {
     Upload,
     Download,
@@ -216,5 +246,26 @@ impl Adapter {
             .await
             .with_context(|| anyhow!("failed to shutdown outbound"))?;
         Ok(reason)
+    }
+
+    #[cfg(all(target_os = "linux", feature = "zio"))]
+    pub async fn relay_tcp_zio(
+        inbound: TcpStream,
+        outbound: TcpStream,
+        conn_id: usize,
+    ) -> Result<()> {
+        let vec_tcp_tx = VEC_TCP_TX.get().unwrap();
+        let tcp_tx = vec_tcp_tx[conn_id % vec_tcp_tx.len()].clone();
+
+        // we transfer the ownership of the socket to glommio by sending
+        // its std representation. tokio is no longer responsible for
+        // releasing the socket.
+        let inbound_std = inbound.into_std()?;
+        let outbound_std = outbound.into_std()?;
+        tcp_tx
+            .send((inbound_std, outbound_std, conn_id))
+            .await
+            .map_err(|e| Error::new(e).context("failed on sending"))?;
+        Ok(())
     }
 }

@@ -1,11 +1,10 @@
 use crate::{
     adapt,
-    protocol::TCP_MAX_IDLE_TIMEOUT,
+    protocol::{SERVER_OUTBOUND_CONNECT_TIMEOUT, TCP_MAX_IDLE_TIMEOUT},
     server::inbound::TrojanAcceptor,
     utils::{lite_tls::LeaveTls, Adapter, ConnectionRequest, MixAddrType, Splitable},
 };
 use anyhow::{anyhow, Context, Error, Result};
-use lazy_static::lazy_static;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -21,10 +20,8 @@ use tracing::{debug, info};
 #[cfg(feature = "udp")]
 use {crate::server::utils::ServerUdpStream, tokio::net::UdpSocket};
 
-lazy_static! {
-    pub(crate) static ref TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
-    pub(crate) static ref UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
-}
+pub(crate) static TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStream> {
     let outbound = if target_host.is_ip() {
@@ -58,7 +55,12 @@ where
 {
     let mut target = TrojanAcceptor::new(password_hash.as_bytes(), fallback_port);
     use ConnectionRequest::*;
-    match timeout(Duration::from_secs(5), target.accept(stream)).await? {
+    match timeout(
+        Duration::from_secs(SERVER_OUTBOUND_CONNECT_TIMEOUT),
+        target.accept(stream),
+    )
+    .await?
+    {
         Ok(TCP(inbound)) => {
             let outbound =
                 timeout(Duration::from_secs(2), outbound_connect(&target.host)).await??;
