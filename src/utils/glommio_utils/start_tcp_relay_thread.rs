@@ -130,7 +130,7 @@ async fn test_glommio() {
 
         let mut conn_id = 0;
         loop {
-            let inbound = match proxy_listener.accept().await {
+            let mut inbound = match proxy_listener.accept().await {
                 Ok((s, _)) => s,
                 Err(e) => {
                     error!("proxy[1] {:?}", e);
@@ -142,13 +142,44 @@ async fn test_glommio() {
             conn_id += 1;
 
             tokio::spawn(async move {
-                let outbound = match tokio::net::TcpStream::connect("127.0.0.1:5555").await {
+                let mut outbound = match tokio::net::TcpStream::connect("127.0.0.1:5555").await {
                     Ok(s) => s,
                     Err(e) => {
                         error!("proxy[2] {:?}", e);
                         return;
                     }
                 };
+                let mut buf = [0; 4096];
+                let a = match inbound.read(&mut buf).await {
+                    Ok(x) => x,
+                    Err(x) => {
+                        error!("proxy[4] {:?}", x);
+                        return;
+                    }
+                };
+                let _ = match outbound.write(&buf[..a]).await {
+                    Ok(x) => x,
+                    Err(x) => {
+                        error!("proxy[5] {:?}", x);
+                        return;
+                    }
+                };
+
+                let a = match outbound.read(&mut buf).await {
+                    Ok(x) => x,
+                    Err(x) => {
+                        error!("proxy[6] {:?}", x);
+                        return;
+                    }
+                };
+                let _ = match inbound.write(&buf[..a]).await {
+                    Ok(x) => x,
+                    Err(x) => {
+                        error!("proxy[7] {:?}", x);
+                        return;
+                    }
+                };
+
                 match Adapter::relay_tcp_zio(inbound, outbound, conn_id).await {
                     Ok(x) => info!("{}", x),
                     Err(x) => error!("proxy[3] {:?}", x),
