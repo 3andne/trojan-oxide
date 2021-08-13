@@ -2,7 +2,6 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
     sync::broadcast,
-    time::{timeout, Duration},
 };
 use tracing::{debug, info};
 
@@ -42,11 +41,9 @@ where
             }
             LiteTLS(mut inbound) => {
                 let mut lite_tls_endpoint = LiteTlsStream::new_server_endpoint();
-                match timeout(
-                    Duration::from_secs(30),
-                    lite_tls_endpoint.handshake(&mut outbound, &mut inbound),
-                )
-                .await?
+                match lite_tls_endpoint
+                    .handshake_timeout(&mut outbound, &mut inbound)
+                    .await
                 {
                     Ok(_) => {
                         let mut inbound = inbound.into_inner().leave();

@@ -1,4 +1,3 @@
-// use std::net::TcpStream;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::prelude::IntoRawFd;
 use std::time::Duration;
@@ -6,26 +5,22 @@ use std::time::Duration;
 use glommio::net::TcpStream;
 use glommio::{Local, LocalExecutorBuilder};
 use tokio::sync::mpsc;
-use tokio::time::sleep;
 
 use super::copy_bidirectional::glommio_copy_bidirectional;
-use super::{TcpRx, TcpTaskRet, TcpTx};
+use super::{TcpRx, TcpTx};
+use crate::protocol::TCP_MAX_IDLE_TIMEOUT;
 use glommio::Result;
 use tracing::*;
 
-// use tokio::net::TcpStream;
-
-use crate::utils::{Adapter, StreamStopReasons};
-
-async fn tcp_relay_task(mut inbound: TcpStream, mut outbound: TcpStream, ret: TcpTaskRet) {
+async fn tcp_relay_task(mut inbound: TcpStream, mut outbound: TcpStream, conn_id: usize) {
+    #[cfg(feature = "debug_info")]
     debug!("tcp_relay_task: entered");
     match glommio_copy_bidirectional(&mut inbound, &mut outbound).await {
-        Ok(_) => {
-            debug!("tcp_relay_task: Ok");
-            let _ = ret.send(StreamStopReasons::Download);
+        Ok((_, _, reason)) => {
+            info!("[lite+][{}] end by {}", conn_id, reason);
         }
         Err(e) => {
-            error!("glommio copy failed: {:?}", e);
+            info!("[lite+][{}] end by {:?}", conn_id, e);
         }
     }
 }
@@ -38,8 +33,8 @@ fn init_tcp_stream(std_tcp_stream: std::net::TcpStream) -> Result<TcpStream, ()>
         TcpStream::from_raw_fd(raw_fd)
     };
     stream.set_nodelay(true)?;
-    stream.set_read_timeout(Some(Duration::from_secs(60)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(60)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(TCP_MAX_IDLE_TIMEOUT as u64)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(TCP_MAX_IDLE_TIMEOUT as u64)))?;
     Ok(stream)
 }
 
@@ -67,7 +62,7 @@ pub fn start_tcp_relay_threads() -> Vec<TcpTx> {
     let numc = num_cpus::get();
     let mut tcp_submit = Vec::with_capacity(numc);
     for i in 0..numc {
-        debug!("starting glommio runtime: {}", i);
+        info!("starting glommio runtime: {}", i);
         let (tcp_tx, tcp_rx) = mpsc::channel(100);
         tcp_submit.push(tcp_tx);
         std::thread::spawn(move || {
@@ -80,9 +75,11 @@ pub fn start_tcp_relay_threads() -> Vec<TcpTx> {
 
 #[tokio::test]
 async fn test_glommio() {
+    use crate::utils::Adapter;
     use crate::VEC_TCP_TX;
     use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
+    use tokio::time::sleep;
 
     let collector = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
@@ -180,17 +177,19 @@ async fn test_glommio() {
                     }
                 };
 
+                info!("relay start");
                 match Adapter::relay_tcp_zio(inbound, outbound, conn_id).await {
-                    Ok(x) => info!("{}", x),
+                    Ok(_) => (),
                     Err(x) => error!("proxy[3] {:?}", x),
                 }
+                info!("relay end");
             });
         }
     });
 
     // spawn 100 clients in tokio
     let mut client_handles = Vec::new();
-    for _ in 0..500 {
+    for _ in 0..50 {
         client_handles.push(tokio::spawn(async move {
             let mut client_sender = match tokio::net::TcpStream::connect("127.0.0.1:6666").await {
                 Ok(s) => s,
@@ -215,4 +214,5 @@ async fn test_glommio() {
         i += 1;
         let _ = handles.await;
     }
+    sleep(Duration::from_secs(20)).await;
 }

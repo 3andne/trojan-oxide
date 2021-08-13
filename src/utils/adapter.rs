@@ -11,11 +11,7 @@ use tokio::{
 };
 
 #[cfg(all(target_os = "linux", feature = "zio"))]
-use {
-    crate::VEC_TCP_TX,
-    anyhow::Error,
-    tokio::{net::TcpStream, sync::oneshot},
-};
+use {crate::VEC_TCP_TX, anyhow::Error, tokio::net::TcpStream};
 
 use super::{UdpRead, UdpWrite, UdpWriteExt};
 
@@ -45,9 +41,13 @@ macro_rules! adapt {
     ([lite][$conn_id:ident]$inbound:ident[Tcp] <=> $outbound:ident[Tcp] <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
         #[cfg(all(target_os = "linux", feature = "zio"))]
         {
+            // timeout is not used here. In glommio, we set tcp socket's
+            // timeout instead.
             info!("[lite+][{}] => {:?}", $conn_id, $target_host);
-            let reason = Adapter::relay_tcp_zio($inbound, $outbound, $conn_id).await?;
-            info!("[lite+][{}] end by {}", $conn_id, reason);
+            let _ = Adapter::relay_tcp_zio($inbound, $outbound, $conn_id).await?;
+            // the ending message is printed by glommio, since
+            // it's not yet possible to get the reason back from glommio.
+            // // info!("[lite+][{}] end by {}", $conn_id, reason);
         }
 
         #[cfg(not(all(target_os = "linux", feature = "zio")))]
@@ -56,7 +56,8 @@ macro_rules! adapt {
             let mut adapter = Adapter::new_tcp_only();
             $(adapter.set_timeout($timeout);)?
             info!("[lite][{}] => {:?}", $conn_id, $target_host);
-            let inbound = $inbound.split();
+            let mut inbound = $inbound;
+            let inbound = inbound.split();
             let outbound = $outbound.split();
             let reason = adapter.relay_tcp(inbound, outbound, $shutdown).await.with_context(|| anyhow!("[lite][{}] failed", $conn_id))?;
             info!("[lite][{}] end by {}", $conn_id, reason);
@@ -74,7 +75,7 @@ macro_rules! adapt {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StreamStopReasons {
     Upload,
     Download,
@@ -252,7 +253,7 @@ impl Adapter {
         inbound: TcpStream,
         outbound: TcpStream,
         conn_id: usize,
-    ) -> Result<StreamStopReasons> {
+    ) -> Result<()> {
         let vec_tcp_tx = VEC_TCP_TX.get().unwrap();
         let tcp_tx = vec_tcp_tx[conn_id % vec_tcp_tx.len()].clone();
 
@@ -261,13 +262,10 @@ impl Adapter {
         // releasing the socket.
         let inbound_std = inbound.into_std()?;
         let outbound_std = outbound.into_std()?;
-        let (ret_tx, ret_rx) = oneshot::channel();
         tcp_tx
-            .send((inbound_std, outbound_std, ret_tx))
+            .send((inbound_std, outbound_std, conn_id))
             .await
             .map_err(|e| Error::new(e).context("failed on sending"))?;
-        ret_rx
-            .await
-            .map_err(|e| Error::new(e).context("failed on receiving"))
+        Ok(())
     }
 }
