@@ -99,7 +99,10 @@ async fn test_glommio() {
         loop {
             let mut stream = match server_listener.accept().await {
                 Ok((s, _)) => s,
-                Err(_) => continue,
+                Err(e) => {
+                    error!("server[1] {:?}", e);
+                    continue;
+                }
             };
             // info!("server incoming");
 
@@ -108,7 +111,10 @@ async fn test_glommio() {
                 loop {
                     let n = match stream.read(&mut buf).await {
                         Ok(n) => n,
-                        Err(_) => return,
+                        Err(e) => {
+                            error!("server[2] {:?}", e);
+                            return;
+                        }
                     };
 
                     let _ = stream.write(&buf[..n]).await;
@@ -126,19 +132,26 @@ async fn test_glommio() {
         loop {
             let inbound = match proxy_listener.accept().await {
                 Ok((s, _)) => s,
-                Err(_) => continue,
+                Err(e) => {
+                    error!("proxy[1] {:?}", e);
+                    continue;
+                }
             };
             // info!("proxy incoming");
 
             conn_id += 1;
 
             tokio::spawn(async move {
-                let outbound = tokio::net::TcpStream::connect("0.0.0.0:5555")
-                    .await
-                    .unwrap();
+                let outbound = match tokio::net::TcpStream::connect("127.0.0.1:5555").await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("proxy[2] {:?}", e);
+                        return;
+                    }
+                };
                 match Adapter::relay_tcp_zio(inbound, outbound, conn_id).await {
                     Ok(x) => info!("{}", x),
-                    Err(x) => error!("{:?}", x),
+                    Err(x) => error!("proxy[3] {:?}", x),
                 }
             });
         }
@@ -148,9 +161,13 @@ async fn test_glommio() {
     let mut client_handles = Vec::new();
     for _ in 0..500 {
         client_handles.push(tokio::spawn(async move {
-            let mut client_sender = tokio::net::TcpStream::connect("127.0.0.1:6666")
-                .await
-                .unwrap();
+            let mut client_sender = match tokio::net::TcpStream::connect("127.0.0.1:6666").await {
+                Ok(s) => s,
+                Err(e) => {
+                    error!("client[1] {:?}", e);
+                    return;
+                }
+            };
             let data = [1u8; 2048];
             let mut buf = [0u8; 2048];
             for _ in 0..10 {
