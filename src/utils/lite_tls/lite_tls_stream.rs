@@ -123,42 +123,31 @@ impl LiteTlsStream {
         }
     }
 
-    async fn handshake_tls12_server<I>(&mut self, inbound: &mut I) -> Result<()>
+    async fn handshake_tls12_server<I, O>(
+        &mut self,
+        inbound: &mut I,
+        outbound: &mut O,
+    ) -> Result<()>
     where
         I: AsyncReadExt + AsyncWriteExt + Unpin,
+        O: AsyncReadExt + AsyncWriteExt + Unpin,
     {
-        // relay all packets before 0x17
-        if self.outbound_buf.checked_packets().len() > 0 {
-            inbound.write(self.outbound_buf.checked_packets()).await?;
-            self.outbound_buf.pop_checked_packets();
+        // relay all packets prior to 0xff
+        if self.inbound_buf.checked_packets().len() > 0 {
+            outbound.write(self.inbound_buf.checked_packets()).await?;
+            self.inbound_buf.pop_checked_packets();
         }
 
-        if inbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
-            return Err(eof_err("EOF on Parsing[9]"));
-        }
-        inbound.flush().await?;
-
-        if inbound.read_buf(self.inbound_buf.deref_mut()).await? == 0 {
-            return Err(eof_err("EOF on Parsing[10]"));
-        }
-
-        // We shouldn't make any assumptions about clients' behavior,
-        // but here is one we couldn't bypass.
-        // ****************
-        // If a client sends requests after it's first response
-        // being sent by the corresponding server, the content
-        // in `tmp` will be the client's request rather than
-        // `LEAVE_TLS_COMMAND`.
-        // ****************
-        // This should be a rare case but couldn't be avoided
-        // theoretically,
-        if self.inbound_buf.check_tls_packet()? != 0xff {
-            return Err(Error::new(ParserError::Invalid(
-                "[Active, Tls12]fatal error, can't access this server through current lite tls implementation".into(),
-            )));
-        }
+        // ensure the 0x14 is complete.
+        self.inbound_buf.read_single_small_packet(inbound).await?;
+        // pop the 0x14.
         self.inbound_buf.pop_checked_packets();
 
+        // relay some 0x16, ..., 0x14, 0x16
+        // then the handshake should reach an end
+        self.outbound_buf
+            .tls12_relay_helper(outbound, inbound)
+            .await?;
         // Then we leave tls tunnel
         return Ok(());
     }
@@ -173,15 +162,21 @@ impl LiteTlsStream {
         O: AsyncReadExt + AsyncWriteExt + Unpin,
     {
         // relay all packets before 0x17
-        self.inbound_buf.flush_checked(outbound).await?;
-
-        self.inbound_buf.check_tls_packet()?;
+        let mut tmp =
+            Vec::with_capacity(self.inbound_buf.checked_packets().len() + LEAVE_TLS_COMMAND.len());
+        tmp.extend_from_slice(self.inbound_buf.checked_packets());
         self.inbound_buf.pop_checked_packets();
-
-        if outbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
+        tmp.extend_from_slice(&LEAVE_TLS_COMMAND);
+        if outbound.write(&tmp).await? == 0 {
             return Err(eof_err("EOF on Parsing[12]"));
         }
         outbound.flush().await?;
+
+        // relay some 0x16, ..., 0x14, 0x16
+        // then the handshake should reach an end
+        self.outbound_buf
+            .tls12_relay_helper(outbound, inbound)
+            .await?;
 
         // Then we leave tls tunnel
         return Ok(());
@@ -191,6 +186,7 @@ impl LiteTlsStream {
     where
         O: AsyncReadExt + AsyncWriteExt + Unpin,
     {
+        self.inbound_buf.flush_checked(outbound).await?;
         // wait for server's response
         // this is not part of the TLS specification,
         // but we have to do this to correctly
@@ -199,7 +195,7 @@ impl LiteTlsStream {
             return Err(eof_err("EOF on Parsing[7]"));
         }
         match self.outbound_buf.check_tls_packet() {
-            // check: x must be 6 and the rsp should
+            // check: the rsp should
             // be [0x14, 0x03, 0x03, 0, 0x01, 0x01]
             // (change_cipher_spec)
             Ok(ty) => {
@@ -228,20 +224,27 @@ impl LiteTlsStream {
         }
     }
 
-    async fn handshake_tls13_server<I>(&mut self, inbound: &mut I) -> Result<()>
+    async fn handshake_tls13_server<I, O>(
+        &mut self,
+        inbound: &mut I,
+        outbound: &mut O,
+    ) -> Result<()>
     where
         I: AsyncReadExt + AsyncWriteExt + Unpin,
+        O: AsyncReadExt + AsyncWriteExt + Unpin,
     {
+        // write a 0x14 response to client
+        // so that both sides can leave TLS channel
+        // we do this first to reduce latency
+        inbound.write(&[0x14, 0x03, 0x03, 0, 0x01, 0x01]).await?;
+        inbound.flush().await?;
+
+        self.inbound_buf.flush_checked(outbound).await?;
         if self.inbound_buf.len() != 0 {
             return Err(Error::new(ParserError::Invalid(
                 "buffer not empty after last 0x14".into(),
             )));
         }
-
-        // write a 0x14 response to client
-        // so that both sides can leave TLS channel
-        inbound.write(&[0x14, 0x03, 0x03, 0, 0x01, 0x01]).await?;
-        inbound.flush().await?;
 
         #[cfg(feature = "debug_info")]
         debug!("[LC1]last CCS sent, leaving");
@@ -256,27 +259,8 @@ impl LiteTlsStream {
         #[cfg(feature = "debug_info")]
         debug!("[LC0]buf now: {:?}", self.inbound_buf);
 
-        // relay everything till the end of 0x14
-        // there might be some 0x17 packets left
-        match self.inbound_buf.check_tls_packet() {
-            Ok(_) => (),
-            Err(ParserError::Incomplete(_)) => {
-                // We issue one more read. If it's again not ready,
-                // it fails.
-                if inbound.read_buf(self.inbound_buf.deref_mut()).await? == 0 {
-                    return Err(eof_err("EOF on Parsing[13]"));
-                }
-                self.inbound_buf
-                    .check_tls_packet()
-                    .map_err(|e| Error::new(e))?;
-            }
-            Err(e @ ParserError::Invalid(_)) => {
-                return Err(Error::new(e));
-            }
-        }
-
-        self.inbound_buf.flush_checked(outbound).await?;
-
+        // ensure the 0x14 is complete.
+        self.inbound_buf.read_single_small_packet(inbound).await?;
         #[cfg(feature = "debug_info")]
         {
             debug!("[LC0]buf after pop: {:?}", self.inbound_buf);
@@ -286,7 +270,7 @@ impl LiteTlsStream {
         use LiteTlsEndpointSide::*;
         return match self.side {
             ClientSide => self.handshake_tls13_client(outbound).await,
-            ServerSide => self.handshake_tls13_server(inbound).await,
+            ServerSide => self.handshake_tls13_server(inbound, outbound).await,
         };
     }
 
@@ -363,7 +347,7 @@ impl LiteTlsStream {
             {
                 Ok(Tls12) => {
                     return match self.side {
-                        ServerSide => self.handshake_tls12_server(inbound).await,
+                        ServerSide => self.handshake_tls12_server(inbound, outbound).await,
                         ClientSide => self.handshake_tls12_client(outbound, inbound).await,
                     };
                 }

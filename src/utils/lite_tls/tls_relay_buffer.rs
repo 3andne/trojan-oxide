@@ -1,6 +1,6 @@
 use super::{error::eof_err, lite_tls_stream::Direction};
 use crate::{expect_buf_len, utils::ParserError};
-use anyhow::Result;
+use anyhow::{Error, Result};
 use std::{
     cmp::min,
     ops::{Deref, DerefMut},
@@ -39,16 +39,6 @@ impl DerefMut for TlsRelayBuffer {
 fn extract_len(buf: &[u8]) -> usize {
     buf[0] as usize * 256 + buf[1] as usize
 }
-
-// pub(super) enum Expecting {
-//     Num(usize),
-//     Packet(u8),
-// }
-
-// pub(super) enum LeaveTlsMode {
-//     Passive,
-//     Active,
-// }
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Seen0x17 {
@@ -173,6 +163,10 @@ impl TlsRelayBuffer {
                         }
                     }
                 }
+                0xff => {
+                    // Tls 1.2 full handshake and at server side
+                    return Ok(TlsVersion::Tls12);
+                }
                 0x15 | 0x16 => {
                     self.check_tls_packet()?;
                 }
@@ -197,9 +191,8 @@ impl TlsRelayBuffer {
         Ok(())
     }
 
-    pub(super) async fn relay_until_expected<R, W>(
+    pub(super) async fn tls12_relay_helper<R, W>(
         &mut self,
-        expecting: u8,
         reader: &mut R,
         writer: &mut W,
     ) -> Result<()>
@@ -207,6 +200,7 @@ impl TlsRelayBuffer {
         R: AsyncReadExt + Unpin,
         W: AsyncWriteExt + Unpin,
     {
+        let mut key_packet_seen = 0;
         loop {
             while self.inner.len() < self.cursor + 5 {
                 if self.checked_packets().len() > 0 {
@@ -216,20 +210,45 @@ impl TlsRelayBuffer {
                     return Err(eof_err("EOF on Parsing[]"));
                 }
             }
-            if self.inner[self.cursor] == expecting {
-                if self.checked_packets().len() > 0 {
-                    self.flush_checked(writer).await?;
-                }
-                let next_cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
-                while self.inner.len() < next_cursor {
-                    if reader.read_buf(self.deref_mut()).await? == 0 {
-                        return Err(eof_err("EOF on Parsing[]"));
+
+            // the tls 1.2 packets that we care:
+            // 0x14 followed by 0x16 from target SERVER
+            match self.inner[self.cursor] {
+                0x14 => key_packet_seen = 1,
+                0x16 if key_packet_seen == 1 => {
+                    self.cursor += 5 + extract_len(&self.inner[self.cursor + 3..]);
+                    while self.inner.len() < self.cursor {
+                        if self.checked_packets().len() > 0 {
+                            self.flush_checked(writer).await?;
+                        }
+                        if reader.read_buf(self.deref_mut()).await? == 0 {
+                            return Err(eof_err("EOF on Parsing[]"));
+                        }
                     }
+                    self.flush_checked(writer).await?;
+                    return Ok(());
                 }
-                return Ok(());
-            } else {
-                self.cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
+                _ => (),
             }
+            self.cursor += 5 + extract_len(&self.inner[self.cursor + 3..]);
+        }
+    }
+
+    pub(super) async fn read_single_small_packet<I>(&mut self, reader: &mut I) -> Result<u8>
+    where
+        I: AsyncReadExt + Unpin,
+    {
+        match self.check_tls_packet() {
+            Ok(ty) => Ok(ty),
+            Err(ParserError::Incomplete(_)) => {
+                // We issue one more read. If it's again not ready,
+                // it fails.
+                if reader.read_buf(self.deref_mut()).await? == 0 {
+                    return Err(eof_err("EOF on Parsing[13]"));
+                }
+                self.check_tls_packet().map_err(|e| Error::new(e))
+            }
+            Err(e @ ParserError::Invalid(_)) => Err(Error::new(e)),
         }
     }
 }
