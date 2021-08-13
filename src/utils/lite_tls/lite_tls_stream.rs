@@ -172,11 +172,11 @@ impl LiteTlsStream {
         I: AsyncReadExt + AsyncWriteExt + Unpin,
         O: AsyncReadExt + AsyncWriteExt + Unpin,
     {
-        // relay all packets before 0xff
-        self.outbound_buf.flush_checked(inbound).await?;
+        // relay all packets before 0x17
+        self.inbound_buf.flush_checked(outbound).await?;
 
-        self.outbound_buf.check_tls_packet()?;
-        self.outbound_buf.pop_checked_packets();
+        self.inbound_buf.check_tls_packet()?;
+        self.inbound_buf.pop_checked_packets();
 
         if outbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
             return Err(eof_err("EOF on Parsing[12]"));

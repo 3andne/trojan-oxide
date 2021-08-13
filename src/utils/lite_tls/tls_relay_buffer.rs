@@ -5,7 +5,7 @@ use std::{
     cmp::min,
     ops::{Deref, DerefMut},
 };
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[cfg(feature = "debug_info")]
 use tracing::debug;
@@ -69,13 +69,6 @@ impl Seen0x17 {
             (BothDirections, _) => unreachable!(),
             _ => return,
         };
-    }
-
-    fn is_complete(&self) -> bool {
-        match self {
-            &Seen0x17::BothDirections => true,
-            _ => false,
-        }
     }
 }
 
@@ -162,20 +155,11 @@ impl TlsRelayBuffer {
                     seen_0x17.witness(dir);
                     #[cfg(feature = "debug_info")]
                     debug!("now seen 0x17: {:?}", seen_0x17);
-                    if seen_0x17.is_complete() {
-                        #[cfg(feature = "debug_info")]
-                        debug!("lite-tls active handshake");
-                        return Ok(TlsVersion::Tls12);
-                    } else {
-                        #[cfg(feature = "debug_info")]
-                        debug!("lite-tls 0x17 in first direction");
-                        self.check_tls_packet()?;
-                    }
-                }
-                0xff => {
-                    #[cfg(feature = "debug_info")]
-                    debug!("lite-tls passive handshake");
-                    return Ok(TlsVersion::Tls12);
+                    match seen_0x17 {
+                        // Tls 1.2 full handshake and at client side
+                        Seen0x17::FromInbound => return Ok(TlsVersion::Tls12),
+                        _ => self.check_tls_packet()?,
+                    };
                 }
                 0x14 => {
                     match seen_0x17 {
@@ -211,5 +195,41 @@ impl TlsRelayBuffer {
             self.pop_checked_packets();
         }
         Ok(())
+    }
+
+    pub(super) async fn relay_until_expected<R, W>(
+        &mut self,
+        expecting: u8,
+        reader: &mut R,
+        writer: &mut W,
+    ) -> Result<()>
+    where
+        R: AsyncReadExt + Unpin,
+        W: AsyncWriteExt + Unpin,
+    {
+        loop {
+            while self.inner.len() < self.cursor + 5 {
+                if self.checked_packets().len() > 0 {
+                    self.flush_checked(writer).await?;
+                }
+                if reader.read_buf(self.deref_mut()).await? == 0 {
+                    return Err(eof_err("EOF on Parsing[]"));
+                }
+            }
+            if self.inner[self.cursor] == expecting {
+                if self.checked_packets().len() > 0 {
+                    self.flush_checked(writer).await?;
+                }
+                let next_cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
+                while self.inner.len() < next_cursor {
+                    if reader.read_buf(self.deref_mut()).await? == 0 {
+                        return Err(eof_err("EOF on Parsing[]"));
+                    }
+                }
+                return Ok(());
+            } else {
+                self.cursor = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
+            }
+        }
     }
 }
