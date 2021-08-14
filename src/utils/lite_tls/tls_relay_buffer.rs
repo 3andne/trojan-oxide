@@ -3,17 +3,27 @@ use crate::{expect_buf_len, utils::ParserError};
 use anyhow::Result;
 use std::{
     cmp::min,
+    fmt::Display,
     ops::{Deref, DerefMut},
 };
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[cfg(feature = "debug_info")]
 use tracing::debug;
 
 #[derive(Debug, Clone, Copy)]
-pub(super) enum TlsVersion {
+pub enum TlsVersion {
     Tls12,
     Tls13,
+}
+
+impl Display for TlsVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            &TlsVersion::Tls12 => write!(f, "1.2"),
+            &TlsVersion::Tls13 => write!(f, "1.3"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -211,5 +221,45 @@ impl TlsRelayBuffer {
             self.pop_checked_packets();
         }
         Ok(())
+    }
+
+    pub(super) async fn tls12_relay_helper<R, W>(
+        &mut self,
+        reader: &mut R,
+        writer: &mut W,
+    ) -> Result<()>
+    where
+        R: AsyncReadExt + Unpin,
+        W: AsyncWriteExt + Unpin,
+    {
+        loop {
+            while self.inner.len() < self.cursor + 5 {
+                if self.checked_packets().len() > 0 {
+                    self.flush_checked(writer).await?;
+                }
+                if reader.read_buf(self.deref_mut()).await? == 0 {
+                    return Err(eof_err("EOF on Parsing[]"));
+                }
+            }
+
+            match self.inner[self.cursor] {
+                0xff => {
+                    // relay pending 0x17
+                    if self.checked_packets().len() > 0 {
+                        self.flush_checked(writer).await?;
+                    }
+                    let next = self.cursor + 5 + extract_len(&self.inner[self.cursor + 3..]);
+                    while self.inner.len() < next {
+                        if reader.read_buf(self.deref_mut()).await? == 0 {
+                            return Err(eof_err("EOF on Parsing[]"));
+                        }
+                    }
+                    self.reset();
+                    return Ok(());
+                }
+                _ => (),
+            }
+            self.cursor += 5 + extract_len(&self.inner[self.cursor + 3..]);
+        }
     }
 }

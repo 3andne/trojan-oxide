@@ -4,7 +4,7 @@ use {super::Socks5UdpStream, crate::utils::new_trojan_udp_stream};
 
 use crate::{
     adapt,
-    utils::{Adapter, MixAddrType, ParserError, Splitable, WRTuple},
+    utils::{lite_tls::TlsVersion, Adapter, MixAddrType, ParserError, Splitable, WRTuple},
 };
 use anyhow::{anyhow, Context, Result};
 use tokio::sync::broadcast;
@@ -51,13 +51,20 @@ pub async fn relay_tcp(
                 .handshake_timeout(&mut outbound, &mut inbound_tmp)
                 .await
             {
-                Ok(_) => {
-                    info!("lite tls handshake succeed");
+                Ok(ver) => {
+                    info!("[{}]lite tls handshake succeed", ver);
                     let (mut outbound, _) = outbound.into_inner();
-                    lite_tls_endpoint
-                        .flush(&mut outbound, &mut inbound_tmp)
-                        .await?;
-                    let inbound = inbound.inner;
+                    let mut inbound = inbound.inner;
+                    match ver {
+                        TlsVersion::Tls12 => {
+                            lite_tls_endpoint
+                                .client_flush_tls12(&mut outbound, &mut inbound)
+                                .await?;
+                        }
+                        TlsVersion::Tls13 => {
+                            lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
+                        }
+                    }
                     adapt!([lite][conn_id]
                         inbound[Tcp] <=> outbound[Tcp] <=> target_host
                         Until shutdown
