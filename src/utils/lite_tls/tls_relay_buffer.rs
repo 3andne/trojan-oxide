@@ -1,6 +1,6 @@
 use super::{error::eof_err, lite_tls_stream::Direction};
 use crate::{expect_buf_len, utils::ParserError};
-use anyhow::Result;
+use anyhow::{Error, Result};
 use std::{
     cmp::min,
     fmt::Display,
@@ -156,6 +156,14 @@ impl TlsRelayBuffer {
             "packet 0x16 (or sth) incomplete[2]"
         );
         Ok(packet_type)
+    }
+
+    pub(super) fn drop_last_tls_packet(&mut self) -> u8 {
+        let packet_type = self.inner[self.cursor];
+        unsafe {
+            self.inner.set_len(self.cursor);
+        }
+        packet_type
     }
 
     pub(super) fn find_key_packets(

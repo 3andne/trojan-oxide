@@ -159,6 +159,9 @@ impl LiteTlsStream {
         // we're not sending the pending packets to user
         // we send them all together with the 0x17
 
+        // drop the 0xff in outbound_buf
+        self.outbound_buf.drop_last_tls_packet();
+
         if outbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
             return Err(eof_err("EOF on Parsing[12]"));
         }
@@ -282,6 +285,11 @@ impl LiteTlsStream {
         outbound: &mut TcpStream,
         inbound: &mut TcpStream,
     ) -> Result<()> {
+        #[cfg(feature = "debug_info")]
+        {
+            debug!("[flush12]inbound_buf: {:?}", self.inbound_buf);
+            debug!("[flush12]outbound_buf: {:?}", self.outbound_buf);
+        }
         if outbound.read_buf(self.outbound_buf.deref_mut()).await? == 0 {
             return Err(eof_err("EOF on Parsing[7]"));
         }
