@@ -4,7 +4,7 @@ use {super::Socks5UdpStream, crate::utils::new_trojan_udp_stream};
 
 use crate::{
     adapt,
-    utils::{lite_tls::TlsVersion, Adapter, MixAddrType, ParserError, Splitable, WRTuple},
+    utils::{Adapter, MixAddrType, ParserError, Splitable, WRTuple},
 };
 use anyhow::{anyhow, Context, Result};
 use tokio::sync::broadcast;
@@ -51,20 +51,16 @@ pub async fn relay_tcp(
                 .handshake_timeout(&mut outbound, &mut inbound_tmp)
                 .await
             {
-                Ok(ver) => {
+                Ok(_) => {
+                    let ver = lite_tls_endpoint.version.unwrap();
                     info!("[{}]lite tls handshake succeed", ver);
                     let (mut outbound, _) = outbound.into_inner();
                     let mut inbound = inbound.inner;
-                    match ver {
-                        TlsVersion::Tls12 => {
-                            lite_tls_endpoint
-                                .client_flush_tls12(&mut outbound, &mut inbound)
-                                .await?;
-                        }
-                        TlsVersion::Tls13 => {
-                            lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
-                        }
-                    }
+
+                    lite_tls_endpoint
+                        .flush_tls(&mut inbound, &mut outbound)
+                        .await?;
+
                     adapt!([lite][conn_id]
                         inbound[Tcp] <=> outbound[Tcp] <=> target_host
                         Until shutdown
@@ -74,7 +70,7 @@ pub async fn relay_tcp(
                     if let Some(e @ ParserError::Invalid(_)) = e.downcast_ref::<ParserError>() {
                         info!("not tls stream: {:#}", e);
                         lite_tls_endpoint
-                            .flush(&mut outbound, &mut inbound_tmp)
+                            .flush_non_tls(&mut outbound, &mut inbound_tmp)
                             .await?;
                         adapt!([lite][conn_id]
                             inbound[Tcp] <=> outbound[Tls] <=> target_host

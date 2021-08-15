@@ -13,14 +13,16 @@ use tracing::debug;
 
 #[derive(Debug, Clone, Copy)]
 pub enum TlsVersion {
-    Tls12,
+    Tls12Active,
+    Tls12Passive,
     Tls13,
 }
 
 impl Display for TlsVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            &TlsVersion::Tls12 => write!(f, "1.2"),
+            &TlsVersion::Tls12Active => write!(f, "1.2a"),
+            &TlsVersion::Tls12Passive => write!(f, "1.2p"),
             &TlsVersion::Tls13 => write!(f, "1.3"),
         }
     }
@@ -158,12 +160,24 @@ impl TlsRelayBuffer {
         Ok(packet_type)
     }
 
-    pub(super) fn drop_last_tls_packet(&mut self) -> u8 {
-        let packet_type = self.inner[self.cursor];
+    pub(super) fn drop_0xff(&mut self) -> Result<()> {
+        if self.cursor >= self.inner.len() {
+            return Err(Error::new(ParserError::Invalid(
+                "wants to drop 0xff but found nothing to drop".into(),
+            )));
+        } else if self.cursor + 6 < self.inner.len() {
+            return Err(Error::new(ParserError::Invalid(
+                "wants to drop 0xff but it seems to be incomplete".into(),
+            )));
+        } else if self.cursor + 6 > self.inner.len() {
+            return Err(Error::new(ParserError::Invalid(
+                "wants to drop 0xff but there seems to be packets after 0xff".into(),
+            )));
+        }
         unsafe {
             self.inner.set_len(self.cursor);
         }
-        packet_type
+        Ok(())
     }
 
     pub(super) fn find_key_packets(
@@ -183,7 +197,7 @@ impl TlsRelayBuffer {
                     if seen_0x17.is_complete() {
                         #[cfg(feature = "debug_info")]
                         debug!("lite-tls active handshake");
-                        return Ok(TlsVersion::Tls12);
+                        return Ok(TlsVersion::Tls12Active);
                     } else {
                         #[cfg(feature = "debug_info")]
                         debug!("lite-tls 0x17 in first direction");
@@ -193,7 +207,7 @@ impl TlsRelayBuffer {
                 0xff => {
                     #[cfg(feature = "debug_info")]
                     debug!("lite-tls passive handshake");
-                    return Ok(TlsVersion::Tls12);
+                    return Ok(TlsVersion::Tls12Passive);
                 }
                 0x14 => {
                     match seen_0x17 {
@@ -231,7 +245,7 @@ impl TlsRelayBuffer {
         Ok(())
     }
 
-    pub(super) async fn tls12_relay_helper<R, W>(
+    pub(super) async fn tls12_relay_until_0xff<R, W>(
         &mut self,
         reader: &mut R,
         writer: &mut W,

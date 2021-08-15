@@ -15,6 +15,7 @@ use crate::client::outbound::quic::*;
 #[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 use crate::client::outbound::tcp_tls::*;
 use anyhow::Result;
+use futures::TryFutureExt;
 use std::{future::Future, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -75,12 +76,20 @@ where
             ConnectionMode::LiteTLS => {
                 let tls_config_copy = tls_config.clone();
                 let domain_string_copy = domain_string.clone();
-                tokio::spawn(forward(
-                    shutdown_rx,
-                    hash_copy,
-                    accept_client_request(stream),
-                    connect_through_tcp_tls(tls_config_copy, domain_string_copy, remote_addr, true),
-                ));
+                tokio::spawn(
+                    forward(
+                        shutdown_rx,
+                        hash_copy,
+                        accept_client_request(stream),
+                        connect_through_tcp_tls(
+                            tls_config_copy,
+                            domain_string_copy,
+                            remote_addr,
+                            true,
+                        ),
+                    )
+                    .map_err(|e| error!("[lite]forward failed: {:?}", e)),
+                );
             }
             #[cfg(feature = "quic")]
             ConnectionMode::Quic => {

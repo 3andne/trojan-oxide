@@ -36,6 +36,37 @@ pub struct LiteTlsStream {
     outbound_buf: TlsRelayBuffer,
     recieved_0x17: Seen0x17,
     side: LiteTlsEndpointSide,
+    pub version: Option<TlsVersion>,
+}
+
+macro_rules! first_hand_buf {
+    ($self:ident) => {
+        match $self.side {
+            LiteTlsEndpointSide::ClientSide => &$self.inbound_buf,
+            LiteTlsEndpointSide::ServerSide => &$self.outbound_buf,
+        }
+    };
+    (mut $self:ident) => {
+        match $self.side {
+            LiteTlsEndpointSide::ClientSide => &mut $self.inbound_buf,
+            LiteTlsEndpointSide::ServerSide => &mut $self.outbound_buf,
+        }
+    };
+}
+
+macro_rules! second_hand_buf {
+    ($self:ident) => {
+        match $self.side {
+            LiteTlsEndpointSide::ServerSide => &$self.inbound_buf,
+            LiteTlsEndpointSide::ClientSide => &$self.outbound_buf,
+        }
+    };
+    (mut $self:ident) => {
+        match $self.side {
+            LiteTlsEndpointSide::ServerSide => &mut $self.inbound_buf,
+            LiteTlsEndpointSide::ClientSide => &mut $self.outbound_buf,
+        }
+    };
 }
 
 impl LiteTlsStream {
@@ -45,6 +76,7 @@ impl LiteTlsStream {
             outbound_buf: TlsRelayBuffer::new(),
             recieved_0x17: Seen0x17::None,
             side: LiteTlsEndpointSide::ClientSide,
+            version: None,
         }
     }
 
@@ -54,6 +86,7 @@ impl LiteTlsStream {
             outbound_buf: TlsRelayBuffer::new(),
             recieved_0x17: Seen0x17::None,
             side: LiteTlsEndpointSide::ServerSide,
+            version: None,
         }
     }
 
@@ -124,48 +157,57 @@ impl LiteTlsStream {
         }
     }
 
-    async fn handshake_tls12_server<I, O>(
+    async fn handshake_tls12_active<F, S>(
         &mut self,
-        inbound: &mut I,
-        outbound: &mut O,
+        first_hand_io: &mut F,
+        second_hand_io: &mut S,
     ) -> Result<()>
     where
-        I: AsyncReadExt + AsyncWriteExt + Unpin,
-        O: AsyncReadExt + AsyncWriteExt + Unpin,
+        F: AsyncReadExt + AsyncWriteExt + Unpin,
+        S: AsyncReadExt + AsyncWriteExt + Unpin,
     {
-        // relay all packets before 0x17
-        let mut tmp =
-            Vec::with_capacity(self.outbound_buf.checked_packets().len() + LEAVE_TLS_COMMAND.len());
-        tmp.extend_from_slice(self.outbound_buf.checked_packets());
-        self.outbound_buf.pop_checked_packets();
+        // relay all packets prior to 0x17, plus a 0xff
+        // we send 0xff together with those pending packets
+        // to reduce 0.5 round trip
+        let mut tmp = Vec::with_capacity(
+            first_hand_buf!(self).checked_packets().len() + LEAVE_TLS_COMMAND.len(),
+        );
+        tmp.extend_from_slice(first_hand_buf!(self).checked_packets());
+        first_hand_buf!(mut self).pop_checked_packets();
         tmp.extend_from_slice(&LEAVE_TLS_COMMAND);
-        if inbound.write(&tmp).await? == 0 {
+
+        if second_hand_io.write(&tmp).await? == 0 {
             return Err(eof_err("EOF on Parsing[12]"));
         }
-        inbound.flush().await?;
+        second_hand_io.flush().await?;
 
-        self.inbound_buf
-            .tls12_relay_helper(inbound, outbound)
+        // relay all the packets until 0xff
+        second_hand_buf!(mut self)
+            .tls12_relay_until_0xff(second_hand_io, first_hand_io)
             .await?;
 
         // Then we leave tls tunnel
+        self.version = Some(TlsVersion::Tls12Active);
         return Ok(());
     }
 
-    async fn handshake_tls12_client<O>(&mut self, outbound: &mut O) -> Result<()>
+    async fn handshake_tls12_passive<S>(&mut self, second_hand_io: &mut S) -> Result<()>
     where
-        O: AsyncReadExt + AsyncWriteExt + Unpin,
+        S: AsyncReadExt + AsyncWriteExt + Unpin,
     {
-        // we're not sending the pending packets to user
-        // we send them all together with the 0x17
+        //? we're not sending the pending packets to user
+        //? we send them all together with the 0x17 after
+        //? the handshake is over
 
         // drop the 0xff in outbound_buf
-        self.outbound_buf.drop_last_tls_packet();
+        second_hand_buf!(mut self).drop_0xff()?;
 
-        if outbound.write(&LEAVE_TLS_COMMAND).await? == 0 {
+        if second_hand_io.write(&LEAVE_TLS_COMMAND).await? == 0 {
             return Err(eof_err("EOF on Parsing[12]"));
         }
-        outbound.flush().await?;
+        second_hand_io.flush().await?;
+
+        self.version = Some(TlsVersion::Tls12Passive);
 
         // Then we leave tls tunnel
         return Ok(());
@@ -177,8 +219,7 @@ impl LiteTlsStream {
     {
         // wait for server's response
         // this is not part of the TLS specification,
-        // but we have to do this to correctly
-        // leave TLS channel.
+        // we do this to correctly leave TLS channel.
         if outbound.read_buf(self.outbound_buf.deref_mut()).await? == 0 {
             return Err(eof_err("EOF on Parsing[7]"));
         }
@@ -201,6 +242,9 @@ impl LiteTlsStream {
                 // Then it's safe for us to leave TLS
                 // outbound_buf: []
                 // inbound_buf: [...]
+
+                self.version = Some(TlsVersion::Tls13);
+
                 return Ok(());
             }
             Err(e) => {
@@ -212,28 +256,23 @@ impl LiteTlsStream {
         }
     }
 
-    async fn handshake_tls13_server<I, O>(
-        &mut self,
-        inbound: &mut I,
-        outbound: &mut O,
-    ) -> Result<()>
+    async fn handshake_tls13_server<I>(&mut self, inbound: &mut I) -> Result<()>
     where
         I: AsyncReadExt + AsyncWriteExt + Unpin,
-        O: AsyncReadExt + AsyncWriteExt + Unpin,
     {
         // write a 0x14 response to client
         // so that both sides can leave TLS channel
         inbound.write(&[0x14, 0x03, 0x03, 0, 0x01, 0x01]).await?;
         inbound.flush().await?;
 
-        self.inbound_buf.flush_checked(outbound).await?;
-        if self.inbound_buf.len() != 0 {
-            return Err(Error::new(ParserError::Invalid(
-                "buffer not empty after last 0x14".into(),
-            )));
-        }
+        //? we're not sending the pending packets to user
+        //? we send them all together with the 0x17 after
+        //? the handshake is over
+
         #[cfg(feature = "debug_info")]
-        debug!("[LC1]last CCS sent, leaving");
+        debug!("[LC1]leaving");
+        self.version = Some(TlsVersion::Tls13);
+
         return Ok(());
     }
 
@@ -276,34 +315,11 @@ impl LiteTlsStream {
                 self.inbound_buf.flush_checked(outbound).await?;
                 self.handshake_tls13_client(outbound).await
             }
-            ServerSide => self.handshake_tls13_server(inbound, outbound).await,
+            ServerSide => self.handshake_tls13_server(inbound).await,
         };
     }
 
-    pub async fn client_flush_tls12(
-        &mut self,
-        outbound: &mut TcpStream,
-        inbound: &mut TcpStream,
-    ) -> Result<()> {
-        #[cfg(feature = "debug_info")]
-        {
-            debug!("[flush12]inbound_buf: {:?}", self.inbound_buf);
-            debug!("[flush12]outbound_buf: {:?}", self.outbound_buf);
-        }
-        if outbound.read_buf(self.outbound_buf.deref_mut()).await? == 0 {
-            return Err(eof_err("EOF on Parsing[7]"));
-        }
-        inbound.write(&mut self.outbound_buf).await?;
-        inbound.flush().await?;
-        self.outbound_buf.reset();
-        Ok(())
-    }
-
-    pub async fn handshake_timeout<I, O>(
-        &mut self,
-        outbound: &mut O,
-        inbound: &mut I,
-    ) -> Result<TlsVersion>
+    pub async fn handshake_timeout<I, O>(&mut self, outbound: &mut O, inbound: &mut I) -> Result<()>
     where
         I: AsyncReadExt + AsyncWriteExt + Unpin,
         O: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -324,7 +340,7 @@ impl LiteTlsStream {
     ///
     /// if Err(other) is returned, the stream is probably non-recoverable
     /// just quit
-    async fn handshake<I, O>(&mut self, outbound: &mut O, inbound: &mut I) -> Result<TlsVersion>
+    async fn handshake<I, O>(&mut self, outbound: &mut O, inbound: &mut I) -> Result<()>
     where
         I: AsyncReadExt + AsyncWriteExt + Unpin,
         O: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -360,10 +376,12 @@ impl LiteTlsStream {
             };
 
             if res == 0 {
+                #[cfg(feature = "debug_info")]
                 match dir {
-                    Direction::Inbound => return Err(eof_err("EOF on Parsing[1][I]")),
-                    Direction::Outbound => return Err(eof_err("EOF on Parsing[1][O]")),
+                    Direction::Inbound => debug!("EOF on Parsing[1][I]"),
+                    Direction::Outbound => debug!("EOF on Parsing[1][O]"),
                 }
+                return Ok(());
             }
 
             use LiteTlsEndpointSide::*;
@@ -374,18 +392,20 @@ impl LiteTlsStream {
             }
             .find_key_packets(&mut self.recieved_0x17, dir)
             {
-                Ok(Tls12) => {
+                Ok(Tls12Active) => {
                     return match self.side {
-                        ServerSide => self.handshake_tls12_server(inbound, outbound).await,
-                        ClientSide => self.handshake_tls12_client(outbound).await,
-                    }
-                    .map(|_| TlsVersion::Tls12);
+                        ServerSide => self.handshake_tls12_active(outbound, inbound).await,
+                        ClientSide => self.handshake_tls12_active(inbound, outbound).await,
+                    };
+                }
+                Ok(Tls12Passive) => {
+                    return match self.side {
+                        ServerSide => self.handshake_tls12_passive(inbound).await,
+                        ClientSide => self.handshake_tls12_passive(outbound).await,
+                    };
                 }
                 Ok(Tls13) => {
-                    return self
-                        .handshake_tls13(outbound, inbound)
-                        .await
-                        .map(|_| TlsVersion::Tls13);
+                    return self.handshake_tls13(outbound, inbound).await;
                 }
                 Err(ParserError::Incomplete(_)) => (), // relay pending packets
                 Err(e @ ParserError::Invalid(_)) => {
@@ -404,18 +424,57 @@ impl LiteTlsStream {
         }
     }
 
-    pub async fn flush<I, O>(mut self, outbound: &mut O, inbound: &mut I) -> Result<()>
+    pub async fn flush_tls(
+        &mut self,
+        first_hand_io: &mut TcpStream,
+        second_hand_io: &mut TcpStream,
+    ) -> Result<()> {
+        #[cfg(feature = "debug_info")]
+        {
+            debug!("[flush]inbound_buf: {:?}", self.inbound_buf);
+            debug!("[flush]outbound_buf: {:?}", self.outbound_buf);
+        }
+
+        use LiteTlsEndpointSide::*;
+        use TlsVersion::*;
+        match (self.version, self.side) {
+            (Some(Tls12Passive), _) | (Some(Tls13), ServerSide) => {
+                if second_hand_buf!(self).len() > 0 {
+                    if second_hand_io
+                        .read_buf(second_hand_buf!(mut self).deref_mut())
+                        .await?
+                        == 0
+                    {
+                        return Err(eof_err("EOF on Parsing[7]"));
+                    }
+                    first_hand_io.write(second_hand_buf!(self)).await?;
+                    first_hand_io.flush().await?;
+                    second_hand_buf!(mut self).reset();
+                }
+            }
+            (Some(Tls12Active), _) | (Some(Tls13), ClientSide) => {
+                second_hand_io.write(first_hand_buf!(self)).await?;
+                second_hand_io.flush().await?;
+                first_hand_buf!(mut self).reset();
+            }
+            (None, _) => unreachable!(),
+        }
+
+        Ok(())
+    }
+
+    pub async fn flush_non_tls<I, O>(mut self, outbound: &mut O, inbound: &mut I) -> Result<()>
     where
         I: AsyncReadExt + AsyncWriteExt + Unpin,
         O: AsyncReadExt + AsyncWriteExt + Unpin,
     {
         if self.inbound_buf.len() > 0 {
-            outbound.write(&mut self.inbound_buf).await?;
+            outbound.write(&self.inbound_buf).await?;
             outbound.flush().await?;
             self.inbound_buf.reset();
         }
         if self.outbound_buf.len() > 0 {
-            inbound.write(&mut self.outbound_buf).await?;
+            inbound.write(&self.outbound_buf).await?;
             inbound.flush().await?;
             self.outbound_buf.reset();
         }

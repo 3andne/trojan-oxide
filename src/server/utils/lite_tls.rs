@@ -47,7 +47,9 @@ where
                 {
                     Ok(_) => {
                         let mut inbound = inbound.into_inner().leave();
-                        lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
+                        lite_tls_endpoint
+                            .flush_tls(&mut outbound, &mut inbound)
+                            .await?;
                         debug!("lite tls start relaying");
                         adapt!([lite][conn_id]
                             inbound[Tcp] <=> outbound[Tcp] <=> target_host
@@ -57,7 +59,9 @@ where
                     Err(e) => {
                         if let Some(ParserError::Invalid(x)) = e.downcast_ref::<ParserError>() {
                             debug!("not tls stream: {}", x);
-                            lite_tls_endpoint.flush(&mut outbound, &mut inbound).await?;
+                            lite_tls_endpoint
+                                .flush_non_tls(&mut outbound, &mut inbound)
+                                .await?;
                             adapt!([tcp][conn_id]
                                 inbound[Tls] <=> outbound[Tcp] <=> target_host
                                 Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
