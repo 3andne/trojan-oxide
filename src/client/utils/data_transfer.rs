@@ -52,8 +52,11 @@ pub async fn relay_tcp(
                 .await
             {
                 Ok(_) => {
-                    let ver = lite_tls_endpoint.version.unwrap();
-                    info!("[{}]lite tls handshake succeed", ver);
+                    let ver = lite_tls_endpoint.version;
+                    if ver.is_none() {
+                        return Ok(());
+                    }
+                    info!("[{}]lite tls handshake succeed", ver.unwrap());
                     let (mut outbound, _) = outbound.into_inner();
                     let mut inbound = inbound.inner;
 
