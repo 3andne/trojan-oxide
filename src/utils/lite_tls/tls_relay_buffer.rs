@@ -12,18 +12,16 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::debug;
 
 #[derive(Debug, Clone, Copy)]
-pub enum TlsVersion {
-    Tls12Active,
-    Tls12Passive,
-    Tls13,
+pub enum LeaveTlsMode {
+    Active,
+    Passive,
 }
 
-impl Display for TlsVersion {
+impl Display for LeaveTlsMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            &TlsVersion::Tls12Active => write!(f, "1.2a"),
-            &TlsVersion::Tls12Passive => write!(f, "1.2p"),
-            &TlsVersion::Tls13 => write!(f, "1.3"),
+            &LeaveTlsMode::Active => write!(f, "a"),
+            &LeaveTlsMode::Passive => write!(f, "p"),
         }
     }
 }
@@ -184,7 +182,7 @@ impl TlsRelayBuffer {
         &mut self,
         seen_0x17: &mut Seen0x17,
         dir: Direction,
-    ) -> Result<TlsVersion, ParserError> {
+    ) -> Result<LeaveTlsMode, ParserError> {
         loop {
             expect_buf_len!(self.inner, self.cursor + 1, "find 0x17 incomplete");
             match self.inner[self.cursor] {
@@ -197,7 +195,7 @@ impl TlsRelayBuffer {
                     if seen_0x17.is_complete() {
                         #[cfg(feature = "debug_info")]
                         debug!("lite-tls active handshake");
-                        return Ok(TlsVersion::Tls12Active);
+                        return Ok(LeaveTlsMode::Active);
                     } else {
                         #[cfg(feature = "debug_info")]
                         debug!("lite-tls 0x17 in first direction");
@@ -207,21 +205,9 @@ impl TlsRelayBuffer {
                 0xff => {
                     #[cfg(feature = "debug_info")]
                     debug!("lite-tls passive handshake");
-                    return Ok(TlsVersion::Tls12Passive);
+                    return Ok(LeaveTlsMode::Passive);
                 }
-                0x14 => {
-                    match seen_0x17 {
-                        Seen0x17::FromOutbound => {
-                            // we have a 0.5 rtt version for
-                            // tls 1.3
-                            return Ok(TlsVersion::Tls13);
-                        }
-                        _ => {
-                            self.check_tls_packet()?;
-                        }
-                    }
-                }
-                0x15 | 0x16 => {
+                0x15 | 0x16 | 0x14 => {
                     self.check_tls_packet()?;
                 }
                 _ => {
