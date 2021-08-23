@@ -61,9 +61,11 @@ where
                     debug!("[{:?}]CopyUdp::poll new_addr.is_none()", me.conn_id);
                     break;
                 }
-                if me.conn_id.is_some() && me.addr.as_ref().map_or(true, |prev| prev != &new_addr)
+                if me.addr.as_ref().map_or(true, |prev| prev != &new_addr)
                 {
-                    info!("[udp][{}] => {:?}", me.conn_id.unwrap(), &new_addr);
+                    if me.conn_id.is_some() {
+                        info!("[udp][{}] => {:?}", me.conn_id.unwrap(), &new_addr);
+                    }
                     me.addr = Some(new_addr);
                 }
             }
