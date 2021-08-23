@@ -2,7 +2,7 @@ use std::{ops::DerefMut, time::Duration};
 
 use super::{
     error::eof_err,
-    tls_relay_buffer::{Seen0x17, TlsRelayBuffer, TlsVersion},
+    tls_relay_buffer::{LeaveTlsMode, Seen0x17, TlsRelayBuffer},
 };
 use crate::{
     protocol::{LEAVE_TLS_COMMAND, LITE_TLS_HANDSHAKE_TIMEOUT},
@@ -36,7 +36,7 @@ pub struct LiteTlsStream {
     outbound_buf: TlsRelayBuffer,
     recieved_0x17: Seen0x17,
     side: LiteTlsEndpointSide,
-    pub version: Option<TlsVersion>,
+    pub version: Option<LeaveTlsMode>,
 }
 
 macro_rules! first_hand_buf {
@@ -187,7 +187,7 @@ impl LiteTlsStream {
             .await?;
 
         // Then we leave tls tunnel
-        self.version = Some(TlsVersion::Tls12Active);
+        self.version = Some(LeaveTlsMode::Active);
         return Ok(());
     }
 
@@ -207,116 +207,10 @@ impl LiteTlsStream {
         }
         second_hand_io.flush().await?;
 
-        self.version = Some(TlsVersion::Tls12Passive);
+        self.version = Some(LeaveTlsMode::Passive);
 
         // Then we leave tls tunnel
         return Ok(());
-    }
-
-    async fn handshake_tls13_client<O>(&mut self, outbound: &mut O) -> Result<()>
-    where
-        O: AsyncReadExt + AsyncWriteExt + Unpin,
-    {
-        // wait for server's response
-        // this is not part of the TLS specification,
-        // we do this to correctly leave TLS channel.
-        if outbound.read_buf(self.outbound_buf.deref_mut()).await? == 0 {
-            return Err(eof_err("EOF on Parsing[7]"));
-        }
-        match self.outbound_buf.check_tls_packet() {
-            // check: x must be 6 and the rsp should
-            // be [0x14, 0x03, 0x03, 0, 0x01, 0x01]
-            // (change_cipher_spec)
-            Ok(ty) => {
-                if ty != 0x14 {
-                    return Err(Error::new(ParserError::Invalid(
-                        "[Active, Tls13]return packet type is not 0x14".into(),
-                    )));
-                }
-                #[cfg(feature = "debug_info")]
-                debug!("[LC0] extra CCS ok, leaving");
-
-                // clear this, since it's not part of
-                // TLS.
-                self.outbound_buf.reset();
-                // Then it's safe for us to leave TLS
-                // outbound_buf: []
-                // inbound_buf: [...]
-
-                self.version = Some(TlsVersion::Tls13);
-
-                return Ok(());
-            }
-            Err(e) => {
-                // Something's wrong, which I'm not
-                // sure what it is currently.
-                return Err(Error::new(e))
-                    .with_context(|| anyhow!("[Active, Tls13]failed at last step"));
-            }
-        }
-    }
-
-    async fn handshake_tls13_server<I>(&mut self, inbound: &mut I) -> Result<()>
-    where
-        I: AsyncReadExt + AsyncWriteExt + Unpin,
-    {
-        // write a 0x14 response to client
-        // so that both sides can leave TLS channel
-        inbound.write(&[0x14, 0x03, 0x03, 0, 0x01, 0x01]).await?;
-        inbound.flush().await?;
-
-        //? we're not sending the pending packets to user
-        //? we send them all together with the 0x17 after
-        //? the handshake is over
-
-        #[cfg(feature = "debug_info")]
-        debug!("[LC1]leaving");
-        self.version = Some(TlsVersion::Tls13);
-
-        return Ok(());
-    }
-
-    async fn handshake_tls13<I, O>(&mut self, outbound: &mut O, inbound: &mut I) -> Result<()>
-    where
-        I: AsyncReadExt + AsyncWriteExt + Unpin,
-        O: AsyncReadExt + AsyncWriteExt + Unpin,
-    {
-        #[cfg(feature = "debug_info")]
-        debug!("[LC0]buf now: {:?}", self.inbound_buf);
-
-        // relay everything till the end of 0x14
-        // there might be some 0x17 packets left
-        match self.inbound_buf.check_tls_packet() {
-            Ok(_) => (),
-            Err(ParserError::Incomplete(_)) => {
-                // We issue one more read. If it's again not ready,
-                // it fails.
-                if inbound.read_buf(self.inbound_buf.deref_mut()).await? == 0 {
-                    return Err(eof_err("EOF on Parsing[13]"));
-                }
-                self.inbound_buf
-                    .check_tls_packet()
-                    .map_err(|e| Error::new(e))?;
-            }
-            Err(e @ ParserError::Invalid(_)) => {
-                return Err(Error::new(e));
-            }
-        }
-
-        #[cfg(feature = "debug_info")]
-        {
-            debug!("[LC0]buf after pop: {:?}", self.inbound_buf);
-            debug!("[LC0]outbound buf: {:?}", self.outbound_buf);
-        }
-
-        use LiteTlsEndpointSide::*;
-        return match self.side {
-            ClientSide => {
-                self.inbound_buf.flush_checked(outbound).await?;
-                self.handshake_tls13_client(outbound).await
-            }
-            ServerSide => self.handshake_tls13_server(inbound).await,
-        };
     }
 
     pub async fn handshake_timeout<I, O>(&mut self, outbound: &mut O, inbound: &mut I) -> Result<()>
@@ -384,28 +278,25 @@ impl LiteTlsStream {
                 return Ok(());
             }
 
+            use LeaveTlsMode::*;
             use LiteTlsEndpointSide::*;
-            use TlsVersion::*;
             match match dir {
                 Direction::Inbound => &mut self.inbound_buf,
                 Direction::Outbound => &mut self.outbound_buf,
             }
             .find_key_packets(&mut self.recieved_0x17, dir)
             {
-                Ok(Tls12Active) => {
+                Ok(Active) => {
                     return match self.side {
                         ServerSide => self.handshake_tls12_active(outbound, inbound).await,
                         ClientSide => self.handshake_tls12_active(inbound, outbound).await,
                     };
                 }
-                Ok(Tls12Passive) => {
+                Ok(Passive) => {
                     return match self.side {
                         ServerSide => self.handshake_tls12_passive(inbound).await,
                         ClientSide => self.handshake_tls12_passive(outbound).await,
                     };
-                }
-                Ok(Tls13) => {
-                    return self.handshake_tls13(outbound, inbound).await;
                 }
                 Err(ParserError::Incomplete(_)) => (), // relay pending packets
                 Err(e @ ParserError::Invalid(_)) => {
@@ -435,10 +326,9 @@ impl LiteTlsStream {
             debug!("[flush]outbound_buf: {:?}", self.outbound_buf);
         }
 
-        use LiteTlsEndpointSide::*;
-        use TlsVersion::*;
-        match (self.version, self.side) {
-            (Some(Tls12Passive), _) | (Some(Tls13), ServerSide) => {
+        use LeaveTlsMode::*;
+        match self.version {
+            Some(Passive) => {
                 if second_hand_buf!(self).len() > 0 {
                     if second_hand_io
                         .read_buf(second_hand_buf!(mut self).deref_mut())
@@ -452,12 +342,12 @@ impl LiteTlsStream {
                     second_hand_buf!(mut self).reset();
                 }
             }
-            (Some(Tls12Active), _) | (Some(Tls13), ClientSide) => {
+            Some(Active) => {
                 second_hand_io.write(first_hand_buf!(self)).await?;
                 second_hand_io.flush().await?;
                 first_hand_buf!(mut self).reset();
             }
-            (None, _) => unreachable!(),
+            None => unreachable!(),
         }
 
         Ok(())

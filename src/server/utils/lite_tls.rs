@@ -46,6 +46,12 @@ where
                     .await
                 {
                     Ok(_) => {
+                        let ver = lite_tls_endpoint.version;
+                        if ver.is_none() {
+                            // EOF
+                            return Ok(());
+                        }
+                        info!("[{}]lite tls handshake succeed", ver.unwrap());
                         let mut inbound = inbound.into_inner().leave();
                         lite_tls_endpoint
                             .flush_tls(&mut outbound, &mut inbound)
