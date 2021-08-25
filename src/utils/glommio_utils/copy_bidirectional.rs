@@ -93,6 +93,9 @@ where
                 Pending
             }
             (Ready(a_to_b), Ready(b_to_a)) => {
+                if stop_reason.is_none() {
+                    *stop_reason = Some(Download)
+                }
                 Ready(Ok((a_to_b, b_to_a, stop_reason.clone().unwrap())))
             }
         }
