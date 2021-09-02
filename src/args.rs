@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use structopt::StructOpt;
+use tokio::sync::broadcast;
 
 fn parse_log_level(l: &str) -> tracing::Level {
     match &l.to_lowercase()[..] {
@@ -50,23 +51,23 @@ fn parse_connection_mode(l: &str) -> ConnectionMode {
 }
 
 #[cfg(feature = "client")]
-fn parse_addr(l: &str) -> String {
-    "127.0.0.1:".to_owned() + l
+fn into_local_addr(l: &str) -> SocketAddr {
+    ("127.0.0.1:".to_owned() + l).parse::<SocketAddr>().unwrap()
 }
 
-// fn parse_port(l: &str) -> u16 {
-//     let mut res = 0;
-//     for i in l.bytes() {
-//         if i <= b'9' && i >= b'0' {
-//             res = res * 10 + (i - b'0') as u16;
-//         } else {
-//             return 8889;
-//         }
-//     }
-//     res
-// }
+fn into_u16(l: &str) -> u16 {
+    let mut res = 0;
+    for i in l.bytes() {
+        if i <= b'9' && i >= b'0' {
+            res = res * 10 + (i - b'0') as u16;
+        } else {
+            panic!("invalid port value")
+        }
+    }
+    res
+}
 
-fn password_to_hash(s: &str) -> Arc<String> {
+fn password_to_hash(s: &str) -> String {
     let mut hasher = Sha224::new();
     hasher.update(s);
     let h = hasher.finalize();
@@ -74,24 +75,19 @@ fn password_to_hash(s: &str) -> Arc<String> {
     for i in h {
         write!(&mut s, "{:02x}", i).unwrap();
     }
-    Arc::new(s)
-}
-
-#[cfg(feature = "server")]
-fn arc_string(s: &str) -> Arc<String> {
-    Arc::new(s.to_string())
+    s
 }
 
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(name = "basic")]
 pub struct Opt {
     #[cfg(feature = "client")]
-    #[structopt(short = "h", long = "http_port", default_value = "8888", parse(from_str = parse_addr))]
-    pub local_http_addr: String,
+    #[structopt(short = "h", long = "http_port", default_value = "8888", parse(from_str = into_local_addr))]
+    pub local_http_addr: SocketAddr,
 
     #[cfg(feature = "client")]
-    #[structopt(short = "5", long = "socks5_port", default_value = "8889", parse(from_str = parse_addr))]
-    pub local_socks5_addr: String,
+    #[structopt(short = "5", long = "socks5_port", default_value = "8889", parse(from_str = into_local_addr))]
+    pub local_socks5_addr: SocketAddr,
 
     #[structopt(short = "l", long, default_value = "info", parse(from_str = parse_log_level))]
     pub log_level: tracing::Level,
@@ -102,8 +98,8 @@ pub struct Opt {
     #[structopt(short = "u", long, default_value = "localhost")]
     pub proxy_url: String,
 
-    #[structopt(short = "x", long, default_value = "9999")]
-    pub proxy_port: String,
+    #[structopt(short = "x", long, default_value = "9999", parse(from_str = into_u16))]
+    pub proxy_port: u16,
 
     #[structopt(short = "d", long, default_value = "")]
     pub proxy_ip: String,
@@ -122,19 +118,30 @@ pub struct Opt {
     pub cert: Option<PathBuf>,
 
     #[structopt(short = "w", long, parse(from_str = password_to_hash))]
-    pub password_hash: Arc<String>,
+    pub password_hash: String,
 
     #[cfg(feature = "server")]
-    #[structopt(short = "f", long, parse(from_str = arc_string), default_value = "")]
-    pub fallback_port: Arc<String>,
+    #[structopt(short = "f", long, default_value = "0", parse(from_str = into_u16))]
+    pub fallback_port: u16,
 
     #[cfg(feature = "client")]
     #[structopt(short = "m", long, default_value = "quic", parse(from_str = parse_connection_mode))]
     pub connection_mode: ConnectionMode,
+
+    pub remote_socket_addr: Option<SocketAddr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TrojanContext {
-    pub options: Opt,
-    pub remote_socket_addr: SocketAddr,
+    pub options: Arc<Opt>,
+    pub shutdown: broadcast::Receiver<()>,
+}
+
+impl TrojanContext {
+    pub fn clone_with_signal(&self, shutdown: broadcast::Receiver<()>) -> Self {
+        Self {
+            options: self.options.clone(),
+            shutdown,
+        }
+    }
 }

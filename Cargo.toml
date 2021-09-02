@@ -22,6 +22,7 @@ bytes = "1.0.1"
 pin-project-lite = "0.2.7"
 lazy_static = "1.4.0"
 rustls-native-certs = "*"
+mimalloc = { version = "*", default-features = false }
 
 #[dev-dependencies]
 #criterion = "0.3"
@@ -69,4 +70,5 @@ full = ["server", "client", "tcp_tls", "quic", "udp", "lite_tls"]
 dev = ["server", "client", "tcp_tls", "quic", "udp", "lite_tls", "debug_info"]
 server_full = ["server", "tcp_tls", "quic", "udp", "lite_tls"]
 client_full = ["client", "tcp_tls", "quic", "udp", "lite_tls"]
-default = ["full", "zio"]
+# default = ["full", "zio"]
+default = ["full"]

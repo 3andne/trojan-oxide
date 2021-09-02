@@ -1,26 +1,27 @@
-use crate::args::{Opt, TrojanContext};
-use crate::client::utils::{ClientServerConnection, ClientConnectionRequest};
-use crate::utils::MixAddrType;
+use super::forward;
+use crate::{
+    args::{Opt, TrojanContext},
+    client::utils::{ClientConnectionRequest, ClientServerConnection},
+    protocol::*,
+    utils::MixAddrType,
+};
 use anyhow::*;
-use lazy_static::lazy_static;
 use quinn::*;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use std::time::Duration;
-use std::{net::SocketAddr, sync::atomic::Ordering::SeqCst};
-use tokio::sync::{broadcast, mpsc, oneshot};
-use tokio::time::sleep;
-use tokio::time::timeout;
-use tokio::{fs, io};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::{
+    fs, io, select,
+    sync::{broadcast, mpsc, oneshot},
+    time::{sleep, timeout},
+};
 use tracing::*;
 
-use crate::protocol::*;
-
-use super::forward;
-
-lazy_static! {
-    pub static ref IS_CONNECTION_OPENED: AtomicBool = AtomicBool::new(false);
-}
+pub static IS_CONNECTION_OPENED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default)]
 struct QuicConnectionWrapper {
@@ -94,31 +95,30 @@ pub async fn send_echo(echo_stream: (SendStream, RecvStream), mut echo_rx: mpsc:
 }
 
 pub struct EndpointManager {
-    inner: Endpoint,
+    outbound: Endpoint,
     connection: QuicConnectionWrapper,
-    remote: SocketAddr,
-    remote_url: String,
-    password: Arc<String>,
+    // remote: SocketAddr,
+    // remote_url: String,
+    // password: Arc<String>,
+    options: Arc<Opt>,
     echo_tx: Option<mpsc::Sender<()>>,
     shudown_tx: broadcast::Sender<()>,
 }
 
 impl EndpointManager {
-    pub async fn new(context: &TrojanContext) -> Result<Self> {
-        let (inner, _) = new_builder(&context.options)
+    pub async fn new(options: Arc<Opt>) -> Result<Self> {
+        let (outbound, _) = new_builder(&options)
             .await?
             .bind(&"[::]:0".parse().unwrap())?;
-        let remote = context.remote_socket_addr;
-        let remote_url = context.options.proxy_url.clone();
+        // let remote = options.remote_socket_addr;
+        // let remote_url = options.proxy_url.clone();
 
-        let password = context.options.password_hash.clone();
+        // let password = options.password_hash.clone();
         let (shudown_tx, _) = broadcast::channel(1);
         let mut _self = Self {
-            inner,
+            outbound,
             connection: QuicConnectionWrapper::default(),
-            remote,
-            remote_url,
-            password,
+            options,
             echo_tx: None,
             shudown_tx,
         };
@@ -137,16 +137,15 @@ impl EndpointManager {
 
     async fn echo(&mut self) -> Result<bool> {
         if !self.echo_task_status() {
-            let open_conn = self.connection.open_bi();
-            let connect_to_server = async move {
-                match open_conn {
-                    Some(bi) => Ok(ClientServerConnection::Quic(bi.await?)),
-                    None => Err::<ClientServerConnection, Error>(anyhow!("failed to open bi conn")),
-                }
+            let open_bi = match self.connection.open_bi() {
+                None => return Err(anyhow!("failed to open bi conn")),
+                Some(open_bi) => open_bi,
             };
+            let connecting: _ =
+                async move { Ok::<_, Error>(ClientServerConnection::Quic(open_bi.await?)) };
 
             let (echo_tx, echo_rx) = mpsc::channel::<()>(1);
-            let incomming_request = async {
+            let incomming: _ = async {
                 Ok((
                     ClientConnectionRequest::ECHO(echo_rx),
                     MixAddrType::new_null(),
@@ -154,13 +153,12 @@ impl EndpointManager {
             };
 
             self.echo_tx = Some(echo_tx);
+            let context = TrojanContext {
+                options: self.options.clone(),
+                shutdown: self.shudown_tx.subscribe(),
+            };
 
-            tokio::spawn(forward(
-                self.shudown_tx.subscribe(),
-                self.password.clone(),
-                incomming_request,
-                connect_to_server,
-            ));
+            tokio::spawn(forward(context, incomming, connecting));
         }
 
         let _ = self.echo_tx.as_mut().unwrap().try_send(());
@@ -182,7 +180,8 @@ impl EndpointManager {
     async fn new_connection(&mut self) -> Result<()> {
         let new_conn = timeout(
             Duration::from_secs(2),
-            self.inner.connect(&self.remote, &self.remote_url)?,
+            self.outbound
+                .connect(&self.options.remote_socket_addr.unwrap(), &self.options.proxy_url)?,
         )
         .await
         .map_err(|e| Error::new(e))?
@@ -244,30 +243,34 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
     Ok(())
 }
 
-macro_rules! break_none {
-    ($options:expr) => {
-        match $options {
-            None => {
-                break;
-            }
-            Some(x) => x,
-        }
-    };
-}
-
 pub async fn quic_connection_daemon(
     context: TrojanContext,
     mut task_rx: mpsc::Receiver<oneshot::Sender<Result<(SendStream, RecvStream)>>>,
 ) -> Result<()> {
     debug!("quic_connection_daemon enter");
-    let mut endpoint = EndpointManager::new(&context)
+    let TrojanContext {
+        mut shutdown,
+        options,
+    } = context;
+    let mut endpoint = EndpointManager::new(options)
         .await
         .expect("EndpointManager::new");
 
     loop {
-        let _ = break_none!(task_rx.recv().await).send(endpoint.connect().await);
+        select! {
+            maybe_ret_tx = task_rx.recv() => {
+                match maybe_ret_tx {
+                    None => break,
+                    Some(ret_tx) => {
+                        let _ =ret_tx.send(endpoint.connect().await);
+                    },
+                }
+            }
+            _ = shutdown.recv() => {
+                break;
+            }
+        }
     }
     debug!("quic_connection_daemon leave");
-
     Ok(())
 }

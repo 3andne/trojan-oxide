@@ -19,7 +19,7 @@ impl CopyBuffer {
             pos: 0,
             cap: 0,
             amt: 0,
-            buf: vec![0; 4096].into_boxed_slice(),
+            buf: vec![0; 8192].into_boxed_slice(),
         }
     }
 

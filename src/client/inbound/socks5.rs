@@ -6,6 +6,7 @@ use crate::{
 
 #[cfg(feature = "udp")]
 use crate::client::utils::Socks5UdpStream;
+use futures::Future;
 #[cfg(feature = "udp")]
 use std::net::SocketAddr;
 #[cfg(feature = "udp")]
@@ -19,6 +20,8 @@ use tokio::net::TcpStream;
 #[cfg(feature = "debug_info")]
 use tracing::*;
 
+use super::{listener::RequestFromClient, ClientRequestAcceptResult};
+
 const SOCKS_VERSION_INDEX: usize = 0;
 const NUM_SUPPORTED_AUTH_METHOD_INDEX: usize = 1;
 const CONNECTION_TYPE_INDEX: usize = 1;
@@ -31,6 +34,7 @@ pub struct Socks5Request {
     phase: Sock5ParsePhase,
     is_udp: bool,
     addr: MixAddrType,
+    inbound: Option<TcpStream>,
 }
 
 enum Sock5ParsePhase {
@@ -39,20 +43,9 @@ enum Sock5ParsePhase {
 }
 
 impl Socks5Request {
-    pub fn new() -> Self {
-        Self {
-            phase: Sock5ParsePhase::P1ClientHello,
-            is_udp: false,
-            addr: MixAddrType::None,
-        }
-    }
-
-    pub fn addr(self) -> MixAddrType {
-        self.addr
-    }
-
-    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ClientConnectionRequest> {
+    async fn impl_accept(&mut self) -> Result<ClientConnectionRequest> {
         let mut buffer = Vec::with_capacity(200);
+        let mut inbound = self.inbound.take().unwrap();
         loop {
             let read = inbound.read_buf(&mut buffer).await?;
             if read != 0 {
@@ -180,5 +173,22 @@ impl Socks5Request {
                 return Ok(());
             }
         }
+    }
+}
+
+impl RequestFromClient for Socks5Request {
+    type Accepting<'a> = impl Future<Output = ClientRequestAcceptResult> + Send;
+
+    fn new(inbound: TcpStream) -> Self {
+        Self {
+            phase: Sock5ParsePhase::P1ClientHello,
+            is_udp: false,
+            addr: MixAddrType::None,
+            inbound: Some(inbound),
+        }
+    }
+
+    fn accept<'a>(mut self) -> Self::Accepting<'a> {
+        async { Ok::<_, Error>((self.impl_accept().await?, self.addr)) }
     }
 }

@@ -1,4 +1,4 @@
-use std::{io::Cursor, sync::Arc};
+use std::{io::Cursor, net::IpAddr};
 
 use crate::utils::copy_to_tls;
 use anyhow::{anyhow, Context, Error, Result};
@@ -11,10 +11,10 @@ use tracing::*;
 
 pub async fn fallback<I: AsyncRead + AsyncWrite + Unpin>(
     buf: Vec<u8>,
-    fallback_port: Arc<String>,
+    fallback_port: u16,
     inbound: I,
 ) -> Result<()> {
-    let mut outbound = TcpStream::connect("127.0.0.1:".to_owned() + fallback_port.as_str())
+    let mut outbound = TcpStream::connect((IpAddr::from([127, 0, 0, 1]), fallback_port))
         .await
         .map_err(|e| Error::new(e))
         .with_context(|| anyhow!("failed to connect to fallback service"))?;

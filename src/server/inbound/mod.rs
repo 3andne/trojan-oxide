@@ -12,15 +12,7 @@ pub use listener::tcp_tls_listener;
 #[cfg(feature = "quic")]
 pub use {listener::quic_listener, quic::QuicStream};
 
-use crate::args::Opt;
-use std::net::{SocketAddr, ToSocketAddrs};
-pub fn get_server_local_addr(options: &Opt) -> SocketAddr {
-    ("0.0.0.0:".to_owned() + &options.proxy_port)
-        .to_socket_addrs()
-        .unwrap()
-        .next()
-        .unwrap()
+use std::net::{IpAddr, SocketAddr};
+pub fn get_server_local_addr(proxy_port: u16) -> SocketAddr {
+    SocketAddr::from((IpAddr::from([0, 0, 0, 0]), proxy_port))
 }
-
-// #[cfg(feature = "udp")]
-// pub type TrojanUdpStream<W, R> = (TrojanUdpSendStream<W>, TrojanUdpRecvStream<R>);

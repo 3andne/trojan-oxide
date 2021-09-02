@@ -1,13 +1,9 @@
-use super::inbound::{accept_http_request, accept_sock5_request, user_endpoint_listener};
+use super::inbound::{user_endpoint_listener, HttpRequest, Socks5Request};
 use crate::args::TrojanContext;
 use anyhow::Result;
-use std::net::SocketAddr;
-use tokio::sync::oneshot;
+use tokio::sync::broadcast;
 
-pub async fn run_client(
-    upper_shutdown: oneshot::Receiver<()>,
-    context: TrojanContext,
-) -> Result<()> {
+pub async fn run_client(mut context: TrojanContext) -> Result<()> {
     // blocking by async in traits
     // trait ClientReqAcc { async fn accept(stream: TcpStream) -> ... }
     // impl ClientReqAcc for HttpAcc;
@@ -19,23 +15,18 @@ pub async fn run_client(
     // http_listener.listen().await; socks5_listener.listen().await;
 
     // ClientServerConnection would be elimiated
-    let http_addr = context.options.local_http_addr.parse::<SocketAddr>()?;
-    let socks5_addr = context.options.local_socks5_addr.parse::<SocketAddr>()?;
-    let (_shutdown1_tx, shutdown1_rx) = oneshot::channel();
-    let (_shutdown2_tx, shutdown2_rx) = oneshot::channel();
-    tokio::spawn(user_endpoint_listener(
-        shutdown1_rx,
+    let http_addr = context.options.local_http_addr;
+    let socks5_addr = context.options.local_socks5_addr;
+    let (shutdown_tx, shutdown) = broadcast::channel(1);
+    tokio::spawn(user_endpoint_listener::<HttpRequest>(
         http_addr,
-        context.clone(),
-        accept_http_request,
+        context.clone_with_signal(shutdown),
     ));
 
-    tokio::spawn(user_endpoint_listener(
-        shutdown2_rx,
+    tokio::spawn(user_endpoint_listener::<Socks5Request>(
         socks5_addr,
-        context,
-        accept_sock5_request,
+        context.clone_with_signal(shutdown_tx.subscribe()),
     ));
-    let _ = upper_shutdown.await;
+    let _ = context.shutdown.recv().await;
     Ok(())
 }

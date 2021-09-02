@@ -1,6 +1,5 @@
 use crate::{client::utils::ClientServerConnection, protocol::HASH_LEN, utils::MixAddrType};
 use anyhow::Result;
-use std::sync::Arc;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::{debug, trace};
 
@@ -8,7 +7,7 @@ pub async fn trojan_auth(
     mode: u8,
     addr: &MixAddrType,
     outbound: &mut ClientServerConnection,
-    password: Arc<String>,
+    password: &String,
 ) -> Result<()> {
     match outbound {
         #[cfg(feature = "quic")]
@@ -30,7 +29,7 @@ async fn send_trojan_auth<A>(
     mode: u8,
     addr: &MixAddrType,
     outbound: &mut A,
-    password: Arc<String>,
+    password: &String,
 ) -> Result<()>
 where
     A: AsyncWrite + Unpin + ?Sized,

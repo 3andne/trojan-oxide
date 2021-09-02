@@ -12,7 +12,6 @@ use crate::{
 };
 use anyhow::Result;
 use futures::TryFutureExt;
-use std::{fmt::Debug, sync::Arc};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tracing::*;
 #[cfg(feature = "udp")]
@@ -29,11 +28,11 @@ pub struct TrojanAcceptor<'a> {
     password_hash: &'a [u8],
     buf: Vec<u8>,
     cmd_code: u8,
-    fallback_port: Arc<String>,
+    fallback_port: u16,
 }
 
 impl<'a> TrojanAcceptor<'a> {
-    pub fn new(password_hash: &[u8], fallback_port: Arc<String>) -> TrojanAcceptor {
+    pub fn new(password_hash: &[u8], fallback_port: u16) -> TrojanAcceptor {
         TrojanAcceptor {
             password_hash,
             fallback_port,
@@ -130,9 +129,9 @@ impl<'a> TrojanAcceptor<'a> {
                         let mut buf = Vec::new();
                         std::mem::swap(&mut buf, &mut self.buf);
                         tokio::spawn(
-                            fallback(buf, self.fallback_port.clone(), inbound).unwrap_or_else(
-                                |e| error!("connection to fallback failed {:#}", e),
-                            ),
+                            fallback(buf, self.fallback_port, inbound).unwrap_or_else(|e| {
+                                error!("connection to fallback failed {:#}", e)
+                            }),
                         );
                         return Err(err);
                     }

@@ -1,19 +1,16 @@
 use crate::{
     adapt,
+    args::TrojanContext,
     protocol::{SERVER_OUTBOUND_CONNECT_TIMEOUT, TCP_MAX_IDLE_TIMEOUT},
     server::inbound::TrojanAcceptor,
     utils::{lite_tls::LeaveTls, Adapter, ConnectionRequest, MixAddrType, Splitable},
 };
 use anyhow::{anyhow, Context, Error, Result};
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
     select,
-    sync::broadcast,
     time::{timeout, Duration},
 };
 use tracing::{debug, info};
@@ -45,15 +42,17 @@ async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStream> {
 }
 
 pub async fn handle_outbound<I>(
+    mut context: TrojanContext,
     stream: I,
-    mut upper_shutdown: broadcast::Receiver<()>,
-    password_hash: Arc<String>,
-    fallback_port: Arc<String>,
+    // mut upper_shutdown: broadcast::Receiver<()>,
+    // password_hash: Arc<String>,
+    // fallback_port: Arc<String>,
 ) -> Result<()>
 where
     I: AsyncRead + AsyncWrite + Splitable + LeaveTls + Unpin + Send + 'static,
 {
-    let mut target = TrojanAcceptor::new(password_hash.as_bytes(), fallback_port);
+    let opt = &*context.options;
+    let mut target = TrojanAcceptor::new(opt.password_hash.as_bytes(), opt.fallback_port);
     use ConnectionRequest::*;
     match timeout(
         Duration::from_secs(SERVER_OUTBOUND_CONNECT_TIMEOUT),
@@ -66,7 +65,7 @@ where
                 timeout(Duration::from_secs(2), outbound_connect(&target.host)).await??;
             let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             inbound
-                .forward(outbound, &target.host, upper_shutdown, conn_id)
+                .forward(outbound, &target.host, context.shutdown, conn_id)
                 .await?;
         }
         #[cfg(feature = "udp")]
@@ -78,9 +77,10 @@ where
 
             let mut outbound = ServerUdpStream::new(outbound);
             let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let shutdown = context.shutdown;
             adapt!([udp][conn_id]
                 inbound <=> outbound
-                Until upper_shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
+                Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
             );
         }
         #[cfg(feature = "quic")]
@@ -91,7 +91,7 @@ where
                 _ = tokio::io::copy(&mut in_read, &mut in_write) => {
                     debug!("server relaying upload end");
                 },
-                _ = upper_shutdown.recv() => {
+                _ = context.shutdown.recv() => {
                     debug!("server shutdown signal received");
                 },
             }

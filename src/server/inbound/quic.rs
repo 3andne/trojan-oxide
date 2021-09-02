@@ -11,8 +11,7 @@ use tokio::{fs, io};
 use tracing::*;
 
 #[derive(Debug)]
-pub struct QuicStream(pub(super) SendStream, pub(super) RecvStream );
-
+pub struct QuicStream(pub(super) SendStream, pub(super) RecvStream);
 
 pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut transport_config = quinn::TransportConfig::default();
@@ -85,6 +84,6 @@ pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut endpoint = quinn::Endpoint::builder();
     endpoint.listen(server_config.build());
 
-    let server_addr = get_server_local_addr(options);
+    let server_addr = get_server_local_addr(options.proxy_port);
     Ok(endpoint.bind(&server_addr)?)
 }
