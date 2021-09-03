@@ -35,7 +35,7 @@ where
         match self {
             TLS(inbound) => {
                 adapt!([tcp][conn_id]
-                    inbound[Tls] <=> outbound[Tcp] <=> target_host
+                    inbound <=> outbound <=> target_host
                     Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                 );
             }
@@ -58,7 +58,7 @@ where
                             .await?;
                         debug!("lite tls start relaying");
                         adapt!([lite][conn_id]
-                            inbound[Tcp] <=> outbound[Tcp] <=> target_host
+                            inbound <=> outbound <=> target_host
                             Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                         );
                     }
@@ -69,7 +69,7 @@ where
                                 .flush_non_tls(&mut outbound, &mut inbound)
                                 .await?;
                             adapt!([tcp][conn_id]
-                                inbound[Tls] <=> outbound[Tcp] <=> target_host
+                                inbound <=> outbound <=> target_host
                                 Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                             );
                         }

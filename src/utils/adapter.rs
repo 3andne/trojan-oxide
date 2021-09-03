@@ -1,11 +1,11 @@
 use std::{fmt, time::Duration};
 
-use crate::utils::{copy_to_tls, copy_udp, either_io::EitherIO, TimeoutMonitor};
+use crate::utils::{copy_forked, copy_udp, either_io::EitherIO, TimeoutMonitor};
 
 use anyhow::{anyhow, Context, Result};
 use futures::future::{pending, Either};
 use tokio::{
-    io::{copy, AsyncRead, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     select,
     sync::broadcast,
 };
@@ -15,22 +15,13 @@ use {crate::VEC_TCP_TX, anyhow::Error, tokio::net::TcpStream};
 
 use super::{UdpRead, UdpWrite, UdpWriteExt};
 
-pub enum AdapterTlsConfig {
-    TcpOnly,
-    RustlsUpload,
-    RustlsDownload,
-}
-
 #[macro_export]
 macro_rules! adapt {
-    (Tcp, Tcp) => {Adapter::new_tcp_only()};
-    (Tls, Tcp) => {Adapter::new_tls_download()};
-    (Tcp, Tls) => {Adapter::new_tls_upload()};
     (tcp) => {"tcp"};
     (lite) => {"lite"};
     ([udp][$conn_id:ident]$inbound:ident <=> $outbound:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
         #[allow(unused_mut)]
-        let mut adapter = Adapter::new_tcp_only();
+        let mut adapter = Adapter::new();
         $(adapter.set_timeout($timeout);)?
         info!("[udp][{}]", $conn_id);
         let inbound = $inbound.split();
@@ -38,7 +29,7 @@ macro_rules! adapt {
         let reason = adapter.relay_udp(inbound, outbound, $shutdown, $conn_id).await.with_context(|| anyhow!("[udp][{}] failed", $conn_id))?;
         info!("[udp][{}] end by {}", $conn_id, reason);
     };
-    ([lite][$conn_id:ident]$inbound:ident[Tcp] <=> $outbound:ident[Tcp] <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
+    ([lite][$conn_id:ident]$inbound:ident <=> $outbound:ident <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
         #[cfg(all(target_os = "linux", feature = "zio"))]
         {
             // timeout is not used here. In glommio, we set tcp socket's
@@ -53,7 +44,7 @@ macro_rules! adapt {
         #[cfg(not(all(target_os = "linux", feature = "zio")))]
         {
             #[allow(unused_mut)]
-            let mut adapter = Adapter::new_tcp_only();
+            let mut adapter = Adapter::new();
             $(adapter.set_timeout($timeout);)?
             info!("[lite][{}] => {:?}", $conn_id, $target_host);
             let mut inbound = $inbound;
@@ -63,15 +54,15 @@ macro_rules! adapt {
             info!("[lite][{}] end by {}", $conn_id, reason);
         }
     };
-    ([$traffic:ident][$conn_id:ident]$inbound:ident[$itype:ident] <=> $outbound:ident[$otype:ident] <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
+    ([tcp][$conn_id:ident]$inbound:ident <=> $outbound:ident <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
         #[allow(unused_mut)]
-        let mut adapter = adapt!($itype, $otype);
+        let mut adapter = Adapter::new();
         $(adapter.set_timeout($timeout);)?
-        info!("[{}][{}] => {:?}", adapt!($traffic), $conn_id, $target_host);
+        info!("[tcp][{}] => {:?}", $conn_id, $target_host);
         let inbound = $inbound.split();
         let outbound = $outbound.split();
-        let reason = adapter.relay_tcp(inbound, outbound, $shutdown).await.with_context(|| anyhow!("[{}][{}] failed", adapt!($traffic), $conn_id))?;
-        info!("[{}][{}] end by {}", adapt!($traffic), $conn_id, reason);
+        let reason = adapter.relay_tcp(inbound, outbound, $shutdown).await.with_context(|| anyhow!("[tcp][{}] failed", $conn_id))?;
+        info!("[tcp][{}] end by {}", $conn_id, reason);
     };
 }
 
@@ -96,32 +87,12 @@ impl fmt::Display for StreamStopReasons {
 }
 
 pub struct Adapter {
-    tls_config: AdapterTlsConfig,
     timeout: Option<u16>,
 }
 
 impl Adapter {
-    pub fn new_tcp_only() -> Self {
-        Self {
-            tls_config: AdapterTlsConfig::TcpOnly,
-            timeout: None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn new_tls_download() -> Self {
-        Self {
-            tls_config: AdapterTlsConfig::RustlsDownload,
-            timeout: None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn new_tls_upload() -> Self {
-        Self {
-            tls_config: AdapterTlsConfig::RustlsUpload,
-            timeout: None,
-        }
+    pub fn new() -> Self {
+        Self { timeout: None }
     }
 
     #[allow(dead_code)]
@@ -156,17 +127,8 @@ impl Adapter {
             ),
         };
 
-        use AdapterTlsConfig::*;
-        use Either::*;
-        let download: _ = match self.tls_config {
-            RustlsDownload => Left(copy_to_tls(&mut out_read, &mut in_write)),
-            _ => Right(copy(&mut out_read, &mut in_write)),
-        };
-
-        let upload: _ = match self.tls_config {
-            RustlsUpload => Left(copy_to_tls(&mut in_read, &mut out_write)),
-            _ => Right(copy(&mut in_read, &mut out_write)),
-        };
+        let download: _ = copy_forked(&mut out_read, &mut in_write);
+        let upload: _ = copy_forked(&mut in_read, &mut out_write);
 
         use StreamStopReasons::*;
         let reason = select! {

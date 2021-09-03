@@ -17,3 +17,5 @@ pub const SERVER_OUTBOUND_CONNECT_TIMEOUT: u64 = 10;
 pub const LITE_TLS_HANDSHAKE_TIMEOUT: u64 = 60;
 
 pub const LEAVE_TLS_COMMAND: [u8; 6] = [0xff, 0x03, 0x03, 0, 0x01, 0x01];
+
+pub const RELAY_BUFFER_SIZE: usize = 8192 * 2;

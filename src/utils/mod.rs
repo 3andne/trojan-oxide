@@ -6,8 +6,8 @@ pub use udp::*;
 #[cfg(feature = "lite_tls")]
 pub mod lite_tls;
 
-mod copy_tcp;
-pub use copy_tcp::copy_to_tls;
+// mod copy_tcp;
+// pub use copy_tcp::copy_to_tls;
 
 mod macros;
 mod mix_addr;
@@ -29,6 +29,9 @@ pub use splitable::Splitable;
 
 mod buffers;
 pub use buffers::*;
+
+mod forked_copy;
+pub use forked_copy::*;
 
 #[cfg(all(target_os = "linux", feature = "zio"))]
 mod glommio_utils;

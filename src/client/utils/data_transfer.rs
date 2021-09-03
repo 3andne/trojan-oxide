@@ -25,14 +25,14 @@ pub async fn relay_tcp(
         ClientServerConnection::Quic(outbound) => {
             let outbound = WRTuple::from_wr_tuple(outbound);
             adapt!([tcp][conn_id]
-                inbound[Tcp] <=> outbound[Tcp] <=> target_host
+                inbound <=> outbound <=> target_host
                 Until shutdown
             );
         }
         #[cfg(feature = "tcp_tls")]
         ClientServerConnection::TcpTLS(outbound) => {
             adapt!([tcp][conn_id]
-                inbound[Tcp] <=> outbound[Tls] <=> target_host
+                inbound <=> outbound <=> target_host
                 Until shutdown
             );
         }
@@ -65,7 +65,7 @@ pub async fn relay_tcp(
                         .await?;
 
                     adapt!([lite][conn_id]
-                        inbound[Tcp] <=> outbound[Tcp] <=> target_host
+                        inbound <=> outbound <=> target_host
                         Until shutdown
                     );
                 }
@@ -76,7 +76,7 @@ pub async fn relay_tcp(
                             .flush_non_tls(&mut outbound, &mut inbound_tmp)
                             .await?;
                         adapt!([lite][conn_id]
-                            inbound[Tcp] <=> outbound[Tls] <=> target_host
+                            inbound <=> outbound <=> target_host
                             Until shutdown
                         );
                     } else {
