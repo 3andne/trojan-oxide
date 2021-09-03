@@ -75,7 +75,7 @@ pub async fn relay_tcp(
                         lite_tls_endpoint
                             .flush_non_tls(&mut outbound, &mut inbound_tmp)
                             .await?;
-                        adapt!([lite][conn_id]
+                        adapt!([tcp][conn_id]
                             inbound <=> outbound <=> target_host
                             Until shutdown
                         );
