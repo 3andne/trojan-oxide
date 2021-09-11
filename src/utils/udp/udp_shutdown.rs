@@ -1,5 +1,5 @@
-use pin_project_lite::pin_project;
 use super::UdpWrite;
+use pin_project_lite::pin_project;
 use std::future::Future;
 use std::io;
 use std::marker::PhantomPinned;
@@ -12,7 +12,7 @@ pin_project! {
     /// Created by the [`AsyncWriteExt::shutdown`][shutdown] function.
     /// [shutdown]: crate::io::AsyncWriteExt::shutdown
     #[must_use = "futures do nothing unless you `.await` or poll them"]
-    #[derive(Debug)]
+    #[cfg_attr(feature = "debug_info", derive(Debug))]
     pub struct Shutdown<'a, A: ?Sized> {
         a: &'a mut A,
         // Make this future `!Unpin` for compatibility with async trait methods.
@@ -22,6 +22,7 @@ pin_project! {
 }
 
 /// Creates a future which will shutdown an I/O object.
+#[allow(unused)]
 pub(super) fn shutdown<A>(a: &mut A) -> Shutdown<'_, A>
 where
     A: UdpWrite + Unpin + ?Sized,

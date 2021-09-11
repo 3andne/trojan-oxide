@@ -1,6 +1,7 @@
 use crate::utils::{MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
 use futures::{ready, Future};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::vec;
 use std::{
     pin::Pin,
@@ -11,33 +12,22 @@ use tokio::{net::UdpSocket, task::JoinHandle};
 #[cfg(feature = "debug_info")]
 use tracing::*;
 
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 pub struct ServerUdpStream {
-    inner: UdpSocket,
+    inner: Arc<UdpSocket>,
+    addr_task: ResolveAddr,
 }
 
 impl ServerUdpStream {
     pub fn new(inner: UdpSocket) -> Self {
-        Self { inner }
-    }
-
-    pub fn split(&mut self) -> (ServerUdpRecvStream, ServerUdpSendStream) {
-        (
-            ServerUdpRecvStream { inner: &self.inner },
-            ServerUdpSendStream {
-                inner: &self.inner,
-                addr_task: ResolveAddr::None,
-            },
-        )
+        Self {
+            inner: Arc::new(inner),
+            addr_task: ResolveAddr::None,
+        }
     }
 }
 
-#[derive(Debug)]
-pub struct ServerUdpSendStream<'a> {
-    inner: &'a UdpSocket,
-    addr_task: ResolveAddr,
-}
-
-impl<'a> UdpWrite for ServerUdpSendStream<'a> {
+impl UdpWrite for ServerUdpStream {
     fn poll_proxy_stream_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -117,19 +107,14 @@ impl<'a> UdpWrite for ServerUdpSendStream<'a> {
     }
 }
 
-#[derive(Debug)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 enum ResolveAddr {
     Pending(JoinHandle<std::io::Result<vec::IntoIter<SocketAddr>>>),
     Ready(SocketAddr),
     None,
 }
 
-#[derive(Debug)]
-pub struct ServerUdpRecvStream<'a> {
-    inner: &'a UdpSocket,
-}
-
-impl<'a> UdpRead for ServerUdpRecvStream<'a> {
+impl UdpRead for ServerUdpStream {
     fn poll_proxy_stream_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,

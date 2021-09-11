@@ -1,19 +1,22 @@
 use std::{fmt, time::Duration};
 
-use crate::utils::{copy_forked, copy_udp, either_io::EitherIO, TimeoutMonitor};
+use crate::utils::{
+    copy_bidirectional_forked, either_io::EitherIO, udp_copy_bidirectional, TimeoutMonitor,
+};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use futures::future::{pending, Either};
 use tokio::{
-    io::{AsyncRead, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncWrite},
     select,
     sync::broadcast,
 };
+use tracing::debug;
 
 #[cfg(all(target_os = "linux", feature = "zio"))]
 use {crate::VEC_TCP_TX, anyhow::Error, tokio::net::TcpStream};
 
-use super::{UdpRead, UdpWrite, UdpWriteExt};
+use super::{UdpRead, UdpWrite};
 
 #[macro_export]
 macro_rules! adapt {
@@ -24,9 +27,7 @@ macro_rules! adapt {
         let mut adapter = Adapter::new();
         $(adapter.set_timeout($timeout);)?
         info!("[udp][{}]", $conn_id);
-        let inbound = $inbound.split();
-        let outbound = $outbound.split();
-        let reason = adapter.relay_udp(inbound, outbound, $shutdown, $conn_id).await.with_context(|| anyhow!("[udp][{}] failed", $conn_id))?;
+        let reason = adapter.relay_udp($inbound, $outbound, $shutdown, $conn_id).await.with_context(|| anyhow!("[udp][{}] failed", $conn_id))?;
         info!("[udp][{}] end by {}", $conn_id, reason);
     };
     ([lite][$conn_id:ident]$inbound:ident <=> $outbound:ident <=> $target_host:ident Until $shutdown:ident$( Or Sec $timeout:expr)?) => {
@@ -47,10 +48,7 @@ macro_rules! adapt {
             let mut adapter = Adapter::new();
             $(adapter.set_timeout($timeout);)?
             info!("[lite][{}] => {:?}", $conn_id, $target_host);
-            let mut inbound = $inbound;
-            let inbound = inbound.split();
-            let outbound = $outbound.split();
-            let reason = adapter.relay_tcp(inbound, outbound, $shutdown).await.with_context(|| anyhow!("[lite][{}] failed", $conn_id))?;
+            let reason = adapter.relay_tcp($inbound, $outbound, $shutdown).await.with_context(|| anyhow!("[lite][{}] failed", $conn_id))?;
             info!("[lite][{}] end by {}", $conn_id, reason);
         }
     };
@@ -59,14 +57,13 @@ macro_rules! adapt {
         let mut adapter = Adapter::new();
         $(adapter.set_timeout($timeout);)?
         info!("[tcp][{}] => {:?}", $conn_id, $target_host);
-        let inbound = $inbound.split();
-        let outbound = $outbound.split();
-        let reason = adapter.relay_tcp(inbound, outbound, $shutdown).await.with_context(|| anyhow!("[tcp][{}] failed", $conn_id))?;
+        let reason = adapter.relay_tcp($inbound, $outbound, $shutdown).await.with_context(|| anyhow!("[tcp][{}] failed", $conn_id))?;
         info!("[tcp][{}] end by {}", $conn_id, reason);
     };
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 pub enum StreamStopReasons {
     Upload,
     Download,
@@ -100,43 +97,38 @@ impl Adapter {
         self.timeout = Some(timeout);
     }
 
-    pub async fn relay_tcp<IR, IW, OR, OW>(
+    pub async fn relay_tcp<I, O>(
         &self,
-        (mut in_read, mut in_write): (IR, IW),
-        (out_read, out_write): (OR, OW),
+        mut inbound: I,
+        outbound: O,
         mut shutdown: broadcast::Receiver<()>,
     ) -> Result<StreamStopReasons>
     where
-        IR: AsyncRead + Unpin,
-        IW: AsyncWrite + Unpin,
-        OR: AsyncRead + Unpin,
-        OW: AsyncWrite + Unpin,
+        I: AsyncRead + AsyncWrite + Unpin,
+        O: AsyncRead + AsyncWrite + Unpin,
     {
-        let (mut out_read, mut out_write, timeout): _ = match self.timeout {
+        let (mut outbound, timeout): _ = match self.timeout {
             Some(t) => {
                 let deadline = Duration::from_secs(t as u64);
                 let timeout_monitor = TimeoutMonitor::new(deadline);
-                let out_read: _ = EitherIO::Left(timeout_monitor.watch(out_read));
-                let out_write: _ = EitherIO::Left(timeout_monitor.watch(out_write));
-                (out_read, out_write, Either::Left(timeout_monitor))
+                let outbound = EitherIO::Left(timeout_monitor.watch(outbound));
+                (outbound, Either::Left(timeout_monitor))
             }
-            None => (
-                EitherIO::Right(out_read),
-                EitherIO::Right(out_write),
-                Either::Right(pending::<()>()),
-            ),
+            None => (EitherIO::Right(outbound), Either::Right(pending::<()>())),
         };
 
-        let download: _ = copy_forked(&mut out_read, &mut in_write);
-        let upload: _ = copy_forked(&mut in_read, &mut out_write);
+        let duplex_stream: _ = copy_bidirectional_forked(&mut outbound, &mut inbound);
 
         use StreamStopReasons::*;
         let reason = select! {
-            _ = download => {
-                Download
-            },
-            _ = upload => {
-                Upload
+            res = duplex_stream => {
+                match res {
+                    Err((reason, e)) => {
+                        debug!("forward tcp failed: {:#}", e);
+                        reason
+                    }
+                    Ok(res) => res,
+                }
             },
             _ = timeout => {
                 Timeout
@@ -145,53 +137,36 @@ impl Adapter {
                 Shutdown
             },
         };
-        in_write
-            .shutdown()
-            .await
-            .with_context(|| anyhow!("failed to shutdown inbound"))?;
-        out_write
-            .shutdown()
-            .await
-            .with_context(|| anyhow!("failed to shutdown outbound"))?;
         Ok(reason)
     }
 
-    pub async fn relay_udp<IR, IW, OR, OW>(
+    pub async fn relay_udp<I, O>(
         &self,
-        (mut in_read, mut in_write): (IR, IW),
-        (out_read, out_write): (OR, OW),
+        mut inbound: I,
+        outbound: O,
         mut shutdown: broadcast::Receiver<()>,
         conn_id: usize,
     ) -> Result<StreamStopReasons>
     where
-        IR: UdpRead + Unpin,
-        IW: UdpWrite + Unpin,
-        OR: UdpRead + Unpin,
-        OW: UdpWrite + Unpin,
+        I: UdpRead + UdpWrite + Unpin,
+        O: UdpRead + UdpWrite + Unpin,
     {
-        let (mut out_read, mut out_write, timeout): _ = match self.timeout {
+        let (mut outbound, timeout): _ = match self.timeout {
             Some(t) => {
                 let deadline = Duration::from_secs(t as u64);
                 let timeout_monitor = TimeoutMonitor::new(deadline);
-                let out_read: _ = EitherIO::Left(timeout_monitor.watch(out_read));
-                let out_write: _ = EitherIO::Left(timeout_monitor.watch(out_write));
-                (out_read, out_write, Either::Left(timeout_monitor))
+                let outbound: _ = EitherIO::Left(timeout_monitor.watch(outbound));
+                (outbound, Either::Left(timeout_monitor))
             }
-            None => (
-                EitherIO::Right(out_read),
-                EitherIO::Right(out_write),
-                Either::Right(pending::<()>()),
-            ),
+            None => (EitherIO::Right(outbound), Either::Right(pending::<()>())),
         };
 
         use StreamStopReasons::*;
         let reason = select! {
-            _ = copy_udp(&mut out_read, &mut in_write, None) => {
-                Download
-            },
-            _ = copy_udp(&mut in_read, &mut out_write, Some(conn_id)) => {
-                Upload
-            },
+            res = udp_copy_bidirectional(&mut outbound, &mut inbound, conn_id) => {
+                let (_, _, reason) = res?;
+                reason
+            }
             _ = timeout => {
                 Timeout
             }
@@ -199,14 +174,6 @@ impl Adapter {
                 Shutdown
             },
         };
-        in_write
-            .shutdown()
-            .await
-            .with_context(|| anyhow!("failed to shutdown inbound"))?;
-        out_write
-            .shutdown()
-            .await
-            .with_context(|| anyhow!("failed to shutdown outbound"))?;
         Ok(reason)
     }
 

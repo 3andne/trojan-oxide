@@ -12,17 +12,18 @@ pub use client_server_connection::*;
 mod connection_mode;
 pub use connection_mode::ConnectionMode;
 
+use tokio::net::TcpStream;
 #[cfg(feature = "udp")]
 use tokio::sync::mpsc;
 
 #[cfg(not(feature = "udp"))]
 use crate::utils::DummyRequest;
 
-use crate::utils::ConnectionRequest;
+use crate::utils::{BufferedRecv, ConnectionRequest};
 
 #[cfg(feature = "udp")]
 pub type ClientConnectionRequest =
-    ConnectionRequest<ClientTcpStream, Socks5UdpStream, mpsc::Receiver<()>>;
+    ConnectionRequest<BufferedRecv<TcpStream>, Socks5UdpStream, mpsc::Receiver<()>>;
 
 #[cfg(not(feature = "udp"))]
 pub type ClientConnectionRequest = ConnectionRequest<ClientTcpStream, DummyRequest, DummyRequest>;

@@ -1,13 +1,13 @@
-// use tokio::io::copy;
+// use tokio::io::{copy_bidirectional};
 
+use crate::protocol::RELAY_BUFFER_SIZE;
 use futures::{ready, Future};
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use crate::protocol::RELAY_BUFFER_SIZE;
 
-#[derive(Debug)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 pub(super) struct CopyBuffer {
     read_done: bool,
     need_flush: bool,
@@ -36,8 +36,8 @@ impl CopyBuffer {
         mut writer: Pin<&mut W>,
     ) -> Poll<io::Result<u64>>
     where
-        R: AsyncRead + ?Sized,
-        W: AsyncWrite + ?Sized,
+        R: AsyncRead,
+        W: AsyncWrite,
     {
         loop {
             // If our buffer is empty, then we need to read some data to
@@ -98,9 +98,9 @@ impl CopyBuffer {
 
 /// A future that asynchronously copies the entire contents of a reader into a
 /// writer.
-#[derive(Debug)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-struct Copy<'a, R: ?Sized, W: ?Sized> {
+struct Copy<'a, R, W> {
     reader: &'a mut R,
     writer: &'a mut W,
     buf: CopyBuffer,
@@ -141,8 +141,8 @@ struct Copy<'a, R: ?Sized, W: ?Sized> {
 /// ```
 pub async fn copy_forked<'a, R, W>(reader: &'a mut R, writer: &'a mut W) -> io::Result<u64>
 where
-    R: AsyncRead + Unpin + ?Sized,
-    W: AsyncWrite + Unpin + ?Sized,
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
 {
     Copy {
         reader,
@@ -154,8 +154,8 @@ where
 
 impl<R, W> Future for Copy<'_, R, W>
 where
-    R: AsyncRead + Unpin + ?Sized,
-    W: AsyncWrite + Unpin + ?Sized,
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
 {
     type Output = io::Result<u64>;
 

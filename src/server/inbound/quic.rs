@@ -10,9 +10,6 @@ use std::sync::Arc;
 use tokio::{fs, io};
 use tracing::*;
 
-#[derive(Debug)]
-pub struct QuicStream(pub(super) SendStream, pub(super) RecvStream);
-
 pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.max_idle_timeout(Some(QUIC_MAX_IDLE_TIMEOUT))?;

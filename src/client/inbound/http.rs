@@ -1,5 +1,5 @@
 use crate::{
-    client::utils::ClientTcpStream,
+    client::utils::new_client_tcp_stream,
     utils::ConnectionRequest,
     utils::{MixAddrType, ParserError},
 };
@@ -173,10 +173,9 @@ impl HttpRequest {
             //     debug!("http packet 0 sent");
         };
 
-        Ok(ConnectionRequest::TCP(ClientTcpStream {
-            inner: inbound,
-            http_request_extension: http_p0,
-        }))
+        Ok(ConnectionRequest::TCP(new_client_tcp_stream(
+            inbound, http_p0,
+        )))
     }
 }
 
