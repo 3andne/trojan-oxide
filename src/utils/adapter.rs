@@ -163,7 +163,7 @@ impl Adapter {
 
         use StreamStopReasons::*;
         let reason = select! {
-            res = udp_copy_bidirectional(&mut outbound, &mut inbound, conn_id) => {
+            res = udp_copy_bidirectional(&mut inbound, &mut outbound, conn_id) => {
                 let (_, _, reason) = res?;
                 reason
             }

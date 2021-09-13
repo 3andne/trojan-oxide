@@ -112,7 +112,7 @@ where
         b,
         a_to_b: TransferState::Running(CopyBuffer::new()),
         b_to_a: TransferState::Running(CopyBuffer::new()),
-        stop_reason: Download,
+        stop_reason: StreamStopReasons::Download,
     }
     .await
 }
