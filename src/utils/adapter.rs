@@ -117,7 +117,7 @@ impl Adapter {
             None => (EitherIO::Right(outbound), Either::Right(pending::<()>())),
         };
 
-        let duplex_stream: _ = copy_bidirectional_forked(&mut outbound, &mut inbound);
+        let duplex_stream: _ = copy_bidirectional_forked(&mut inbound, &mut outbound);
 
         use StreamStopReasons::*;
         let reason = select! {
