@@ -159,7 +159,17 @@ impl HttpRequest {
             debug!("https packet 0 sent");
             None
         } else {
-            Some([HEADER0, self.addr.host_repr().as_bytes(), HEADER1].concat())
+            let (host, port) = self.addr.as_host();
+            Some(
+                [
+                    HEADER0,
+                    host.as_bytes(),
+                    &[':' as u8],
+                    port.to_string().as_bytes(),
+                    HEADER1,
+                ]
+                .concat(),
+            )
             //     let bufs = [
             //         IoSlice::new(HEADER0),
             //         IoSlice::new(self.host_raw.as_bytes()),

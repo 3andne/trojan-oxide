@@ -4,10 +4,11 @@ use std::{
     net::{SocketAddrV4, SocketAddrV6},
     str::FromStr,
 };
+use tokio::sync::oneshot;
 
 use crate::{
     expect_buf_len,
-    utils::{transmute_u16s_to_u8s, CursoredBuffer, ExtendableFromSlice, ParserError},
+    utils::{transmute_u16s_to_u8s, CursoredBuffer, ExtendableFromSlice, ParserError, DNS_TX},
 };
 use std::net::SocketAddr;
 use tracing::*;
@@ -15,7 +16,7 @@ use tracing::*;
 pub enum MixAddrType {
     V4(([u8; 4], u16)),
     V6(([u16; 8], u16)),
-    Hostname((String, u16)),
+    Hostname((Box<str>, u16)),
     None,
 }
 
@@ -46,22 +47,39 @@ impl MixAddrType {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn is_ip(&self) -> bool {
+    pub fn as_host(&self) -> (&str, u16) {
         match self {
-            MixAddrType::V4(_) => true,
-            MixAddrType::V6(_) => true,
-            _ => false,
-        }
-    }
-
-    pub fn host_repr(&self) -> String {
-        match self {
-            MixAddrType::Hostname((host, port)) => host.to_owned() + &":" + &port.to_string(),
+            MixAddrType::Hostname((host, port)) => (&*host, *port),
             _ => {
                 panic!("only Hostname can use this method");
             }
         }
+    }
+
+    pub fn port(&self) -> u16 {
+        use MixAddrType::*;
+        match self {
+            Hostname((_, port)) => *port,
+            V4((_, port)) => *port,
+            V6((_, port)) => *port,
+            MixAddrType::None => unimplemented!("None doesn't have a port"),
+        }
+    }
+
+    pub async fn resolve(self) -> Result<SocketAddr> {
+        use MixAddrType::*;
+        Ok(match self {
+            Hostname((host_str, port)) => {
+                let (task_tx, task_rx) = oneshot::channel();
+                DNS_TX.get().unwrap().send((host_str, task_tx)).await?;
+                let ip = task_rx.await?;
+                let addr: SocketAddr = (ip, port).into();
+                addr
+            }
+            V4(addr) => addr.to_owned().into(),
+            V6((ip, port)) => (ip, port).into(),
+            MixAddrType::None => unimplemented!("we can't resolve None"),
+        })
     }
 
     #[cfg(feature = "client")]
@@ -79,7 +97,7 @@ impl MixAddrType {
     pub fn to_socket_addrs(&self) -> SocketAddr {
         match self {
             MixAddrType::V4(addr) => addr.to_owned().into(),
-            MixAddrType::V6(addr) => addr.to_owned().into(),
+            MixAddrType::V6((ip, port)) => (*ip, *port).into(),
             _ => {
                 panic!("only IP can use this method");
             }
@@ -154,9 +172,13 @@ impl MixAddrType {
             // Hostname: ends with alphabetic characters
             debug!("from_http_header: Hostname");
             Ok(Self::Hostname((
-                String::from_utf8(addr.to_vec()).map_err(|_| {
-                    ParserError::Invalid("MixAddrType::from_http_header Hostname Utf8Error".into())
-                })?,
+                String::from_utf8(addr.to_vec())
+                    .map_err(|_| {
+                        ParserError::Invalid(
+                            "MixAddrType::from_http_header Hostname Utf8Error".into(),
+                        )
+                    })?
+                    .into_boxed_str(),
                 port,
             )))
         } else {
@@ -250,11 +272,13 @@ impl MixAddrType {
                     1 + 1 + host_len + 2,
                     "MixAddrType::from_encoded_bytes Domain Name"
                 ); // cmd + host_len + host(host_len bytes) + port
-                let host = String::from_utf8(buf[2..2 + host_len].to_vec()).map_err(|_| {
-                    ParserError::Invalid(
-                        "MixAddrType::from_encoded_bytes Domain Name Utf8Error".into(),
-                    )
-                })?;
+                let host = String::from_utf8(buf[2..2 + host_len].to_vec())
+                    .map_err(|_| {
+                        ParserError::Invalid(
+                            "MixAddrType::from_encoded_bytes Domain Name Utf8Error".into(),
+                        )
+                    })?
+                    .into_boxed_str();
                 let port = u16::from_be_bytes([buf[2 + host_len], buf[2 + host_len + 1]]);
                 Ok((MixAddrType::Hostname((host, port)), 1 + 1 + host_len + 2))
             }

@@ -32,6 +32,9 @@ pub use buffered_recv::BufferedRecv;
 mod wr_tuple;
 pub use wr_tuple::WRTuple;
 
+mod dns_utils;
+pub use dns_utils::*;
+
 #[cfg(all(target_os = "linux", feature = "zio"))]
 mod glommio_utils;
 #[cfg(all(target_os = "linux", feature = "zio"))]
