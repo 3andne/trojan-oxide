@@ -21,13 +21,15 @@ pub(crate) static TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 pub(crate) static UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStream> {
-    let outbound = if target_host.is_ip() {
-        TcpStream::connect(target_host.to_socket_addrs()).await
-    } else {
-        TcpStream::connect(target_host.host_repr()).await
-    }
-    .map_err(|e| Error::new(e))
-    .with_context(|| anyhow!("failed to connect to {:?}", target_host))?;
+    let target_socket_addr =
+        target_host.clone().resolve().await.with_context(|| {
+            anyhow!("failed to resolve ip when connecting to {:?}", target_host)
+        })?;
+
+    let outbound = TcpStream::connect(target_socket_addr)
+        .await
+        .map_err(|e| Error::new(e))
+        .with_context(|| anyhow!("failed to connect to {:?}", target_host))?;
 
     outbound
         .set_nodelay(true)

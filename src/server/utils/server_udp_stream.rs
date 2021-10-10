@@ -1,14 +1,14 @@
-use crate::utils::{MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
-use futures::{ready, Future};
-use std::net::SocketAddr;
+use crate::utils::{MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite, DNS_TX};
+use futures::ready;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::vec;
 use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::task::spawn_blocking;
-use tokio::{net::UdpSocket, task::JoinHandle};
+use tokio::net::UdpSocket;
+use tokio::sync::oneshot;
+use tokio::sync::oneshot::error::TryRecvError;
 #[cfg(feature = "debug_info")]
 use tracing::*;
 
@@ -39,29 +39,12 @@ impl UdpWrite for ServerUdpStream {
         loop {
             match self.addr_task {
                 ResolveAddr::Pending(ref mut task) => {
-                    #[cfg(feature = "debug_info")]
-                    debug!(
-                        "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Pending({:?})",
-                        task
-                    );
-
-                    let poll_res = Pin::new(task).poll(cx);
-
-                    #[cfg(feature = "debug_info")]
-                    debug!(
-                        "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Pending(), res: {:?}",
-                        poll_res
-                    );
-
-                    match ready!(poll_res)??.next() {
-                        Some(x) => {
-                            self.addr_task = ResolveAddr::Ready(x);
-                        }
-                        None => {
-                            self.addr_task = ResolveAddr::None;
-                            return Poll::Ready(Ok(0));
-                        }
-                    }
+                    let ip = match task.try_recv() {
+                        Ok(ip) => ip,
+                        Err(TryRecvError::Empty) => return Poll::Pending,
+                        Err(TryRecvError::Closed) => return Poll::Ready(Ok(0)),
+                    };
+                    self.addr_task = ResolveAddr::Ready((ip, addr.port()).into());
                 }
                 ResolveAddr::Ready(s_addr) => {
                     #[cfg(feature = "debug_info")]
@@ -84,12 +67,13 @@ impl UdpWrite for ServerUdpStream {
                     use MixAddrType::*;
                     self.addr_task = match addr {
                         x @ V4(_) | x @ V6(_) => ResolveAddr::Ready(x.clone().to_socket_addrs()),
-                        Hostname((name, port)) => {
+                        Hostname((name, _)) => {
                             let name = name.to_owned();
-                            let port = *port;
-                            ResolveAddr::Pending(spawn_blocking(move || {
-                                std::net::ToSocketAddrs::to_socket_addrs(&(name.as_str(), port))
-                            }))
+                            let (task_tx, task_rx) = oneshot::channel();
+                            tokio::spawn(async move {
+                                DNS_TX.get().unwrap().send((name, task_tx)).await
+                            });
+                            ResolveAddr::Pending(task_rx)
                         }
                         _ => panic!("unprecedented MixAddrType variant"),
                     };
@@ -109,7 +93,7 @@ impl UdpWrite for ServerUdpStream {
 
 #[cfg_attr(feature = "debug_info", derive(Debug))]
 enum ResolveAddr {
-    Pending(JoinHandle<std::io::Result<vec::IntoIter<SocketAddr>>>),
+    Pending(oneshot::Receiver<IpAddr>),
     Ready(SocketAddr),
     None,
 }

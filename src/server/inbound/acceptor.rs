@@ -20,7 +20,8 @@ type ServerConnectionRequest<I> =
 #[cfg(not(feature = "udp"))]
 type ServerConnectionRequest<I> =
     ConnectionRequest<TcpOption<BufferedRecv<I>>, DummyRequest, BufferedRecv<I>>;
-#[derive(Default, Debug)]
+#[derive(Default)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 pub struct TrojanAcceptor<'a> {
     pub host: MixAddrType,
     cursor: usize,
