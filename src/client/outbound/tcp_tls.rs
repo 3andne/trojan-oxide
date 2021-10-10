@@ -37,7 +37,7 @@ impl TrojanTcpTlsConnector {
             is_lite,
         } = self;
         let opt = &*opt;
-        let domain = DNSNameRef::try_from_ascii_str(&opt.proxy_url)
+        let domain = DNSNameRef::try_from_ascii_str(&opt.server_hostname)
             .map_err(|_| anyhow!("invalid dnsname"))?;
         let connector = TlsConnector::from(tls_config);
         let stream = TcpStream::connect(&opt.remote_socket_addr.unwrap()).await?;

@@ -181,7 +181,7 @@ impl EndpointManager {
         let new_conn = timeout(
             Duration::from_secs(2),
             self.outbound
-                .connect(&self.options.remote_socket_addr.unwrap(), &self.options.proxy_url)?,
+                .connect(&self.options.remote_socket_addr.unwrap(), &self.options.server_hostname)?,
         )
         .await
         .map_err(|e| Error::new(e))?

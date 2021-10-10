@@ -45,7 +45,7 @@ where
 
     let opt = &*context.options;
     let connection_cmd = ClientRequestCMD(&conn_req, &outbound).get_cmd();
-    trojan_auth(connection_cmd, &addr, &mut outbound, &opt.password_hash).await?;
+    trojan_auth(connection_cmd, &addr, &mut outbound, &opt.password).await?;
 
     use ConnectionRequest::*;
     match conn_req {

@@ -62,12 +62,12 @@ async fn main() -> Result<()> {
 
     options.remote_socket_addr = Some(
         (
-            if options.proxy_ip.len() > 0 {
-                options.proxy_ip.to_owned()
+            if options.server_ip.len() > 0 {
+                options.server_ip.to_owned()
             } else {
-                options.proxy_url.to_owned()
+                options.server_hostname.to_owned()
             },
-            options.proxy_port,
+            options.server_port,
         )
             .to_socket_addrs()?
             .next()

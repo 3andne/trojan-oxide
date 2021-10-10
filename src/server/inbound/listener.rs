@@ -56,7 +56,7 @@ pub async fn tcp_tls_listener(mut context: TrojanContext) -> Result<()> {
         .await
         .with_context(|| anyhow!("failed to get config"))?;
     let acceptor = TlsAcceptor::from(Arc::new(config));
-    let addr = get_server_local_addr(context.options.proxy_port);
+    let addr = get_server_local_addr(context.options.server_port);
     let mut listener = TcpListener::bind(&addr)
         .await
         .with_context(|| anyhow!("failed to bind tcp port"))?;

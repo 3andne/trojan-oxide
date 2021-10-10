@@ -81,6 +81,6 @@ pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut endpoint = quinn::Endpoint::builder();
     endpoint.listen(server_config.build());
 
-    let server_addr = get_server_local_addr(options.proxy_port);
+    let server_addr = get_server_local_addr(options.server_port);
     Ok(endpoint.bind(&server_addr)?)
 }
