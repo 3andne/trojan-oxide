@@ -1,75 +1,51 @@
-#[cfg(feature = "client")]
-mod client_tcp_stream;
-#[cfg(feature = "client")]
-pub use client_tcp_stream::{ClientTcpRecvStream, ClientTcpStream};
+#[cfg(feature = "udp")]
+mod udp;
+#[cfg(feature = "udp")]
+pub use udp::*;
 
-#[cfg(all(feature = "client", feature = "udp"))]
-mod client_udp_stream;
-#[cfg(all(feature = "client", feature = "udp"))]
-pub use client_udp_stream::{Socks5UdpRecvStream, Socks5UdpSendStream, Socks5UdpStream};
+#[cfg(feature = "lite_tls")]
+pub mod lite_tls;
 
-#[cfg(all(feature = "server", feature = "udp"))]
-mod server_udp_stream;
-#[cfg(all(feature = "server", feature = "udp"))]
-pub use server_udp_stream::{ServerUdpRecvStream, ServerUdpSendStream, ServerUdpStream};
+// mod copy_tcp;
+// pub use copy_tcp::copy_to_tls;
 
-#[cfg(feature = "udp")]
-mod trojan_udp_stream;
-#[cfg(feature = "udp")]
-pub use trojan_udp_stream::{new_trojan_udp_stream, TrojanUdpRecvStream, TrojanUdpSendStream};
-
-#[cfg(feature = "udp")]
-mod udp_relay_buffer;
-#[cfg(feature = "udp")]
-pub use udp_relay_buffer::UdpRelayBuffer;
-
-#[cfg(feature = "udp")]
-mod udp_traits;
-#[cfg(feature = "udp")]
-pub use udp_traits::{UdpRead, UdpWrite};
-#[cfg(feature = "udp")]
-mod copy_udp;
-#[cfg(feature = "udp")]
-pub use copy_udp::copy_udp;
-
-mod copy_tcp;
-pub use copy_tcp::copy_tcp;
-#[cfg(feature = "client")]
-mod data_transfer;
 mod macros;
 mod mix_addr;
+pub use mix_addr::*;
 
-#[cfg(feature = "server")]
+mod adapter;
+mod either_io;
+pub use adapter::*;
+
 mod timedout_duplex_io;
+pub use timedout_duplex_io::*;
 
-use bytes::BufMut;
+mod buffers;
+pub use buffers::*;
 
-#[cfg(feature = "client")]
-pub use data_transfer::relay_tcp;
-#[cfg(all(feature = "udp", feature = "client"))]
-pub use data_transfer::relay_udp;
-pub use mix_addr::MixAddrType;
+mod forked_copy;
+pub use forked_copy::*;
 
-pub use timedout_duplex_io::{TimedoutIO, TimeoutMonitor};
+mod buffered_recv;
+pub use buffered_recv::BufferedRecv;
 
-use std::pin::Pin;
-use std::task::Poll;
-use tokio::io::{AsyncRead, ReadBuf};
-#[cfg(feature = "client")]
-use tokio::net::TcpStream;
+mod wr_tuple;
+pub use wr_tuple::WRTuple;
 
-#[cfg(all(feature = "client", feature = "tcp_tls"))]
-use tokio_rustls::client::TlsStream;
+mod dns_utils;
+pub use dns_utils::*;
 
-#[cfg(all(feature = "quic", feature = "client"))]
-use quinn::*;
+#[cfg(all(target_os = "linux", feature = "zio"))]
+mod glommio_utils;
+#[cfg(all(target_os = "linux", feature = "zio"))]
+pub use glommio_utils::*;
 
 #[derive(Debug, err_derive::Error)]
 pub enum ParserError {
     #[error(display = "ParserError Incomplete: {:?}", _0)]
-    Incomplete(&'static str),
+    Incomplete(String),
     #[error(display = "ParserError Invalid: {:?}", _0)]
-    Invalid(&'static str),
+    Invalid(String),
 }
 
 pub fn transmute_u16s_to_u8s(a: &[u16], b: &mut [u8]) {
@@ -83,130 +59,14 @@ pub fn transmute_u16s_to_u8s(a: &[u16], b: &mut [u8]) {
     }
 }
 
-#[macro_export]
-macro_rules! expect_buf_len {
-    ($buf:expr, $len:expr) => {
-        if $buf.len() < $len {
-            return Err(ParserError::Incomplete(stringify!($len)));
-        }
-    };
-    ($buf:expr, $len:expr, $mark:expr) => {
-        if $buf.len() < $len {
-            // debug!("expect_buf_len {}", $mark);
-            return Err(ParserError::Incomplete($mark));
-        }
-    };
-}
-
-pub trait CursoredBuffer {
-    fn chunk(&self) -> &[u8];
-    fn advance(&mut self, len: usize);
-    fn remaining(&self) -> usize {
-        self.chunk().len()
-    }
-}
-
-impl<'a> CursoredBuffer for (&'a mut usize, &Vec<u8>) {
-    fn chunk(&self) -> &[u8] {
-        &self.1[*self.0..]
-    }
-
-    fn advance(&mut self, len: usize) {
-        assert!(
-            self.1.len() >= *self.0 + len,
-            "(&'a mut usize, &Vec<u8>) was about to set a larger position than it's length"
-        );
-        *self.0 += len;
-    }
-}
-
-pub trait VecAsReadBufExt<'a> {
-    fn as_read_buf(&'a mut self, start: usize) -> ReadBuf<'a>;
-}
-
-impl<'a> VecAsReadBufExt<'a> for Vec<u8> {
-    fn as_read_buf(&'a mut self, start: usize) -> ReadBuf<'a> {
-        assert!(start <= self.remaining_mut());
-        let dst = &mut self.chunk_mut()[start..];
-        let dst = unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>]) };
-        ReadBuf::uninit(dst)
-    }
-}
-
-pub trait ExtendableFromSlice {
-    fn extend_from_slice(&mut self, src: &[u8]);
-}
-
-impl ExtendableFromSlice for Vec<u8> {
-    fn extend_from_slice(&mut self, src: &[u8]) {
-        self.extend_from_slice(src);
-    }
-}
-
-#[cfg(feature = "udp")]
-pub enum ConnectionRequest<TcpRequest, UdpRequest> {
+pub enum ConnectionRequest<TcpRequest, UdpRequest, EchoRequest> {
     TCP(TcpRequest),
+    #[cfg(feature = "udp")]
     UDP(UdpRequest),
     #[cfg(feature = "quic")]
-    ECHO(TcpRequest),
+    ECHO(EchoRequest),
+    _PHANTOM((TcpRequest, UdpRequest, EchoRequest)),
 }
 
 #[cfg(not(feature = "udp"))]
-pub enum ConnectionRequest<TcpRequest> {
-    TCP(TcpRequest),
-    #[cfg(feature = "quic")]
-    ECHO(TcpRequest),
-}
-
-#[derive(Debug)]
-pub struct BufferedRecv<T> {
-    buffered_request: Option<(usize, Vec<u8>)>,
-    inner: T,
-}
-
-impl<T> BufferedRecv<T> {
-    pub fn new(inner: T, buffered_request: Option<(usize, Vec<u8>)>) -> Self {
-        Self {
-            inner,
-            buffered_request,
-        }
-    }
-}
-
-impl<T> AsyncRead for BufferedRecv<T>
-where
-    T: AsyncRead + Unpin,
-{
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        if self.buffered_request.is_some() {
-            let (index, buffered_request) = self.buffered_request.as_ref().unwrap();
-            buf.put_slice(&buffered_request[*index..]);
-            self.buffered_request = None;
-            cx.waker().wake_by_ref(); // super important
-            return Poll::Ready(Ok(()));
-        }
-
-        let reader = Pin::new(&mut self.inner);
-        reader.poll_read(cx, buf)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ConnectionMode {
-    #[cfg(feature = "tcp_tls")]
-    TcpTLS,
-    #[cfg(feature = "quic")]
-    Quic,
-}
-
-#[cfg(feature = "client")]
-pub enum ClientServerConnection {
-    #[cfg(feature = "quic")]
-    Quic((SendStream, RecvStream)),
-    #[cfg(feature = "tcp_tls")]
-    TcpTLS(TlsStream<TcpStream>),
-}
+pub struct DummyRequest {}

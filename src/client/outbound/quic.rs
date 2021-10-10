@@ -1,22 +1,27 @@
-use crate::args::{Opt, TrojanContext};
+use super::forward;
+use crate::{
+    args::{Opt, TrojanContext},
+    client::utils::{ClientConnectionRequest, ClientServerConnection},
+    protocol::*,
+    utils::MixAddrType,
+};
 use anyhow::*;
-use lazy_static::lazy_static;
 use quinn::*;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use std::time::Duration;
-use std::{net::SocketAddr, sync::atomic::Ordering::SeqCst};
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::sleep;
-use tokio::time::timeout;
-use tokio::{fs, io};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::{
+    fs, io, select,
+    sync::{broadcast, mpsc, oneshot},
+    time::{sleep, timeout},
+};
 use tracing::*;
 
-use crate::protocol::*;
-
-lazy_static! {
-    static ref IS_CONNECTION_OPENED: AtomicBool = AtomicBool::new(false);
-}
+pub static IS_CONNECTION_OPENED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default)]
 struct QuicConnectionWrapper {
@@ -44,7 +49,7 @@ impl QuicConnectionWrapper {
     }
 }
 
-async fn new_echo_task(echo_stream: (SendStream, RecvStream), mut echo_rx: mpsc::Receiver<()>) {
+pub async fn send_echo(echo_stream: (SendStream, RecvStream), mut echo_rx: mpsc::Receiver<()>) {
     let (mut write, mut read) = echo_stream;
 
     let mut buf = [0u8; ECHO_PHRASE.len()];
@@ -90,31 +95,32 @@ async fn new_echo_task(echo_stream: (SendStream, RecvStream), mut echo_rx: mpsc:
 }
 
 pub struct EndpointManager {
-    inner: Endpoint,
+    outbound: Endpoint,
     connection: QuicConnectionWrapper,
-    remote: SocketAddr,
-    remote_url: String,
-    password: Arc<String>,
+    // remote: SocketAddr,
+    // remote_url: String,
+    // password: Arc<String>,
+    options: Arc<Opt>,
     echo_tx: Option<mpsc::Sender<()>>,
+    shudown_tx: broadcast::Sender<()>,
 }
 
 impl EndpointManager {
-    pub async fn new(context: &TrojanContext) -> Result<Self> {
-        let (inner, _) = new_builder(&context.options)
+    pub async fn new(options: Arc<Opt>) -> Result<Self> {
+        let (outbound, _) = new_builder(&options)
             .await?
             .bind(&"[::]:0".parse().unwrap())?;
-        let remote = context.remote_socket_addr;
-        let remote_url = context.options.proxy_url.clone();
+        // let remote = options.remote_socket_addr;
+        // let remote_url = options.proxy_url.clone();
 
-        let password = context.options.password_hash.clone();
-
+        // let password = options.password_hash.clone();
+        let (shudown_tx, _) = broadcast::channel(1);
         let mut _self = Self {
-            inner,
+            outbound,
             connection: QuicConnectionWrapper::default(),
-            remote,
-            remote_url,
-            password,
+            options,
             echo_tx: None,
+            shudown_tx,
         };
 
         _self.new_connection().await?;
@@ -124,33 +130,35 @@ impl EndpointManager {
 
     fn echo_task_status(&self) -> bool {
         match self.echo_tx {
-            Some(ref tx) => {
-                if tx.is_closed() {
-                    false
-                } else {
-                    true
-                }
-            }
+            Some(ref tx) => !tx.is_closed(),
             None => false,
         }
     }
 
     async fn echo(&mut self) -> Result<bool> {
         if !self.echo_task_status() {
-            let mut echo_stream = match self.connection.open_bi() {
-                Some(bi) => bi,
-                None => return Ok(false),
-            }
-            .await?;
-            let buf = [
-                self.password.as_bytes(),
-                &[b'\r', b'\n', 0xff, b'\r', b'\n'],
-            ]
-            .concat();
-            echo_stream.0.write_all(&buf).await?;
+            let open_bi = match self.connection.open_bi() {
+                None => return Err(anyhow!("failed to open bi conn")),
+                Some(open_bi) => open_bi,
+            };
+            let connecting: _ =
+                async move { Ok::<_, Error>(ClientServerConnection::Quic(open_bi.await?)) };
+
             let (echo_tx, echo_rx) = mpsc::channel::<()>(1);
+            let incomming: _ = async {
+                Ok((
+                    ClientConnectionRequest::ECHO(echo_rx),
+                    MixAddrType::new_null(),
+                ))
+            };
+
             self.echo_tx = Some(echo_tx);
-            tokio::spawn(new_echo_task(echo_stream, echo_rx));
+            let context = TrojanContext {
+                options: self.options.clone(),
+                shutdown: self.shudown_tx.subscribe(),
+            };
+
+            tokio::spawn(forward(context, incomming, connecting));
         }
 
         let _ = self.echo_tx.as_mut().unwrap().try_send(());
@@ -172,7 +180,8 @@ impl EndpointManager {
     async fn new_connection(&mut self) -> Result<()> {
         let new_conn = timeout(
             Duration::from_secs(2),
-            self.inner.connect(&self.remote, &self.remote_url)?,
+            self.outbound
+                .connect(&self.options.remote_socket_addr.unwrap(), &self.options.server_hostname)?,
         )
         .await
         .map_err(|e| Error::new(e))?
@@ -201,7 +210,7 @@ async fn new_builder(options: &Opt) -> Result<EndpointBuilder> {
         rustls_native_certs::load_native_certs().expect("could not load platform certs");
 
     let transport_cfg = Arc::get_mut(&mut cfg.transport).unwrap();
-    transport_cfg.max_idle_timeout(Some(MAX_IDLE_TIMEOUT))?;
+    transport_cfg.max_idle_timeout(Some(QUIC_MAX_IDLE_TIMEOUT))?;
     transport_cfg.persistent_congestion_threshold(6);
     transport_cfg.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS as u64)?;
     transport_cfg.packet_threshold(4);
@@ -234,30 +243,34 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
     Ok(())
 }
 
-macro_rules! break_none {
-    ($options:expr) => {
-        match $options {
-            None => {
-                break;
-            }
-            Some(x) => x,
-        }
-    };
-}
-
 pub async fn quic_connection_daemon(
     context: TrojanContext,
     mut task_rx: mpsc::Receiver<oneshot::Sender<Result<(SendStream, RecvStream)>>>,
 ) -> Result<()> {
     debug!("quic_connection_daemon enter");
-    let mut endpoint = EndpointManager::new(&context)
+    let TrojanContext {
+        mut shutdown,
+        options,
+    } = context;
+    let mut endpoint = EndpointManager::new(options)
         .await
         .expect("EndpointManager::new");
 
     loop {
-        let _ = break_none!(task_rx.recv().await).send(endpoint.connect().await);
+        select! {
+            maybe_ret_tx = task_rx.recv() => {
+                match maybe_ret_tx {
+                    None => break,
+                    Some(ret_tx) => {
+                        let _ =ret_tx.send(endpoint.connect().await);
+                    },
+                }
+            }
+            _ = shutdown.recv() => {
+                break;
+            }
+        }
     }
     debug!("quic_connection_daemon leave");
-
     Ok(())
 }

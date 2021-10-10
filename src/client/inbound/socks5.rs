@@ -1,11 +1,12 @@
 use crate::{
+    client::utils::{new_client_tcp_stream, ClientConnectionRequest},
     expect_buf_len,
-    utils::ConnectionRequest,
-    utils::{ClientTcpStream, MixAddrType, ParserError},
+    utils::{ConnectionRequest, MixAddrType, ParserError},
 };
 
 #[cfg(feature = "udp")]
-use crate::utils::Socks5UdpStream;
+use crate::client::utils::Socks5UdpStream;
+use futures::Future;
 #[cfg(feature = "udp")]
 use std::net::SocketAddr;
 #[cfg(feature = "udp")]
@@ -13,12 +14,13 @@ use tokio::net::UdpSocket;
 #[cfg(feature = "udp")]
 use tokio::sync::oneshot;
 
-use super::ClientConnectionRequest;
 use anyhow::{Error, Result};
 use tokio::io::*;
 use tokio::net::TcpStream;
 #[cfg(feature = "debug_info")]
 use tracing::*;
+
+use super::{listener::RequestFromClient, ClientRequestAcceptResult};
 
 const SOCKS_VERSION_INDEX: usize = 0;
 const NUM_SUPPORTED_AUTH_METHOD_INDEX: usize = 1;
@@ -32,6 +34,7 @@ pub struct Socks5Request {
     phase: Sock5ParsePhase,
     is_udp: bool,
     addr: MixAddrType,
+    inbound: Option<TcpStream>,
 }
 
 enum Sock5ParsePhase {
@@ -40,20 +43,9 @@ enum Sock5ParsePhase {
 }
 
 impl Socks5Request {
-    pub fn new() -> Self {
-        Self {
-            phase: Sock5ParsePhase::P1ClientHello,
-            is_udp: false,
-            addr: MixAddrType::None,
-        }
-    }
-
-    pub fn addr(self) -> MixAddrType {
-        self.addr
-    }
-
-    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ClientConnectionRequest> {
+    async fn impl_accept(&mut self) -> Result<ClientConnectionRequest> {
         let mut buffer = Vec::with_capacity(200);
+        let mut inbound = self.inbound.take().unwrap();
         loop {
             let read = inbound.read_buf(&mut buffer).await?;
             if read != 0 {
@@ -85,7 +77,7 @@ impl Socks5Request {
                 }
             } else {
                 return Err(Error::new(ParserError::Invalid(
-                    "Socks5Request::accept unable to accept before EOF",
+                    "Socks5Request::accept unable to accept before EOF".into(),
                 )));
             }
         }
@@ -97,10 +89,7 @@ impl Socks5Request {
             false => {
                 MixAddrType::init_from(&inbound.local_addr()?).write_buf(&mut buf);
                 inbound.write_all(&buf).await?;
-                Ok(ConnectionRequest::TCP(ClientTcpStream {
-                    inner: inbound,
-                    http_request_extension: None,
-                }))
+                Ok(ConnectionRequest::TCP(new_client_tcp_stream(inbound, None)))
             }
             #[cfg(feature = "udp")]
             true => {
@@ -133,7 +122,7 @@ impl Socks5Request {
                 expect_buf_len!(buf, 2, "Sock5ParsePhase::parse phase 1 incomplete[1]");
                 if buf[SOCKS_VERSION_INDEX] != 5 {
                     return Err(ParserError::Invalid(
-                        "Socks5Request::parse only support socks v5",
+                        "Socks5Request::parse only support socks v5".into(),
                     ));
                 }
                 let num = buf[NUM_SUPPORTED_AUTH_METHOD_INDEX];
@@ -150,13 +139,15 @@ impl Socks5Request {
                         return Ok(());
                     }
                 }
-                return Err(ParserError::Invalid("Socks5Request::parse method invalid"));
+                return Err(ParserError::Invalid(
+                    "Socks5Request::parse method invalid".into(),
+                ));
             }
             P2ClientRequest => {
                 expect_buf_len!(buf, 5, "Sock5ParsePhase::parse phase 2 incomplete[1]");
                 if buf[SOCKS_VERSION_INDEX] != 5 {
                     return Err(ParserError::Invalid(
-                        "Socks5Request::parse only support socks v5",
+                        "Socks5Request::parse only support socks v5".into(),
                     ));
                 }
 
@@ -169,7 +160,7 @@ impl Socks5Request {
                     }
                     _ => {
                         return Err(ParserError::Invalid(
-                            "Socks5Request::parse invalid connection type",
+                            "Socks5Request::parse invalid connection type".into(),
                         ));
                     }
                 }
@@ -179,5 +170,22 @@ impl Socks5Request {
                 return Ok(());
             }
         }
+    }
+}
+
+impl RequestFromClient for Socks5Request {
+    type Accepting<'a> = impl Future<Output = ClientRequestAcceptResult> + Send;
+
+    fn new(inbound: TcpStream) -> Self {
+        Self {
+            phase: Sock5ParsePhase::P1ClientHello,
+            is_udp: false,
+            addr: MixAddrType::None,
+            inbound: Some(inbound),
+        }
+    }
+
+    fn accept<'a>(mut self) -> Self::Accepting<'a> {
+        async { Ok::<_, Error>((self.impl_accept().await?, self.addr)) }
     }
 }

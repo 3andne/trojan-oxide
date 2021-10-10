@@ -1,4 +1,7 @@
-use super::{CursoredBuffer, ExtendableFromSlice, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite};
+use crate::{
+    protocol::UDP_BUFFER_SIZE,
+    utils::{CursoredBuffer, ExtendableFromSlice, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite},
+};
 use futures::ready;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -6,12 +9,11 @@ use std::{
     net::SocketAddr,
     ops::{Deref, DerefMut},
 };
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 use tracing::{debug, warn};
 
-#[derive(Debug)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 struct Socks5UdpSpecifiedBuffer {
     inner: Vec<u8>,
 }
@@ -65,48 +67,7 @@ pub struct Socks5UdpStream {
     server_udp_socket: UdpSocket,
     client_udp_addr: Option<SocketAddr>,
     signal_reset: oneshot::Receiver<()>,
-}
-
-#[derive(Debug)]
-pub struct Socks5UdpRecvStream<'a> {
-    server_udp_socket: &'a UdpSocket,
-    client_udp_addr: Option<SocketAddr>,
-    addr_tx: Option<oneshot::Sender<SocketAddr>>,
-    signal_reset: &'a mut oneshot::Receiver<()>,
-}
-
-impl<'a> Socks5UdpRecvStream<'a> {
-    fn new(
-        server_udp_socket: &'a UdpSocket,
-        addr_tx: oneshot::Sender<SocketAddr>,
-        signal_reset: &'a mut oneshot::Receiver<()>,
-    ) -> Self {
-        Self {
-            server_udp_socket,
-            client_udp_addr: None,
-            addr_tx: Some(addr_tx),
-            signal_reset,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Socks5UdpSendStream<'a> {
-    server_udp_socket: &'a UdpSocket,
-    client_udp_addr: Option<SocketAddr>,
-    addr_rx: Option<oneshot::Receiver<SocketAddr>>,
     buffer: Socks5UdpSpecifiedBuffer,
-}
-
-impl<'a> Socks5UdpSendStream<'a> {
-    fn new(server_udp_socket: &'a UdpSocket, addr_tx: oneshot::Receiver<SocketAddr>) -> Self {
-        Self {
-            server_udp_socket,
-            client_udp_addr: None,
-            addr_rx: Some(addr_tx),
-            buffer: Socks5UdpSpecifiedBuffer::new(2048),
-        }
-    }
 }
 
 impl Socks5UdpStream {
@@ -118,19 +79,12 @@ impl Socks5UdpStream {
             server_udp_socket,
             client_udp_addr: None,
             signal_reset: stream_reset_signal_rx,
+            buffer: Socks5UdpSpecifiedBuffer::new(UDP_BUFFER_SIZE),
         }
-    }
-
-    pub fn split<'a>(&'a mut self) -> (Socks5UdpSendStream<'a>, Socks5UdpRecvStream<'a>) {
-        let (addr_tx, addr_rx) = oneshot::channel();
-        (
-            Socks5UdpSendStream::new(&self.server_udp_socket, addr_rx),
-            Socks5UdpRecvStream::new(&self.server_udp_socket, addr_tx, &mut self.signal_reset),
-        )
     }
 }
 
-impl<'a> AsyncRead for Socks5UdpRecvStream<'a> {
+impl Socks5UdpStream {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -145,20 +99,6 @@ impl<'a> AsyncRead for Socks5UdpRecvStream<'a> {
 
         if self.client_udp_addr.is_none() {
             self.client_udp_addr = Some(addr.clone());
-            let addr_tx = match self.addr_tx.take() {
-                Some(v) => v,
-                None => {
-                    return Poll::Ready(Err(std::io::ErrorKind::Other.into()));
-                }
-            };
-            match addr_tx.send(addr) {
-                Ok(_) => {
-                    return Poll::Ready(Ok(()));
-                }
-                Err(_) => {
-                    return Poll::Ready(Err(std::io::ErrorKind::Other.into()));
-                }
-            }
         } else {
             if self.client_udp_addr.unwrap() != addr {
                 return Poll::Ready(Err(std::io::ErrorKind::Interrupted.into()));
@@ -166,65 +106,21 @@ impl<'a> AsyncRead for Socks5UdpRecvStream<'a> {
         }
         Poll::Ready(Ok(()))
     }
-}
 
-impl<'a> Socks5UdpSendStream<'a> {
-    fn poll_write_optioned(
+    fn poll_write(
         self: &mut std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-        buf: Option<&[u8]>,
     ) -> Poll<Result<usize, std::io::Error>> {
         if self.client_udp_addr.is_none() {
-            let maybe_addr = match self.addr_rx {
-                Some(ref mut rx) => rx.try_recv(),
-                None => {
-                    return Poll::Ready(Err(std::io::ErrorKind::Other.into()));
-                }
-            };
-
-            self.client_udp_addr = match maybe_addr {
-                Ok(addr) => Some(addr),
-                Err(_) => {
-                    return Poll::Ready(Err(std::io::ErrorKind::WouldBlock.into()));
-                }
-            }
+            return Poll::Ready(Err(std::io::ErrorKind::Other.into()));
         }
 
-        let buf = match buf {
-            Some(b) => b,
-            None => &self.buffer,
-        };
-
         self.server_udp_socket
-            .poll_send_to(cx, buf, self.client_udp_addr.unwrap())
+            .poll_send_to(cx, &self.buffer, self.client_udp_addr.unwrap())
     }
 }
 
-impl<'a> AsyncWrite for Socks5UdpSendStream<'a> {
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, std::io::Error>> {
-        (&mut self).poll_write_optioned(cx, Some(buf))
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        _: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        _: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        Poll::Ready(Ok(()))
-    }
-}
-
-impl<'a> UdpRead for Socks5UdpRecvStream<'a> {
+impl UdpRead for Socks5UdpStream {
     /// ```not_rust
     /// +----+------+------+----------+----------+----------+
     /// |RSV | FRAG | ATYP | DST.ADDR | DST.PORT |   DATA   |
@@ -273,6 +169,7 @@ impl<'a> UdpRead for Socks5UdpRecvStream<'a> {
                     buf.advance_mut(n);
                 }
                 buf.advance(3);
+                #[cfg(feature = "debug_info")]
                 debug!(
                     "Socks5UdpRecvStream::poll_proxy_stream_read() buf {:?}",
                     buf
@@ -286,7 +183,7 @@ impl<'a> UdpRead for Socks5UdpRecvStream<'a> {
     }
 }
 
-impl<'a> UdpWrite for Socks5UdpSendStream<'a> {
+impl UdpWrite for Socks5UdpStream {
     fn poll_proxy_stream_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -303,7 +200,7 @@ impl<'a> UdpWrite for Socks5UdpSendStream<'a> {
 
         // only if we write the whole buf in one write we reset the buffer
         // to accept new data.
-        match self.poll_write_optioned(cx, None)? {
+        match self.poll_write(cx)? {
             Poll::Ready(real_written_amt) => {
                 if real_written_amt == self.buffer.len() {
                     self.buffer.reset();
@@ -321,7 +218,11 @@ impl<'a> UdpWrite for Socks5UdpSendStream<'a> {
         }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        AsyncWrite::poll_flush(self, cx)
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }

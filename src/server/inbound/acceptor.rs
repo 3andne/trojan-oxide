@@ -1,47 +1,42 @@
-use super::SplitableToAsyncReadWrite;
+#[cfg(not(feature = "udp"))]
+use crate::utils::DummyRequest;
+#[cfg(feature = "udp")]
+use crate::utils::TrojanUdpStream;
 use crate::{
     expect_buf_len,
-    protocol::HASH_LEN,
-    server::outbound::fallback,
+    protocol::{
+        ECHO_REQUEST_CMD, HASH_LEN, LITE_TLS_REQUEST_CMD, TCP_REQUEST_CMD, UDP_REQUEST_CMD,
+    },
+    server::{outbound::fallback, utils::TcpOption},
     utils::{BufferedRecv, ConnectionRequest, MixAddrType, ParserError},
 };
 use anyhow::Result;
 use futures::TryFutureExt;
-use std::{fmt::Debug, sync::Arc};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tracing::*;
 #[cfg(feature = "udp")]
-use {super::TrojanUdpStream, crate::utils::new_trojan_udp_stream};
-
-#[cfg(feature = "udp")]
-type ServerConnectionRequest<I> = ConnectionRequest<
-    (
-        <I as SplitableToAsyncReadWrite>::W,
-        BufferedRecv<<I as SplitableToAsyncReadWrite>::R>,
-    ),
-    TrojanUdpStream<<I as SplitableToAsyncReadWrite>::W, <I as SplitableToAsyncReadWrite>::R>,
->;
+type ServerConnectionRequest<I> =
+    ConnectionRequest<TcpOption<BufferedRecv<I>>, TrojanUdpStream<I>, BufferedRecv<I>>;
 #[cfg(not(feature = "udp"))]
-type ServerConnectionRequest<I> = ConnectionRequest<(
-    <I as SplitableToAsyncReadWrite>::W,
-    BufferedRecv<<I as SplitableToAsyncReadWrite>::R>,
-)>;
-#[derive(Default, Debug)]
+type ServerConnectionRequest<I> =
+    ConnectionRequest<TcpOption<BufferedRecv<I>>, DummyRequest, BufferedRecv<I>>;
+#[derive(Default)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 pub struct TrojanAcceptor<'a> {
     pub host: MixAddrType,
     cursor: usize,
     password_hash: &'a [u8],
     buf: Vec<u8>,
     cmd_code: u8,
-    fallback_port: Arc<String>,
+    fallback_port: u16,
 }
 
 impl<'a> TrojanAcceptor<'a> {
-    pub fn new(password_hash: &[u8], fallback_port: Arc<String>) -> TrojanAcceptor {
+    pub fn new(password_hash: &[u8], fallback_port: u16) -> TrojanAcceptor {
         TrojanAcceptor {
             password_hash,
             fallback_port,
-            buf: Vec::with_capacity(128),
+            buf: Vec::with_capacity(1024),
             ..Default::default()
         }
     }
@@ -49,7 +44,7 @@ impl<'a> TrojanAcceptor<'a> {
     fn verify(&mut self) -> Result<(), ParserError> {
         if self.buf.len() < HASH_LEN {
             return Err(ParserError::Incomplete(
-                "Target::verify self.buf.len() < HASH_LEN",
+                "Target::verify self.buf.len() < HASH_LEN".into(),
             ));
         }
 
@@ -57,7 +52,7 @@ impl<'a> TrojanAcceptor<'a> {
             self.cursor = HASH_LEN + 2;
             Ok(())
         } else {
-            Err(ParserError::Invalid("Target::verify hash invalid"))
+            Err(ParserError::Invalid("Target::verify hash invalid".into()))
         }
     }
 
@@ -68,20 +63,18 @@ impl<'a> TrojanAcceptor<'a> {
             "TrojanAcceptor::set_host_and_port cmd"
         ); // HASH + \r\n + cmd(2 bytes) + host_len(1 byte, only valid when address is hostname)
 
-        unsafe {
-            // This is so buggy
-            self.cursor = HASH_LEN + 3;
-        }
+        // unsafe: This is so buggy
+        self.cursor = HASH_LEN + 3;
 
         self.cmd_code = self.buf[HASH_LEN + 2];
         match self.cmd_code {
-            0x01 | 0x03 => {
+            TCP_REQUEST_CMD | UDP_REQUEST_CMD | LITE_TLS_REQUEST_CMD => {
                 self.host = MixAddrType::from_encoded(&mut (&mut self.cursor, &self.buf))?;
             }
-            0xff => (),
+            ECHO_REQUEST_CMD => (),
             _ => {
                 return Err(ParserError::Invalid(
-                    "Target::verify invalid connection type",
+                    "Target::verify invalid connection type".into(),
                 ))
             }
         };
@@ -116,16 +109,19 @@ impl<'a> TrojanAcceptor<'a> {
     /// o  DST.ADDR desired destination address
     /// o  DST.PORT desired destination port in network octet order
     /// ```
-    pub async fn accept<I: SplitableToAsyncReadWrite + Debug + Unpin>(
+    pub async fn accept<I>(
         &mut self,
-        inbound: I,
-    ) -> Result<ServerConnectionRequest<I>, ParserError> {
-        let (mut read_half, write_half) = inbound.split();
+        mut inbound: I,
+    ) -> Result<ServerConnectionRequest<I>, ParserError>
+    where
+        I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        // let (mut read_half, write_half) = inbound.split();
         loop {
-            let read = read_half
+            let read = inbound
                 .read_buf(&mut self.buf)
                 .await
-                .map_err(|_| ParserError::Invalid("Target::accept failed to read"))?;
+                .map_err(|_| ParserError::Invalid("Target::accept failed to read".into()))?;
             if read != 0 {
                 match self.parse() {
                     Err(err @ ParserError::Invalid(_)) => {
@@ -133,10 +129,9 @@ impl<'a> TrojanAcceptor<'a> {
                         let mut buf = Vec::new();
                         std::mem::swap(&mut buf, &mut self.buf);
                         tokio::spawn(
-                            fallback(buf, self.fallback_port.clone(), read_half, write_half)
-                                .unwrap_or_else(|e| {
-                                    error!("connection to fallback failed {:#}", e)
-                                }),
+                            fallback(buf, self.fallback_port, inbound).unwrap_or_else(|e| {
+                                error!("connection to fallback failed {:#}", e)
+                            }),
                         );
                         return Err(err);
                     }
@@ -150,7 +145,7 @@ impl<'a> TrojanAcceptor<'a> {
                     }
                 }
             } else {
-                return Err(ParserError::Incomplete("Target::accept EOF"));
+                return Err(ParserError::Incomplete("Target::accept EOF".into()));
             }
         }
         use ConnectionRequest::*;
@@ -160,18 +155,20 @@ impl<'a> TrojanAcceptor<'a> {
             Some((self.cursor, std::mem::take(&mut self.buf)))
         };
 
-        Ok(match self.cmd_code {
+        use TcpOption::*;
+        match self.cmd_code {
             #[cfg(feature = "udp")]
-            0x03 => UDP(new_trojan_udp_stream(
-                write_half,
-                read_half,
-                buffered_request,
+            UDP_REQUEST_CMD => Ok(UDP(TrojanUdpStream::new(inbound, buffered_request))),
+            #[cfg(not(feature = "udp"))]
+            UDP_REQUEST_CMD => Err(ParserError::Invalid(
+                "udp functionality not included".into(),
             )),
-            0x01 => TCP((write_half, BufferedRecv::new(read_half, buffered_request))),
+            TCP_REQUEST_CMD => Ok(TCP(TLS(BufferedRecv::new(inbound, buffered_request)))),
+            LITE_TLS_REQUEST_CMD => Ok(TCP(LiteTLS(BufferedRecv::new(inbound, buffered_request)))),
             #[cfg(feature = "quic")]
-            0xff => ECHO((write_half, BufferedRecv::new(read_half, buffered_request))),
+            ECHO_REQUEST_CMD => Ok(ECHO(BufferedRecv::new(inbound, buffered_request))),
             _ => unreachable!(),
-        })
+        }
     }
 
     pub fn parse(&mut self) -> Result<(), ParserError> {
@@ -201,7 +198,7 @@ impl<'a> TrojanAcceptor<'a> {
             self.cursor += 2;
             Ok(())
         } else {
-            Err(ParserError::Invalid("Target::accept expecting CRLF"))
+            Err(ParserError::Invalid("Target::accept expecting CRLF".into()))
         }
     }
 }

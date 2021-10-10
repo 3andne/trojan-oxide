@@ -1,9 +1,11 @@
 use crate::{
+    client::utils::new_client_tcp_stream,
     utils::ConnectionRequest,
-    utils::{ClientTcpStream, MixAddrType, ParserError},
+    utils::{MixAddrType, ParserError},
 };
 
 use anyhow::{Error, Result};
+use futures::Future;
 // use futures::future;
 // use std::io::IoSlice;
 // use std::pin::Pin;
@@ -11,33 +13,26 @@ use tokio::io::*;
 use tokio::net::TcpStream;
 use tracing::*;
 
-use super::ClientConnectionRequest;
+use crate::client::utils::ClientConnectionRequest;
+
+use super::{listener::RequestFromClient, ClientRequestAcceptResult};
 
 pub struct HttpRequest {
     is_https: bool,
     addr: MixAddrType,
     cursor: usize,
+    inbound: Option<TcpStream>,
 }
 
 const HEADER0: &'static [u8] = b"GET / HTTP/1.1\r\nHost: ";
 const HEADER1: &'static [u8] = b"\r\nConnection: keep-alive\r\n\r\n";
 
 impl HttpRequest {
-    pub fn new() -> Self {
-        Self {
-            is_https: false,
-            addr: MixAddrType::None,
-            cursor: 0,
-        }
-    }
-
-    pub fn addr(self) -> MixAddrType {
-        self.addr
-    }
-
     fn set_stream_type(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
         if buf.len() < 4 {
-            return Err(ParserError::Incomplete("HttpRequest::set_stream_type"));
+            return Err(ParserError::Incomplete(
+                "HttpRequest::set_stream_type".into(),
+            ));
         }
 
         if &buf[..4] == b"GET " {
@@ -47,7 +42,9 @@ impl HttpRequest {
         }
 
         if buf.len() < 8 {
-            return Err(ParserError::Incomplete("HttpRequest::set_stream_type"));
+            return Err(ParserError::Incomplete(
+                "HttpRequest::set_stream_type".into(),
+            ));
         }
 
         if &buf[..8] == b"CONNECT " {
@@ -56,7 +53,7 @@ impl HttpRequest {
             return Ok(());
         }
 
-        return Err(ParserError::Invalid("HttpRequest::set_stream_type"));
+        return Err(ParserError::Invalid("HttpRequest::set_stream_type".into()));
     }
 
     fn set_host(&mut self, buf: &Vec<u8>) -> Result<(), ParserError> {
@@ -71,7 +68,7 @@ impl HttpRequest {
                     self.cursor += 7;
                 }
             } else {
-                return Err(ParserError::Incomplete("HttpRequest::set_host"));
+                return Err(ParserError::Incomplete("HttpRequest::set_host".into()));
             }
         }
 
@@ -82,7 +79,7 @@ impl HttpRequest {
         }
 
         if end == buf.len() {
-            return Err(ParserError::Incomplete("HttpRequest::set_host"));
+            return Err(ParserError::Incomplete("HttpRequest::set_host".into()));
         }
 
         self.addr = MixAddrType::from_http_header(self.is_https, &buf[start..end])?;
@@ -127,11 +124,12 @@ impl HttpRequest {
         unsafe {
             buf.set_len(4);
         }
-        Err(ParserError::Incomplete("HttpRequest::parse"))
+        Err(ParserError::Incomplete("HttpRequest::parse".into()))
     }
 
-    pub async fn accept(&mut self, mut inbound: TcpStream) -> Result<ClientConnectionRequest> {
+    async fn impl_accept(&mut self) -> Result<ClientConnectionRequest> {
         let mut buffer = Vec::with_capacity(200);
+        let mut inbound = self.inbound.take().unwrap();
         loop {
             let read = inbound.read_buf(&mut buffer).await?;
             if read != 0 {
@@ -148,7 +146,7 @@ impl HttpRequest {
                 }
             } else {
                 return Err(Error::new(ParserError::Invalid(
-                    "HttpRequest::accept unable to accept before EOF",
+                    "HttpRequest::accept unable to accept before EOF".into(),
                 )));
             }
         }
@@ -161,7 +159,17 @@ impl HttpRequest {
             debug!("https packet 0 sent");
             None
         } else {
-            Some([HEADER0, self.addr.host_repr().as_bytes(), HEADER1].concat())
+            let (host, port) = self.addr.as_host();
+            Some(
+                [
+                    HEADER0,
+                    host.as_bytes(),
+                    &[':' as u8],
+                    port.to_string().as_bytes(),
+                    HEADER1,
+                ]
+                .concat(),
+            )
             //     let bufs = [
             //         IoSlice::new(HEADER0),
             //         IoSlice::new(self.host_raw.as_bytes()),
@@ -175,9 +183,25 @@ impl HttpRequest {
             //     debug!("http packet 0 sent");
         };
 
-        Ok(ConnectionRequest::TCP(ClientTcpStream {
-            inner: inbound,
-            http_request_extension: http_p0,
-        }))
+        Ok(ConnectionRequest::TCP(new_client_tcp_stream(
+            inbound, http_p0,
+        )))
+    }
+}
+
+impl RequestFromClient for HttpRequest {
+    type Accepting<'a> = impl Future<Output = ClientRequestAcceptResult> + Send;
+
+    fn accept<'a>(mut self) -> Self::Accepting<'a> {
+        async move { Ok::<_, Error>((self.impl_accept().await?, self.addr)) }
+    }
+
+    fn new(inbound: TcpStream) -> Self {
+        Self {
+            is_https: false,
+            addr: MixAddrType::None,
+            cursor: 0,
+            inbound: Some(inbound),
+        }
     }
 }

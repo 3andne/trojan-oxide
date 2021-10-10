@@ -1,7 +1,7 @@
 use super::get_server_local_addr;
 use crate::{
     args::Opt,
-    protocol::{ALPN_QUIC_HTTP, MAX_CONCURRENT_BIDI_STREAMS, MAX_IDLE_TIMEOUT},
+    protocol::{ALPN_QUIC_HTTP, MAX_CONCURRENT_BIDI_STREAMS, QUIC_MAX_IDLE_TIMEOUT},
 };
 use anyhow::*;
 #[cfg(feature = "quic")]
@@ -10,13 +10,9 @@ use std::sync::Arc;
 use tokio::{fs, io};
 use tracing::*;
 
-#[derive(Debug)]
-pub struct QuicStream(pub(super) RecvStream, pub(super) SendStream);
-
-
 pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut transport_config = quinn::TransportConfig::default();
-    transport_config.max_idle_timeout(Some(MAX_IDLE_TIMEOUT))?;
+    transport_config.max_idle_timeout(Some(QUIC_MAX_IDLE_TIMEOUT))?;
     transport_config.persistent_congestion_threshold(6);
     transport_config.packet_threshold(4);
     transport_config.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS as u64)?;
@@ -85,6 +81,6 @@ pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
     let mut endpoint = quinn::Endpoint::builder();
     endpoint.listen(server_config.build());
 
-    let server_addr = get_server_local_addr(options);
+    let server_addr = get_server_local_addr(options.server_port);
     Ok(endpoint.bind(&server_addr)?)
 }

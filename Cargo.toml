@@ -7,11 +7,11 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio={version = "1.8", features = ["full"]}
+tokio = { version = "1.10", features = ["full"] }
 clap = "2.33.3"
 anyhow = { version = "1.0.41" }
 tracing = "0.1.26"
-tracing-futures = "0.2.5"
+# tracing-futures = "0.2.5"
 tracing-subscriber = "0.2.19"
 futures = "0.3"
 err-derive = "0.3.0"
@@ -22,9 +22,11 @@ bytes = "1.0.1"
 pin-project-lite = "0.2.7"
 lazy_static = "1.4.0"
 rustls-native-certs = "*"
+mimalloc = { version = "*", default-features = false }
+fxhash = "0.2.1"
 
-[dev-dependencies]
-criterion = "0.3"
+#[dev-dependencies]
+#criterion = "0.3"
 
 [dependencies.quinn]
 version = "0.7.2"
@@ -42,35 +44,32 @@ optional = true
 version = "0.8.11"
 optional = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+glommio = "0.6.0"
+num_cpus = "*"
+
 #[[bench]]
 #name = "bench_simd"
 #harness = false
 
 [profile.release]
-codegen-units = 1
+# codegen-units = 1
 incremental = false
-lto = true
+# lto = true
 opt-level = 3
 
 [features]
 server = []
 client = []
 tcp_tls = ["tokio-rustls"]
+lite_tls = ["tokio-rustls"]
+zio = []
 quic = ["quinn", "quinn-proto", "rcgen"]
 udp = []
 debug_info = []
-full = ["server", "client", "tcp_tls", "quic", "udp"]
-dev = ["server", "client", "tcp_tls", "quic", "udp", "debug_info"]
-server_quic = ["server", "quic"]
-server_quic_udp = ["server", "quic", "udp"]
-server_tcp_tls = ["server", "tcp_tls"]
-server_tcp_tls_udp = ["server", "tcp_tls", "udp"]
-server_full_tunnel = ["server", "tcp_tls", "quic"]
-server_full = ["server", "tcp_tls", "quic", "udp"]
-client_quic = ["client", "quic"]
-client_quic_udp = ["client", "quic", "udp"]
-client_tcp_tls = ["client", "tcp_tls"]
-client_tcp_tls_udp = ["client", "tcp_tls", "udp"]
-client_full_tunnel = ["client", "tcp_tls", "quic"]
-client_full = ["client", "tcp_tls", "quic", "udp"]
+full = ["server", "client", "tcp_tls", "quic", "udp", "lite_tls"]
+dev = ["server", "client", "tcp_tls", "quic", "udp", "lite_tls", "debug_info"]
+server_full = ["server", "tcp_tls", "quic", "udp", "lite_tls"]
+client_full = ["client", "tcp_tls", "quic", "udp", "lite_tls"]
+# default = ["full", "zio"]
 default = ["full"]

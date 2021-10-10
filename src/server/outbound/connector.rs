@@ -1,129 +1,115 @@
 use crate::{
-    server::inbound::{SplitableToAsyncReadWrite, TrojanAcceptor},
-    utils::{copy_tcp, ConnectionRequest, TimeoutMonitor},
+    adapt,
+    args::TrojanContext,
+    protocol::{SERVER_OUTBOUND_CONNECT_TIMEOUT, TCP_MAX_IDLE_TIMEOUT},
+    server::inbound::TrojanAcceptor,
+    utils::{lite_tls::LeaveTls, Adapter, ConnectionRequest, MixAddrType},
 };
 use anyhow::{anyhow, Context, Error, Result};
-use lazy_static::lazy_static;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+    select,
+    time::{timeout, Duration},
 };
-use std::{fmt::Debug, time::Duration};
-use tokio::{net::TcpStream, select, sync::broadcast};
 use tracing::{debug, info};
 #[cfg(feature = "udp")]
-use {
-    crate::utils::{copy_udp, ServerUdpStream},
-    tokio::net::UdpSocket,
-};
+use {crate::server::utils::ServerUdpStream, tokio::net::UdpSocket};
 
-lazy_static! {
-    static ref TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
-    static ref UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStream> {
+    let target_socket_addr =
+        target_host.clone().resolve().await.with_context(|| {
+            anyhow!("failed to resolve ip when connecting to {:?}", target_host)
+        })?;
+
+    let outbound = TcpStream::connect(target_socket_addr)
+        .await
+        .map_err(|e| Error::new(e))
+        .with_context(|| anyhow!("failed to connect to {:?}", target_host))?;
+
+    outbound
+        .set_nodelay(true)
+        .map_err(|e| Error::new(e))
+        .with_context(|| {
+            anyhow!(
+                "failed to set tcp_nodelay for outbound stream {:?}",
+                target_host
+            )
+        })?;
+    Ok(outbound)
 }
 
-pub async fn handle_outbound<I>(
-    stream: I,
-    mut upper_shutdown: broadcast::Receiver<()>,
-    password_hash: Arc<String>,
-    fallback_port: Arc<String>,
-) -> Result<()>
+pub async fn handle_outbound<I>(mut context: TrojanContext, stream: I) -> Result<()>
 where
-    I: SplitableToAsyncReadWrite + Debug + Unpin,
+    I: AsyncRead + AsyncWrite + LeaveTls + Unpin + Send + 'static,
 {
-    let mut target = TrojanAcceptor::new(password_hash.as_bytes(), fallback_port);
+    let opt = &*context.options;
+    let mut target = TrojanAcceptor::new(opt.password.as_bytes(), opt.fallback_port);
     use ConnectionRequest::*;
-    match target.accept(stream).await {
-        Ok(TCP((mut in_write, mut in_read))) => {
-            let mut outbound = if target.host.is_ip() {
-                TcpStream::connect(target.host.to_socket_addrs()).await
-            } else {
-                TcpStream::connect(target.host.host_repr()).await
-            }
-            .map_err(|e| Error::new(e))
-            .with_context(|| anyhow!("failed to connect to {:?}", target.host))?;
-
-            outbound
-                .set_nodelay(true)
-                .map_err(|e| Error::new(e))
-                .with_context(|| {
-                    anyhow!(
-                        "failed to set tcp_nodelay for outbound stream {:?}",
-                        target.host
-                    )
-                })?;
-
-            #[cfg(feature = "debug_info")]
-            debug!("outbound connected: {:?}", outbound);
-
-            let (out_read, out_write) = outbound.split();
-            let timeout_monitor = TimeoutMonitor::new(Duration::from_secs(5 * 60));
-            let mut out_read = timeout_monitor.watch(out_read);
-            let mut out_write = timeout_monitor.watch(out_write);
+    match timeout(
+        Duration::from_secs(SERVER_OUTBOUND_CONNECT_TIMEOUT),
+        target.accept(stream),
+    )
+    .await?
+    {
+        Ok(TCP(inbound)) => {
+            let outbound =
+                timeout(Duration::from_secs(2), outbound_connect(&target.host)).await??;
             let conn_id = TCP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            info!("[tcp][{}] => {:?}", conn_id, &target.host);
-            // FUUUUUCK YOU tokio::io::copy, you buggy little shit.
-            select! {
-                _ = copy_tcp(&mut out_read, &mut in_write) => {
-                    info!("[tcp][{}]end downloading", conn_id);
-                },
-                _ = tokio::io::copy(&mut in_read, &mut out_write) => {
-                    info!("[tcp][{}]end uploading", conn_id);
-                },
-                _ = timeout_monitor => {
-                    info!("[tcp][{}]end timeout", conn_id);
-                }
-                _ = upper_shutdown.recv() => {
-                    info!("[tcp][{}]shutdown signal received", conn_id);
-                },
-            }
+            inbound
+                .forward(outbound, &target.host, context.shutdown, conn_id)
+                .await?;
         }
         #[cfg(feature = "udp")]
-        Ok(UDP((mut in_write, mut in_read))) => {
+        Ok(UDP(inbound)) => {
             let outbound = UdpSocket::bind("[::]:0")
                 .await
                 .map_err(|e| Error::new(e))
                 .with_context(|| anyhow!("failed to bind UdpSocket {:?}", target.host))?;
 
+            let outbound = ServerUdpStream::new(outbound);
             let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
-            debug!("[udp][{}] {:?} =>", conn_id, outbound.local_addr());
-            let mut udp_stream = ServerUdpStream::new(outbound);
-            let (out_write, out_read) = udp_stream.split();
-            let timeout_monitor = TimeoutMonitor::new(Duration::from_secs(5 * 60));
-            let mut out_read = timeout_monitor.watch(out_read);
-            let mut out_write = timeout_monitor.watch(out_write);
-            select! {
-                res = copy_udp(&mut out_read, &mut in_write, None) => {
-                    info!("[udp][{}]end downloading: {:?}", conn_id, res);
-                },
-                res = copy_udp(&mut in_read, &mut out_write, Some(conn_id)) => {
-                    info!("[udp][{}]end uploading: {:?}", conn_id, res);
-                },
-                _ = timeout_monitor => {
-                    info!("[udp][{}]end timeout", conn_id);
-                }
-                _ = upper_shutdown.recv() => {
-                    info!("[udp][{}]shutdown signal received", conn_id);
-                },
-            }
+            let shutdown = context.shutdown;
+            adapt!([udp][conn_id]
+                inbound <=> outbound
+                Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
+            );
         }
         #[cfg(feature = "quic")]
-        Ok(ECHO((mut in_write, mut in_read))) => {
+        Ok(ECHO(mut inbound)) => {
+            use tokio::io::AsyncReadExt;
+            use tokio::io::AsyncWriteExt;
+            let echo = async move {
+                let mut buf = [0; 256];
+                loop {
+                    let num = inbound.read(&mut buf).await;
+                    let num = if num.is_err() { return } else { num.unwrap() };
+                    if inbound.write(&buf[..num]).await.is_err() {
+                        return;
+                    }
+                }
+            };
             debug!("[echo]start relaying");
             select! {
-                _ = tokio::io::copy(&mut in_read, &mut in_write) => {
-                    debug!("server relaying upload end");
+                _ = echo => {
+                    debug!("echo end");
                 },
-                _ = upper_shutdown.recv() => {
+                _ = context.shutdown.recv() => {
                     debug!("server shutdown signal received");
                 },
             }
             debug!("[echo]end relaying");
         }
+        Ok(_PHANTOM(_)) => {
+            unreachable!("")
+        }
         Err(e) => {
-            return Err(
-                Error::new(e).context(anyhow!("failed to parse connection to {:?}", target.host))
-            );
+            return Err(Error::new(e))
+                .with_context(|| anyhow!("failed to parse connection to {:?}", target.host));
         }
     }
 

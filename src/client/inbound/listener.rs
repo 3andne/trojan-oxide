@@ -1,17 +1,20 @@
-use super::ClientConnectionRequest;
-use super::{HttpRequest, Socks5Request};
 use crate::{
     args::TrojanContext,
-    client::outbound::forward,
+    client::{
+        outbound::forward,
+        utils::{ClientConnectionRequest, ClientServerConnection},
+        ConnectionMode,
+    },
     or_continue, try_recv,
-    utils::{ClientServerConnection, ConnectionMode, MixAddrType},
+    utils::MixAddrType,
 };
 
 #[cfg(feature = "quic")]
 use crate::client::outbound::quic::*;
-#[cfg(feature = "tcp_tls")]
+#[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 use crate::client::outbound::tcp_tls::*;
 use anyhow::Result;
+use futures::TryFutureExt;
 use std::{future::Future, net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -21,76 +24,68 @@ use tracing::*;
 
 pub type ClientRequestAcceptResult = Result<(ClientConnectionRequest, MixAddrType)>;
 
-pub async fn user_endpoint_listener<F, Fut>(
-    mut upper_shutdown: oneshot::Receiver<()>,
+pub trait RequestFromClient {
+    type Accepting<'a>: Future<Output = ClientRequestAcceptResult> + Send;
+
+    fn new(inbound: TcpStream) -> Self;
+    fn accept<'a>(self) -> Self::Accepting<'a>;
+}
+
+pub async fn user_endpoint_listener<Acceptor>(
     service_addr: SocketAddr,
-    context: TrojanContext,
-    accept_client_request: F,
+    mut context: TrojanContext,
 ) -> Result<()>
 where
-    F: Fn(TcpStream) -> Fut + Clone + Send + 'static,
-    Fut: Future<Output = ClientRequestAcceptResult> + Send + 'static,
+    Acceptor: RequestFromClient + Send + 'static,
 {
-    let (shutdown_tx, _) = broadcast::channel::<()>(1);
+    let (shutdown_tx, shutdown) = broadcast::channel::<()>(1);
     let service_listener = TcpListener::bind(&service_addr).await?;
-    let hash = context.options.password_hash.clone();
-    let remote_addr = context.remote_socket_addr;
-    let domain_string = Arc::new(context.options.proxy_url.clone());
 
-    #[cfg(feature = "tcp_tls")]
+    #[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
     let tls_config = Arc::new(tls_client_config().await);
 
     #[cfg(feature = "quic")]
     let (task_tx, task_rx) = tokio::sync::mpsc::channel(20);
     #[cfg(feature = "quic")]
-    tokio::spawn(quic_connection_daemon(context.clone(), task_rx));
+    tokio::spawn(quic_connection_daemon(
+        context.clone_with_signal(shutdown),
+        task_rx,
+    ));
 
     loop {
-        try_recv!(oneshot, upper_shutdown);
+        try_recv!(broadcast, context.shutdown);
         let (stream, _) = service_listener.accept().await?;
         debug!("accepted http: {:?}", stream);
-        let shutdown_rx = shutdown_tx.subscribe();
-        let hash_copy = hash.clone();
-
+        let incoming: _ = Acceptor::new(stream).accept();
+        let new_context = context.clone_with_signal(shutdown_tx.subscribe());
         match &context.options.connection_mode {
             #[cfg(feature = "tcp_tls")]
             ConnectionMode::TcpTLS => {
-                let tls_config_copy = tls_config.clone();
-                let domain_string_copy = domain_string.clone();
-                tokio::spawn(forward(
-                    stream,
-                    shutdown_rx,
-                    hash_copy,
-                    accept_client_request.clone(),
-                    connect_through_tcp_tls(tls_config_copy, domain_string_copy, remote_addr),
-                ));
+                let connecting: _ = TrojanTcpTlsConnector::new(tls_config.clone(), false)
+                    .connect(context.options.clone());
+                tokio::spawn(
+                    forward(new_context, incoming, connecting)
+                        .map_err(|e| error!("[tcp-tls]forward failed: {:?}", e)),
+                );
+            }
+            #[cfg(feature = "lite_tls")]
+            ConnectionMode::LiteTLS => {
+                let connecting: _ = TrojanTcpTlsConnector::new(tls_config.clone(), true)
+                    .connect(context.options.clone());
+                tokio::spawn(
+                    forward(new_context, incoming, connecting)
+                        .map_err(|e| error!("[lite]forward failed: {:?}", e)),
+                );
             }
             #[cfg(feature = "quic")]
             ConnectionMode::Quic => {
                 let (conn_ret_tx, conn_ret_rx) = oneshot::channel();
                 or_continue!(task_tx.send(conn_ret_tx).await);
-                tokio::spawn(forward(
-                    stream,
-                    shutdown_rx,
-                    hash_copy,
-                    accept_client_request.clone(),
-                    async move { Ok(ClientServerConnection::Quic(conn_ret_rx.await??)) },
-                ));
+                tokio::spawn(forward(new_context, incoming, async move {
+                    Ok(ClientServerConnection::Quic(conn_ret_rx.await??))
+                }));
             }
         }
     }
     Ok(())
 }
-
-macro_rules! request_accept_helper {
-    ($fn_name:ident, $request_type:ident) => {
-        pub async fn $fn_name(stream: TcpStream) -> ClientRequestAcceptResult {
-            let mut req = $request_type::new();
-            let conn_req = req.accept(stream).await?;
-            Ok((conn_req, req.addr()))
-        }
-    };
-}
-
-request_accept_helper!(accept_http_request, HttpRequest);
-request_accept_helper!(accept_sock5_request, Socks5Request);
