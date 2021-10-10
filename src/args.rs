@@ -78,7 +78,8 @@ fn password_to_hash(s: &str) -> String {
     s
 }
 
-#[derive(StructOpt, Debug, Clone)]
+#[derive(StructOpt, Clone)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 #[structopt(name = "basic")]
 pub struct Opt {
     #[cfg(feature = "client")]
@@ -131,7 +132,7 @@ pub struct Opt {
     pub remote_socket_addr: Option<SocketAddr>,
 }
 
-#[derive(Debug)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 pub struct TrojanContext {
     pub options: Arc<Opt>,
     pub shutdown: broadcast::Receiver<()>,

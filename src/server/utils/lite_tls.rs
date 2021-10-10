@@ -10,7 +10,7 @@ use crate::{
     protocol::TCP_MAX_IDLE_TIMEOUT,
     utils::{
         lite_tls::{LeaveTls, LiteTlsStream},
-        Adapter, BufferedRecv, MixAddrType, ParserError, Splitable,
+        Adapter, BufferedRecv, MixAddrType, ParserError,
     },
 };
 use anyhow::{anyhow, Context, Result};
@@ -22,7 +22,7 @@ pub enum TcpOption<I> {
 
 impl<I> TcpOption<BufferedRecv<I>>
 where
-    I: AsyncRead + AsyncWrite + Splitable + LeaveTls + Unpin,
+    I: AsyncRead + AsyncWrite + LeaveTls + Unpin,
 {
     pub async fn forward(
         self,
@@ -35,7 +35,7 @@ where
         match self {
             TLS(inbound) => {
                 adapt!([tcp][conn_id]
-                    inbound[Tls] <=> outbound[Tcp] <=> target_host
+                    inbound <=> outbound <=> target_host
                     Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                 );
             }
@@ -52,13 +52,13 @@ where
                             return Ok(());
                         }
                         info!("[{}]lite tls handshake succeed", ver.unwrap());
-                        let mut inbound = inbound.into_inner().leave();
+                        let mut inbound = inbound.into_inner().0.leave();
                         lite_tls_endpoint
                             .flush_tls(&mut outbound, &mut inbound)
                             .await?;
                         debug!("lite tls start relaying");
                         adapt!([lite][conn_id]
-                            inbound[Tcp] <=> outbound[Tcp] <=> target_host
+                            inbound <=> outbound <=> target_host
                             Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                         );
                     }
@@ -69,7 +69,7 @@ where
                                 .flush_non_tls(&mut outbound, &mut inbound)
                                 .await?;
                             adapt!([tcp][conn_id]
-                                inbound[Tls] <=> outbound[Tcp] <=> target_host
+                                inbound <=> outbound <=> target_host
                                 Until shutdown Or Sec TCP_MAX_IDLE_TIMEOUT
                             );
                         }

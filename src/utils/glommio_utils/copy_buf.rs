@@ -3,6 +3,7 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tracing::debug;
+use crate::protocol::RELAY_BUFFER_SIZE;
 
 pub(super) struct CopyBuffer {
     read_done: bool,
@@ -19,7 +20,7 @@ impl CopyBuffer {
             pos: 0,
             cap: 0,
             amt: 0,
-            buf: vec![0; 8192].into_boxed_slice(),
+            buf: vec![0; RELAY_BUFFER_SIZE].into_boxed_slice(),
         }
     }
 

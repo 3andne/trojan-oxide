@@ -3,7 +3,7 @@ use bytes::BufMut;
 use std::ops::Deref;
 use tokio::io::ReadBuf;
 
-#[derive(Debug)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 pub struct UdpRelayBuffer {
     cursor: usize,
     inner: Vec<u8>,

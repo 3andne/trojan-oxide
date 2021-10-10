@@ -7,10 +7,10 @@ mod quic;
 mod tcp_tls;
 
 pub use acceptor::TrojanAcceptor;
+#[cfg(feature = "quic")]
+pub use listener::quic_listener;
 #[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 pub use listener::tcp_tls_listener;
-#[cfg(feature = "quic")]
-pub use {listener::quic_listener, quic::QuicStream};
 
 use std::net::{IpAddr, SocketAddr};
 pub fn get_server_local_addr(proxy_port: u16) -> SocketAddr {

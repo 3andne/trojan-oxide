@@ -74,6 +74,8 @@ async fn main() -> Result<()> {
             .ok_or(anyhow!("invalid remote address"))?,
     );
 
+    utils::start_dns_resolver_thread();
+
     let _ = proxy::build_tunnel(tokio::signal::ctrl_c(), Arc::new(options)).await;
     Ok(())
 }

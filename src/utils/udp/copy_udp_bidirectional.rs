@@ -1,29 +1,20 @@
-/// this is a replica of tokio::io::copy_bidirectional
-/// but based on `futures` traits
-use super::copy_buf::CopyBuffer;
-
-use futures::{ready, AsyncRead, AsyncWrite};
-
-use std::future::Future;
-use std::io;
+use crate::utils::StreamStopReasons;
+use crate::utils::{UdpCopyBuf, UdpRead, UdpWrite};
+use futures::{ready, Future};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::utils::StreamStopReasons;
-
-use tracing::debug;
-
 enum TransferState {
-    Running(CopyBuffer),
+    Running(UdpCopyBuf),
     ShuttingDown(u64),
     Done(u64),
 }
 
-struct CopyBidirectional<'a, A, B> {
-    a: &'a mut A,
-    b: &'a mut B,
-    a_to_b: TransferState,
-    b_to_a: TransferState,
+struct CopyBidirectional<'a, I, O> {
+    i: &'a mut I,
+    o: &'a mut O,
+    upload: TransferState,
+    download: TransferState,
     stop_reason: StreamStopReasons,
 }
 
@@ -32,10 +23,10 @@ fn transfer_one_direction<A, B>(
     state: &mut TransferState,
     r: &mut A,
     w: &mut B,
-) -> Poll<io::Result<u64>>
+) -> Poll<std::io::Result<u64>>
 where
-    A: AsyncRead + AsyncWrite + Unpin,
-    B: AsyncRead + AsyncWrite + Unpin,
+    A: UdpRead + Unpin,
+    B: UdpWrite + Unpin,
 {
     let mut r = Pin::new(r);
     let mut w = Pin::new(w);
@@ -43,13 +34,11 @@ where
     loop {
         match state {
             TransferState::Running(buf) => {
-                debug!("transfer_one_direction: running");
                 let count = ready!(buf.poll_copy(cx, r.as_mut(), w.as_mut()))?;
                 *state = TransferState::ShuttingDown(count);
             }
             TransferState::ShuttingDown(count) => {
-                debug!("transfer_one_direction: ShuttingDown");
-                ready!(w.as_mut().poll_close(cx))?;
+                ready!(w.as_mut().poll_shutdown(cx))?;
 
                 *state = TransferState::Done(*count);
             }
@@ -60,58 +49,57 @@ where
 
 impl<'a, A, B> Future for CopyBidirectional<'a, A, B>
 where
-    A: AsyncRead + AsyncWrite + Unpin,
-    B: AsyncRead + AsyncWrite + Unpin,
+    A: UdpRead + UdpWrite + Unpin,
+    B: UdpRead + UdpWrite + Unpin,
 {
-    type Output = io::Result<(u64, u64, StreamStopReasons)>;
+    type Output = std::io::Result<(u64, u64, StreamStopReasons)>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Unpack self into mut refs to each field to avoid borrow check issues.
+        use StreamStopReasons::*;
         let CopyBidirectional {
-            a,
-            b,
-            a_to_b,
-            b_to_a,
+            i,
+            o,
+            upload,
+            download,
             stop_reason,
         } = &mut *self;
 
-        let a_to_b = transfer_one_direction(cx, a_to_b, &mut *a, &mut *b)?;
-        let b_to_a = transfer_one_direction(cx, b_to_a, &mut *b, &mut *a)?;
+        let upload = transfer_one_direction(cx, upload, *i, *o)?;
+        let download = transfer_one_direction(cx, download, *o, *i)?;
 
         // It is not a problem if ready! returns early because transfer_one_direction for the
         // other direction will keep returning TransferState::Done(count) in future calls to poll
         use Poll::*;
-        use StreamStopReasons::*;
-        match (a_to_b, b_to_a) {
+        match (upload, download) {
             (Pending, Pending) => Pending,
-            (Ready(_a_to_b), Pending) => {
+            (Ready(_upload), Pending) => {
                 *stop_reason = Upload;
                 Pending
             }
-            (Pending, Ready(_b_to_a)) => {
+            (Pending, Ready(_download)) => {
                 *stop_reason = Download;
                 Pending
             }
-            (Ready(a_to_b), Ready(b_to_a)) => {
-                Ready(Ok((a_to_b, b_to_a, stop_reason.clone())))
-            }
+            (Ready(upload), Ready(download)) => Ready(Ok((upload, download, stop_reason.clone()))),
         }
     }
 }
 
-pub async fn glommio_copy_bidirectional<A, B>(
-    a: &mut A,
-    b: &mut B,
+pub async fn udp_copy_bidirectional<I, O>(
+    inbound: &mut I,
+    outbound: &mut O,
+    conn_id: usize,
 ) -> Result<(u64, u64, StreamStopReasons), std::io::Error>
 where
-    A: AsyncRead + AsyncWrite + Unpin,
-    B: AsyncRead + AsyncWrite + Unpin,
+    I: UdpRead + UdpWrite + Unpin,
+    O: UdpRead + UdpWrite + Unpin,
 {
     CopyBidirectional {
-        a,
-        b,
-        a_to_b: TransferState::Running(CopyBuffer::new()),
-        b_to_a: TransferState::Running(CopyBuffer::new()),
+        i: inbound,
+        o: outbound,
+        upload: TransferState::Running(UdpCopyBuf::new(Some(conn_id))),
+        download: TransferState::Running(UdpCopyBuf::new(None)),
         stop_reason: StreamStopReasons::Download,
     }
     .await

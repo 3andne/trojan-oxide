@@ -1,5 +1,5 @@
 use crate::{
-    client::utils::{ClientConnectionRequest, ClientTcpStream},
+    client::utils::{new_client_tcp_stream, ClientConnectionRequest},
     expect_buf_len,
     utils::{ConnectionRequest, MixAddrType, ParserError},
 };
@@ -89,10 +89,7 @@ impl Socks5Request {
             false => {
                 MixAddrType::init_from(&inbound.local_addr()?).write_buf(&mut buf);
                 inbound.write_all(&buf).await?;
-                Ok(ConnectionRequest::TCP(ClientTcpStream {
-                    inner: inbound,
-                    http_request_extension: None,
-                }))
+                Ok(ConnectionRequest::TCP(new_client_tcp_stream(inbound, None)))
             }
             #[cfg(feature = "udp")]
             true => {

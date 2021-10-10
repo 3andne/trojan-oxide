@@ -3,7 +3,7 @@ use crate::{
     args::TrojanContext,
     protocol::{SERVER_OUTBOUND_CONNECT_TIMEOUT, TCP_MAX_IDLE_TIMEOUT},
     server::inbound::TrojanAcceptor,
-    utils::{lite_tls::LeaveTls, Adapter, ConnectionRequest, MixAddrType, Splitable},
+    utils::{lite_tls::LeaveTls, Adapter, ConnectionRequest, MixAddrType},
 };
 use anyhow::{anyhow, Context, Error, Result};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -21,13 +21,15 @@ pub(crate) static TCP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 pub(crate) static UDP_CONNECTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStream> {
-    let outbound = if target_host.is_ip() {
-        TcpStream::connect(target_host.to_socket_addrs()).await
-    } else {
-        TcpStream::connect(target_host.host_repr()).await
-    }
-    .map_err(|e| Error::new(e))
-    .with_context(|| anyhow!("failed to connect to {:?}", target_host))?;
+    let target_socket_addr =
+        target_host.clone().resolve().await.with_context(|| {
+            anyhow!("failed to resolve ip when connecting to {:?}", target_host)
+        })?;
+
+    let outbound = TcpStream::connect(target_socket_addr)
+        .await
+        .map_err(|e| Error::new(e))
+        .with_context(|| anyhow!("failed to connect to {:?}", target_host))?;
 
     outbound
         .set_nodelay(true)
@@ -41,15 +43,9 @@ async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStream> {
     Ok(outbound)
 }
 
-pub async fn handle_outbound<I>(
-    mut context: TrojanContext,
-    stream: I,
-    // mut upper_shutdown: broadcast::Receiver<()>,
-    // password_hash: Arc<String>,
-    // fallback_port: Arc<String>,
-) -> Result<()>
+pub async fn handle_outbound<I>(mut context: TrojanContext, stream: I) -> Result<()>
 where
-    I: AsyncRead + AsyncWrite + Splitable + LeaveTls + Unpin + Send + 'static,
+    I: AsyncRead + AsyncWrite + LeaveTls + Unpin + Send + 'static,
 {
     let opt = &*context.options;
     let mut target = TrojanAcceptor::new(opt.password_hash.as_bytes(), opt.fallback_port);
@@ -75,7 +71,7 @@ where
                 .map_err(|e| Error::new(e))
                 .with_context(|| anyhow!("failed to bind UdpSocket {:?}", target.host))?;
 
-            let mut outbound = ServerUdpStream::new(outbound);
+            let outbound = ServerUdpStream::new(outbound);
             let conn_id = UDP_CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
             let shutdown = context.shutdown;
             adapt!([udp][conn_id]
@@ -84,12 +80,23 @@ where
             );
         }
         #[cfg(feature = "quic")]
-        Ok(ECHO(inbound)) => {
-            let (mut in_read, mut in_write) = inbound.split();
+        Ok(ECHO(mut inbound)) => {
+            use tokio::io::AsyncReadExt;
+            use tokio::io::AsyncWriteExt;
+            let echo = async move {
+                let mut buf = [0; 256];
+                loop {
+                    let num = inbound.read(&mut buf).await;
+                    let num = if num.is_err() { return } else { num.unwrap() };
+                    if inbound.write(&buf[..num]).await.is_err() {
+                        return;
+                    }
+                }
+            };
             debug!("[echo]start relaying");
             select! {
-                _ = tokio::io::copy(&mut in_read, &mut in_write) => {
-                    debug!("server relaying upload end");
+                _ = echo => {
+                    debug!("echo end");
                 },
                 _ = context.shutdown.recv() => {
                     debug!("server shutdown signal received");

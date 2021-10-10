@@ -26,7 +26,7 @@ impl Display for LeaveTlsMode {
     }
 }
 
-#[derive(Debug)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 pub struct TlsRelayBuffer {
     inner: Vec<u8>,
     /// read cursor

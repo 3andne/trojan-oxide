@@ -1,7 +1,7 @@
 #[cfg(not(feature = "udp"))]
 use crate::utils::DummyRequest;
 #[cfg(feature = "udp")]
-use crate::utils::{new_trojan_udp_stream, TrojanUdpStream};
+use crate::utils::TrojanUdpStream;
 use crate::{
     expect_buf_len,
     protocol::{
@@ -18,10 +18,10 @@ use tracing::*;
 type ServerConnectionRequest<I> =
     ConnectionRequest<TcpOption<BufferedRecv<I>>, TrojanUdpStream<I>, BufferedRecv<I>>;
 #[cfg(not(feature = "udp"))]
-#[allow(type_alias_bounds)]
-type ServerConnectionRequest<I: SplitableToAsyncReadWrite> =
-    ConnectionRequest<(I::W, BufferedRecv<I::R>), DummyRequest, (I::W, BufferedRecv<I::R>)>;
-#[derive(Default, Debug)]
+type ServerConnectionRequest<I> =
+    ConnectionRequest<TcpOption<BufferedRecv<I>>, DummyRequest, BufferedRecv<I>>;
+#[derive(Default)]
+#[cfg_attr(feature = "debug_info", derive(Debug))]
 pub struct TrojanAcceptor<'a> {
     pub host: MixAddrType,
     cursor: usize,
@@ -158,7 +158,7 @@ impl<'a> TrojanAcceptor<'a> {
         use TcpOption::*;
         match self.cmd_code {
             #[cfg(feature = "udp")]
-            UDP_REQUEST_CMD => Ok(UDP(new_trojan_udp_stream(inbound, buffered_request))),
+            UDP_REQUEST_CMD => Ok(UDP(TrojanUdpStream::new(inbound, buffered_request))),
             #[cfg(not(feature = "udp"))]
             UDP_REQUEST_CMD => Err(ParserError::Invalid(
                 "udp functionality not included".into(),

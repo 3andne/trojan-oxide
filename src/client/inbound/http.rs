@@ -1,5 +1,5 @@
 use crate::{
-    client::utils::ClientTcpStream,
+    client::utils::new_client_tcp_stream,
     utils::ConnectionRequest,
     utils::{MixAddrType, ParserError},
 };
@@ -159,7 +159,17 @@ impl HttpRequest {
             debug!("https packet 0 sent");
             None
         } else {
-            Some([HEADER0, self.addr.host_repr().as_bytes(), HEADER1].concat())
+            let (host, port) = self.addr.as_host();
+            Some(
+                [
+                    HEADER0,
+                    host.as_bytes(),
+                    &[':' as u8],
+                    port.to_string().as_bytes(),
+                    HEADER1,
+                ]
+                .concat(),
+            )
             //     let bufs = [
             //         IoSlice::new(HEADER0),
             //         IoSlice::new(self.host_raw.as_bytes()),
@@ -173,10 +183,9 @@ impl HttpRequest {
             //     debug!("http packet 0 sent");
         };
 
-        Ok(ConnectionRequest::TCP(ClientTcpStream {
-            inner: inbound,
-            http_request_extension: http_p0,
-        }))
+        Ok(ConnectionRequest::TCP(new_client_tcp_stream(
+            inbound, http_p0,
+        )))
     }
 }
 
