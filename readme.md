@@ -11,7 +11,7 @@ A Rust implementation of Trojan with QUIC tunnel, Lite-TLS and more.
    * Predictable performance with no runtime garbage collector.
    * Poll based UDP Traffic.
 3. [QUIC](https://en.wikipedia.org/wiki/QUIC) tunnel. The stealth Trojan implementation is still undetectable in the HTTP/3 era.
-4. [Lite-TLS](https://github.com/3andne/trojan-oxide/wiki/The-Speed-of-Lite---Lite-TLS-Specification). Avoid redundant encrpytion with TLS traffics without modifying the underlying TLS library. We do things in the Trojan way, i.e., we imitate rather than create.
+4. [Lite-TLS](https://github.com/3andne/trojan-oxide/wiki/The-Speed-of-Lite). Avoid redundant encrpytion with TLS traffics without modifying the underlying TLS library. We do things in the Trojan way, i.e., we imitate rather than create.
 5. [Zero-Copy](https://kernel.dk/io_uring.pdf?source=techstories.org) (Linux Kernel >= 5.8 is required). With Lite-TLS enabled, we can achieve maximum efficiency on both the client and server sides. Up to [60% improvement](https://github.com/frevib/io_uring-echo-server/blob/master/benchmarks/benchmarks.md) is observed in a TCP echo server based on io-uring.
 
 ## License
