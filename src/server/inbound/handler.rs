@@ -66,9 +66,6 @@ pub async fn handle_quic_connection(
 pub async fn handle_tcp_tls_connection(
     context: TrojanContext,
     incoming: Accept<TcpStream>,
-    // upper_shutdown: broadcast::Receiver<()>,
-    // password_hash: Arc<String>,
-    // fallback_port: Arc<String>,
 ) -> Result<()> {
     let stream = timeout(Duration::from_secs(5), incoming)
         .await

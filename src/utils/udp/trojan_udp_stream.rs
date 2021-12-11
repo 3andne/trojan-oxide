@@ -12,7 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::*;
 
 pin_project! {
-    #[cfg_attr(feature = "debuf_info", derive(Debug))]
+    #[cfg_attr(feature = "debug_info", derive(Debug))]
     pub struct TrojanUdpStream<IO> {
         #[pin]
         inner: BufferedRecv<IO>,

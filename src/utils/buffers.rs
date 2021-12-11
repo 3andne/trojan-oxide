@@ -24,13 +24,12 @@ impl<'a> CursoredBuffer for (&'a mut usize, &Vec<u8>) {
 }
 
 pub trait VecAsReadBufExt<'a> {
-    fn as_read_buf(&'a mut self, start: usize) -> ReadBuf<'a>;
+    fn as_read_buf(&'a mut self) -> ReadBuf<'a>;
 }
 
 impl<'a> VecAsReadBufExt<'a> for Vec<u8> {
-    fn as_read_buf(&'a mut self, start: usize) -> ReadBuf<'a> {
-        assert!(start <= self.remaining_mut());
-        let dst = &mut self.chunk_mut()[start..];
+    fn as_read_buf(&'a mut self) -> ReadBuf<'a> {
+        let dst = &mut self.chunk_mut();
         let dst = unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>]) };
         ReadBuf::uninit(dst)
     }

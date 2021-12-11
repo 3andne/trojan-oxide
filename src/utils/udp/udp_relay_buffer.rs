@@ -19,7 +19,7 @@ impl<'a> UdpRelayBuffer {
     }
 
     pub fn as_read_buf(&'a mut self) -> ReadBuf<'a> {
-        self.inner.as_read_buf(self.cursor)
+        self.inner.as_read_buf()
     }
 
     pub unsafe fn advance_mut(&mut self, cnt: usize) {
