@@ -9,7 +9,7 @@ use std::{
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::TryRecvError;
-#[cfg(feature = "debug_info")]
+#[cfg(feature = "udp_info")]
 use tracing::*;
 
 #[cfg_attr(feature = "debug_info", derive(Debug))]
@@ -34,7 +34,7 @@ impl UdpWrite for ServerUdpStream {
         buf: &[u8],
         addr: &MixAddrType,
     ) -> Poll<std::io::Result<usize>> {
-        #[cfg(feature = "debug_info")]
+        #[cfg(feature = "udp_info")]
         debug!("ServerUdpSendStream::poll_proxy_stream_write()");
         loop {
             match self.addr_task {
@@ -47,7 +47,7 @@ impl UdpWrite for ServerUdpStream {
                     self.addr_task = ResolveAddr::Ready((ip, addr.port()).into());
                 }
                 ResolveAddr::Ready(s_addr) => {
-                    #[cfg(feature = "debug_info")]
+                    #[cfg(feature = "udp_info")]
                     debug!(
                         "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Ready({}), buf {:?}",
                         s_addr, buf
@@ -55,13 +55,15 @@ impl UdpWrite for ServerUdpStream {
 
                     let res = self.inner.poll_send_to(cx, buf, s_addr);
 
-                    if res.is_ready() {
-                        self.addr_task = ResolveAddr::None;
+                    if let Poll::Ready(Ok(val)) = res {
+                        if val == buf.len() {
+                            self.addr_task = ResolveAddr::None;
+                        }
                     }
                     return res;
                 }
                 ResolveAddr::None => {
-                    #[cfg(feature = "debug_info")]
+                    #[cfg(feature = "udp_info")]
                     debug!("ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::None");
 
                     use MixAddrType::*;
@@ -104,7 +106,7 @@ impl UdpRead for ServerUdpStream {
         cx: &mut Context<'_>,
         buf: &mut UdpRelayBuffer,
     ) -> Poll<std::io::Result<MixAddrType>> {
-        #[cfg(feature = "debug_info")]
+        #[cfg(feature = "udp_info")]
         debug!("ServerUdpRecvStream::poll_proxy_stream_read()");
         let mut buf_inner = buf.as_read_buf();
         let ptr = buf_inner.filled().as_ptr();
@@ -126,7 +128,7 @@ impl UdpRead for ServerUdpStream {
             buf.advance_mut(n);
         }
 
-        #[cfg(feature = "debug_info")]
+        #[cfg(feature = "udp_info")]
         debug!(
             "ServerUdpRecvStream::poll_proxy_stream_read() buf {:?}",
             buf
