@@ -4,7 +4,7 @@ use crate::utils::{CursoredBuffer, MixAddrType, UdpRead, UdpRelayBuffer, UdpWrit
 use std::pin::Pin;
 use std::task::Poll;
 use std::{future::Future, u64};
-#[cfg(feature = "debug_info")]
+#[cfg(feature = "udp_info")]
 use tracing::debug;
 use tracing::info;
 
@@ -71,16 +71,14 @@ impl UdpCopyBuf {
     {
         loop {
             if !self.buf.has_remaining() {
-                #[cfg(feature = "debug_info")]
+                #[cfg(feature = "udp_info")]
                 debug!("[{:?}]CopyUdp::poll reset buffer", self.conn_id);
                 unsafe {
                     self.buf.reset();
                 }
-                #[cfg(feature = "debug_info")]
-                debug!("[{:?}]CopyUdp::poll self.addr.is_none()", self.conn_id);
                 let new_addr = ready!(reader.as_mut().poll_proxy_stream_read(cx, &mut self.buf))?;
                 if new_addr.is_none() {
-                    #[cfg(feature = "debug_info")]
+                    #[cfg(feature = "udp_info")]
                     debug!("[{:?}]CopyUdp::poll new_addr.is_none()", self.conn_id);
                     break;
                 }

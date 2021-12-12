@@ -69,14 +69,11 @@ impl<IO> TrojanUdpStream<IO> {
             if me.recv_buffer.remaining() < 2 {
                 return Poll::Pending;
             }
-            *me.expecting =
-                Some(
-                    u16::from_be_bytes([me.recv_buffer.chunk()[0], me.recv_buffer.chunk()[1]])
-                        as usize,
-                );
-            me.recv_buffer.advance(2);
-
-            me.recv_buffer.advance(2); // for `\r\n`
+            let expecting =
+                u16::from_be_bytes([me.recv_buffer.chunk()[0], me.recv_buffer.chunk()[1]]) as usize;
+            *me.expecting = Some(expecting);
+            me.recv_buffer.advance(2 + 2); // `len` + `\r\n`
+            me.recv_buffer.reserve(expecting);
         }
         Poll::Ready(())
     }
@@ -97,9 +94,10 @@ impl<IO> TrojanUdpStream<IO> {
         // we read in the packet as a whole
         // or we return pending
         if expecting <= me.recv_buffer.remaining() {
+            outer_buf.reserve(expecting);
             outer_buf.extend_from_slice(&me.recv_buffer.chunk()[..expecting]);
             me.recv_buffer.advance(expecting);
-            me.recv_buffer.pump();
+            me.recv_buffer.compact();
             *me.expecting = None;
             #[cfg(feature = "udp_info")]
             debug!(

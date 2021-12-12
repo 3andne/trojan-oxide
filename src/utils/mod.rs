@@ -54,8 +54,8 @@ pub fn transmute_u16s_to_u8s(a: &[u16], b: &mut [u8]) {
     }
     for (i, val) in a.iter().enumerate() {
         let x = val.to_be_bytes();
-        b[i] = x[0];
-        b[i + 1] = x[1];
+        b[2 * i] = x[0];
+        b[2 * i + 1] = x[1];
     }
 }
 

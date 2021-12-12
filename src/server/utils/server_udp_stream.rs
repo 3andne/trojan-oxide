@@ -108,14 +108,15 @@ impl UdpRead for ServerUdpStream {
     ) -> Poll<std::io::Result<MixAddrType>> {
         #[cfg(feature = "udp_info")]
         debug!("ServerUdpRecvStream::poll_proxy_stream_read()");
-        let mut buf_inner = buf.as_read_buf();
-        let ptr = buf_inner.filled().as_ptr();
 
-        let addr = ready!(self.inner.poll_recv_from(cx, &mut buf_inner))?;
+        let mut read_buf = buf.as_read_buf();
+        let ptr = read_buf.filled().as_ptr();
+
+        let addr = ready!(self.inner.poll_recv_from(cx, &mut read_buf))?;
 
         // Ensure the pointer does not change from under us
-        assert_eq!(ptr, buf_inner.filled().as_ptr());
-        let n = buf_inner.filled().len();
+        assert_eq!(ptr, read_buf.filled().as_ptr());
+        let n = read_buf.filled().len();
 
         if n == 0 {
             // EOF is seen

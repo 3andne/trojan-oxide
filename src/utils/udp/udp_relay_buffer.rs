@@ -39,7 +39,7 @@ impl<'a> UdpRelayBuffer {
         self.inner.is_empty()
     }
 
-    pub fn pump(&mut self) {
+    pub fn compact(&mut self) {
         if self.cursor == 0 {
             return;
         }
@@ -50,6 +50,19 @@ impl<'a> UdpRelayBuffer {
         unsafe {
             self.inner.set_len(data_len);
         }
+        self.cursor = 0;
+    }
+
+    pub fn reserve(&mut self, len: usize) {
+        if len <= self.inner.capacity() {
+            return;
+        }
+        let data_len = self.remaining();
+        let mut new_inner = Vec::with_capacity(len);
+        for i in 0..data_len {
+            new_inner.push(self.inner[i + self.cursor]);
+        }
+        self.inner = new_inner;
         self.cursor = 0;
     }
 }
