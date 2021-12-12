@@ -29,7 +29,7 @@ pub trait VecAsReadBufExt<'a> {
 
 impl<'a> VecAsReadBufExt<'a> for Vec<u8> {
     fn as_read_buf(&'a mut self) -> ReadBuf<'a> {
-        let dst = &mut self.chunk_mut();
+        let dst = self.chunk_mut();
         let dst = unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>]) };
         ReadBuf::uninit(dst)
     }

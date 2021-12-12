@@ -106,6 +106,8 @@ impl UdpCopyBuf {
                 self.addr.as_ref().unwrap()
             ))?;
 
+            ready!(writer.as_mut().poll_flush(cx))?; // for TlsStream
+
             if x == 0 {
                 break;
             }
@@ -113,8 +115,6 @@ impl UdpCopyBuf {
             #[cfg(feature = "debug_info")]
             debug!("[{:?}]CopyUdp::poll self.buf.advance({})", self.conn_id, x);
             self.buf.advance(x);
-
-            ready!(writer.as_mut().poll_flush(cx))?; // for TlsStream
             self.amt += x as u64;
         }
         return Poll::Ready(Ok(self.amt));
