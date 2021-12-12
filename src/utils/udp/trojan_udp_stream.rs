@@ -85,10 +85,9 @@ impl<IO> TrojanUdpStream<IO> {
         mut self: Pin<&mut Self>,
         outer_buf: &mut UdpRelayBuffer,
     ) -> Poll<Result<MixAddrType>> {
+        ready!(self.as_mut().try_update_addr_buf()?);
         #[cfg(feature = "udp_info")]
         debug!("TrojanUdpRecvStream buf after addr {:?}", self.recv_buffer);
-
-        ready!(self.as_mut().try_update_addr_buf()?);
         ready!(self.as_mut().try_update_expecting());
 
         let me = self.project();

@@ -312,16 +312,17 @@ impl MixAddrType {
         })
     }
 
-    #[cfg(feature = "client")]
-    pub fn init_from(addr: &SocketAddr) -> Self {
+    #[cfg(all(feature = "udp"))]
+    pub fn new_null() -> Self {
+        Self::V4(([0, 0, 0, 0], 0))
+    }
+}
+
+impl From<&SocketAddr> for MixAddrType {
+    fn from(addr: &SocketAddr) -> Self {
         match addr {
             SocketAddr::V4(v4) => Self::V4((v4.ip().octets(), v4.port())),
             SocketAddr::V6(v6) => Self::V6((v6.ip().segments(), v6.port())),
         }
-    }
-
-    #[cfg(all(feature = "udp"))]
-    pub fn new_null() -> Self {
-        Self::V4(([0, 0, 0, 0], 0))
     }
 }

@@ -111,7 +111,7 @@ impl UdpRead for ServerUdpStream {
         let mut buf_inner = buf.as_read_buf();
         let ptr = buf_inner.filled().as_ptr();
 
-        let _ = ready!(self.inner.poll_recv_from(cx, &mut buf_inner))?;
+        let addr = ready!(self.inner.poll_recv_from(cx, &mut buf_inner))?;
 
         // Ensure the pointer does not change from under us
         assert_eq!(ptr, buf_inner.filled().as_ptr());
@@ -134,6 +134,6 @@ impl UdpRead for ServerUdpStream {
             buf
         );
 
-        Poll::Ready(Ok(MixAddrType::new_null()))
+        Poll::Ready(Ok((&addr).into()))
     }
 }
