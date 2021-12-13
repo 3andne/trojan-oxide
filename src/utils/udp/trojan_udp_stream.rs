@@ -63,7 +63,7 @@ impl<IO> TrojanUdpStream<IO> {
         }
     }
 
-    fn try_update_expecting(self: Pin<&mut Self>) -> Poll<()> {
+    fn try_update_expecting(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         let me = self.project();
         if me.expecting.is_none() {
             if me.recv_buffer.remaining() < 2 {
@@ -73,19 +73,22 @@ impl<IO> TrojanUdpStream<IO> {
                 u16::from_be_bytes([me.recv_buffer.chunk()[0], me.recv_buffer.chunk()[1]]) as usize;
             *me.expecting = Some(expecting);
             me.recv_buffer.advance(2 + 2); // `len` + `\r\n`
-            me.recv_buffer.reserve(expecting);
+            if me.recv_buffer.reserve(expecting) {
+                cx.waker().wake_by_ref();
+            }
         }
         Poll::Ready(())
     }
 
     fn try_extract_packet(
         mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         outer_buf: &mut UdpRelayBuffer,
     ) -> Poll<Result<MixAddrType>> {
         ready!(self.as_mut().try_update_addr_buf()?);
         #[cfg(feature = "udp_info")]
         debug!("TrojanUdpRecvStream buf after addr {:?}", self.recv_buffer);
-        ready!(self.as_mut().try_update_expecting());
+        ready!(self.as_mut().try_update_expecting(cx));
 
         let me = self.project();
 
@@ -130,6 +133,7 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpStream<W> {
         debug!("TrojanUdpSendStream::poll_proxy_stream_write()");
         if self.send_buffer.is_empty() {
             self.data_len = buf.len();
+            self.send_buffer.reserve(addr.encoded_len() + 2 + buf.len());
             addr.write_buf(&mut self.send_buffer);
             // unsafe: as u16
             self.send_buffer
@@ -206,7 +210,7 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpStream<R> {
         #[cfg(feature = "udp_info")]
         debug!("TrojanUdpRecvStream::poll_proxy_stream_read()");
         if self.recv_buffer.len() > 0 {
-            if let res @ Poll::Ready(_) = self.as_mut().try_extract_packet(outer_buf) {
+            if let res @ Poll::Ready(_) = self.as_mut().try_extract_packet(cx, outer_buf) {
                 return res;
             }
         }
@@ -240,6 +244,6 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpStream<R> {
             Err(e) => return Poll::Ready(Err(e)),
         }
 
-        self.try_extract_packet(outer_buf)
+        self.try_extract_packet(cx, outer_buf)
     }
 }

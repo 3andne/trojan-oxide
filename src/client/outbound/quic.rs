@@ -1,11 +1,11 @@
 use super::forward;
 use crate::{
     args::{Opt, TrojanContext},
-    client::utils::{ClientConnectionRequest, ClientServerConnection},
+    client::utils::{get_rustls_config, ClientConnectionRequest, ClientServerConnection},
     protocol::*,
     utils::MixAddrType,
 };
-use anyhow::*;
+use anyhow::{anyhow, Error, Result};
 use quinn::*;
 use std::{
     sync::{
@@ -19,6 +19,7 @@ use tokio::{
     sync::{broadcast, mpsc, oneshot},
     time::{sleep, timeout},
 };
+use tokio_rustls::{rustls, rustls::RootCertStore};
 use tracing::*;
 
 pub static IS_CONNECTION_OPENED: AtomicBool = AtomicBool::new(false);
@@ -97,9 +98,6 @@ pub async fn send_echo(echo_stream: (SendStream, RecvStream), mut echo_rx: mpsc:
 pub struct EndpointManager {
     outbound: Endpoint,
     connection: QuicConnectionWrapper,
-    // remote: SocketAddr,
-    // remote_url: String,
-    // password: Arc<String>,
     options: Arc<Opt>,
     echo_tx: Option<mpsc::Sender<()>>,
     shudown_tx: broadcast::Sender<()>,
@@ -107,13 +105,9 @@ pub struct EndpointManager {
 
 impl EndpointManager {
     pub async fn new(options: Arc<Opt>) -> Result<Self> {
-        let (outbound, _) = new_builder(&options)
-            .await?
-            .bind(&"[::]:0".parse().unwrap())?;
-        // let remote = options.remote_socket_addr;
-        // let remote_url = options.proxy_url.clone();
+        let mut outbound = quinn::Endpoint::client("[::]:0".parse().unwrap())?;
+        outbound.set_default_client_config(new_builder(&options).await?);
 
-        // let password = options.password_hash.clone();
         let (shudown_tx, _) = broadcast::channel(1);
         let mut _self = Self {
             outbound,
@@ -180,8 +174,10 @@ impl EndpointManager {
     async fn new_connection(&mut self) -> Result<()> {
         let new_conn = timeout(
             Duration::from_secs(2),
-            self.outbound
-                .connect(&self.options.remote_socket_addr.unwrap(), &self.options.server_hostname)?,
+            self.outbound.connect(
+                self.options.remote_socket_addr.unwrap(),
+                &self.options.server_hostname,
+            )?,
         )
         .await
         .map_err(|e| Error::new(e))?
@@ -196,39 +192,27 @@ impl EndpointManager {
     }
 }
 
-async fn new_builder(options: &Opt) -> Result<EndpointBuilder> {
-    let mut builder = quinn::Endpoint::builder();
-    let mut client_config = quinn::ClientConfigBuilder::default();
-    client_config.protocols(ALPN_QUIC_HTTP);
+async fn new_builder(options: &Opt) -> Result<quinn::ClientConfig> {
+    let mut crypto_config = get_rustls_config(load_cert(options, RootCertStore::empty()).await?);
+    crypto_config.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
+    let mut config = quinn::ClientConfig::new(Arc::new(crypto_config));
 
-    load_cert(options, &mut client_config).await?;
-
-    let mut cfg = client_config.build();
-    let tls_cfg = Arc::get_mut(&mut cfg.crypto).unwrap();
-
-    tls_cfg.root_store =
-        rustls_native_certs::load_native_certs().expect("could not load platform certs");
-
-    let transport_cfg = Arc::get_mut(&mut cfg.transport).unwrap();
-    transport_cfg.max_idle_timeout(Some(QUIC_MAX_IDLE_TIMEOUT))?;
+    let transport_cfg = Arc::get_mut(&mut config.transport).unwrap();
+    transport_cfg.max_idle_timeout(Some(QUIC_MAX_IDLE_TIMEOUT.try_into()?));
     transport_cfg.persistent_congestion_threshold(6);
-    transport_cfg.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS as u64)?;
+    transport_cfg.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.try_into()?);
     transport_cfg.packet_threshold(4);
-
-    builder.default_client_config(cfg);
-
-    Ok(builder)
+    Ok(config)
 }
 
-async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Result<()> {
+async fn load_cert(options: &Opt, mut roots: RootCertStore) -> Result<RootCertStore> {
     if let Some(ca_path) = &options.ca {
-        client_config
-            .add_certificate_authority(quinn::Certificate::from_der(&fs::read(&ca_path).await?)?)?;
+        roots.add(&rustls::Certificate(fs::read(&ca_path).await?))?;
     } else {
         let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
         match fs::read(dirs.data_local_dir().join("cert.der")).await {
             Ok(cert) => {
-                client_config.add_certificate_authority(quinn::Certificate::from_der(&cert)?)?;
+                roots.add(&rustls::Certificate(cert))?;
             }
             Err(e) => {
                 if e.kind() == io::ErrorKind::NotFound {
@@ -240,7 +224,7 @@ async fn load_cert(options: &Opt, client_config: &mut ClientConfigBuilder) -> Re
             }
         }
     }
-    Ok(())
+    Ok(roots)
 }
 
 pub async fn quic_connection_daemon(

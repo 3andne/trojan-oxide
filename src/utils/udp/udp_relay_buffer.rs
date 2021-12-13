@@ -53,17 +53,16 @@ impl<'a> UdpRelayBuffer {
         self.cursor = 0;
     }
 
-    pub fn reserve(&mut self, len: usize) {
+    pub fn reserve(&mut self, len: usize) -> bool {
+        let len = len + self.cursor;
         if len <= self.inner.capacity() {
-            return;
+            return false;
         }
-        let data_len = self.remaining();
         let mut new_inner = Vec::with_capacity(len);
-        for i in 0..data_len {
-            new_inner.push(self.inner[i + self.cursor]);
-        }
+        new_inner.extend_from_slice(self.chunk());
         self.inner = new_inner;
         self.cursor = 0;
+        true
     }
 }
 

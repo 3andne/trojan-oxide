@@ -1,5 +1,6 @@
 use crate::utils::{MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite, DNS_TX};
 use futures::ready;
+use std::io::Result;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::{
@@ -33,7 +34,7 @@ impl UdpWrite for ServerUdpStream {
         cx: &mut Context<'_>,
         buf: &[u8],
         addr: &MixAddrType,
-    ) -> Poll<std::io::Result<usize>> {
+    ) -> Poll<Result<usize>> {
         #[cfg(feature = "udp_info")]
         debug!("ServerUdpSendStream::poll_proxy_stream_write()");
         loop {
@@ -84,11 +85,11 @@ impl UdpWrite for ServerUdpStream {
         }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<()>> {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<()>> {
         Poll::Ready(Ok(()))
     }
 }
@@ -105,7 +106,7 @@ impl UdpRead for ServerUdpStream {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut UdpRelayBuffer,
-    ) -> Poll<std::io::Result<MixAddrType>> {
+    ) -> Poll<Result<MixAddrType>> {
         #[cfg(feature = "udp_info")]
         debug!("ServerUdpRecvStream::poll_proxy_stream_read()");
 
