@@ -65,17 +65,26 @@ impl<IO> TrojanUdpStream<IO> {
 
     fn try_update_expecting(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         let me = self.project();
-        if me.expecting.is_none() {
-            if me.recv_buffer.remaining() < 2 {
-                return Poll::Pending;
+        let expecting;
+        match me.expecting {
+            None => {
+                if me.recv_buffer.remaining() < 2 {
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                expecting =
+                    u16::from_be_bytes([me.recv_buffer.chunk()[0], me.recv_buffer.chunk()[1]])
+                        as usize;
+                *me.expecting = Some(expecting);
+                me.recv_buffer.advance(2 + 2); // `len` + `\r\n`
+                me.recv_buffer.reserve(expecting);
             }
-            let expecting =
-                u16::from_be_bytes([me.recv_buffer.chunk()[0], me.recv_buffer.chunk()[1]]) as usize;
-            *me.expecting = Some(expecting);
-            me.recv_buffer.advance(2 + 2); // `len` + `\r\n`
-            if me.recv_buffer.reserve(expecting) {
-                cx.waker().wake_by_ref();
+            Some(exp) => {
+                expecting = *exp;
             }
+        }
+        if me.recv_buffer.len() < expecting {
+            cx.waker().wake_by_ref();
         }
         Poll::Ready(())
     }
@@ -91,18 +100,22 @@ impl<IO> TrojanUdpStream<IO> {
 
         let me = self.project();
 
+        crate::debug_info!(recv me, "try to extract", "");
+
         let expecting = me.expecting.unwrap();
         // udp shouldn't be fragmented
         // we read in the packet as a whole
         // or we return pending
         if expecting <= me.recv_buffer.remaining() {
+            let out_len = outer_buf.len();
             outer_buf.reserve(expecting);
             outer_buf.extend_from_slice(&me.recv_buffer.chunk()[..expecting]);
             me.recv_buffer.advance(expecting);
             me.recv_buffer.compact();
             *me.expecting = None;
-            crate::debug_info!(recv me, "can extract", "");
             let addr = std::mem::replace(me.addr_buf, MixAddrType::None);
+            crate::debug_info!(recv me, "can extract", format!("outer len: {} -> {}", out_len, outer_buf.len()));
+
             Poll::Ready(Ok(addr))
         } else {
             Poll::Pending
