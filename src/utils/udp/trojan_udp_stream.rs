@@ -202,6 +202,7 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpStream<R> {
         crate::debug_info!(recv self, "enter", "");
         if self.recv_buffer.len() > 0 {
             if let res @ Poll::Ready(_) = self.as_mut().try_extract_packet(cx, outer_buf) {
+                cx.waker().wake_by_ref();
                 crate::debug_info!(recv self, "early return", res);
                 return res;
             }
