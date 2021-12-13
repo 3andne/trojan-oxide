@@ -82,7 +82,6 @@ impl MixAddrType {
         })
     }
 
-    #[cfg(feature = "client")]
     pub fn encoded_len(&self) -> usize {
         use MixAddrType::*;
         match self {
