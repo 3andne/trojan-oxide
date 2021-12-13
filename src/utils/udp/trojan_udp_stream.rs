@@ -85,9 +85,8 @@ impl<IO> TrojanUdpStream<IO> {
         cx: &mut Context<'_>,
         outer_buf: &mut UdpRelayBuffer,
     ) -> Poll<Result<MixAddrType>> {
+        crate::debug_info!(recv self, "try_extract_packet", "");
         ready!(self.as_mut().try_update_addr_buf()?);
-        #[cfg(feature = "udp_info")]
-        debug!("TrojanUdpRecvStream buf after addr {:?}", self.recv_buffer);
         ready!(self.as_mut().try_update_expecting(cx));
 
         let me = self.project();
@@ -102,11 +101,7 @@ impl<IO> TrojanUdpStream<IO> {
             me.recv_buffer.advance(expecting);
             me.recv_buffer.compact();
             *me.expecting = None;
-            #[cfg(feature = "udp_info")]
-            debug!(
-                "TrojanUdpRecvStream buffer before return {:?}",
-                me.recv_buffer
-            );
+            crate::debug_info!(recv me, "can extract", "");
             let addr = std::mem::replace(me.addr_buf, MixAddrType::None);
             Poll::Ready(Ok(addr))
         } else {
@@ -129,25 +124,21 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpStream<W> {
         buf: &[u8],
         addr: &MixAddrType,
     ) -> Poll<Result<usize>> {
-        #[cfg(feature = "udp_info")]
-        debug!("TrojanUdpSendStream::poll_proxy_stream_write()");
+        crate::debug_info!(send self, "enter", buf, addr, "");
         if self.send_buffer.is_empty() {
             self.data_len = buf.len();
-            self.send_buffer.reserve(addr.encoded_len() + 2 + buf.len());
+            self.send_buffer.reserve(addr.encoded_len() + 4 + buf.len());
             addr.write_buf(&mut self.send_buffer);
             // unsafe: as u16
             self.send_buffer
                 .extend_from_slice(&(buf.len() as u16).to_be_bytes());
             self.send_buffer.extend_from_slice(&[b'\r', b'\n']);
             self.send_buffer.extend_from_slice(buf);
+            crate::debug_info!(send self, "empty and refill", buf, addr, "");
         }
         let me = self.project();
 
-        #[cfg(feature = "udp_info")]
-        debug!(
-            "TrojanUdpSendStream::poll_proxy_stream_write() inner {:?}",
-            me.send_buffer
-        );
+        crate::debug_info!(send me, "before sending", buf, addr, "");
 
         match me.inner.poll_write(cx, &me.send_buffer)? {
             Poll::Ready(0) => {
@@ -155,19 +146,11 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpStream<W> {
             }
             Poll::Ready(x) => {
                 if x < me.send_buffer.remaining() {
-                    #[cfg(feature = "udp_info")]
-                    debug!(
-                        "TrojanUdpSendStream::poll_proxy_stream_write() x < me.buffer.remaining() inner {:?}",
-                        me.send_buffer
-                    );
+                    crate::debug_info!(send me, "send and remain", buf, addr, x);
                     me.send_buffer.advance(x);
                     Poll::Pending
                 } else {
-                    #[cfg(feature = "udp_info")]
-                    debug!(
-                        "TrojanUdpSendStream::poll_proxy_stream_write() reset buffer {:?}",
-                        me.send_buffer
-                    );
+                    crate::debug_info!(send me, "send all", buf, addr, x);
                     unsafe {
                         me.send_buffer.reset();
                     }
@@ -175,11 +158,7 @@ impl<W: AsyncWrite + Unpin> UdpWrite for TrojanUdpStream<W> {
                 }
             }
             Poll::Pending => {
-                #[cfg(feature = "udp_info")]
-                debug!(
-                    "TrojanUdpSendStream::poll_proxy_stream_write() pending {:?}",
-                    me.send_buffer
-                );
+                crate::debug_info!(send me, "pending", buf, addr, "");
                 Poll::Pending
             }
         }
@@ -207,10 +186,10 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpStream<R> {
         cx: &mut Context<'_>,
         outer_buf: &mut UdpRelayBuffer, // bug once occured: accidentally used outer_buf as inner_buf
     ) -> Poll<Result<MixAddrType>> {
-        #[cfg(feature = "udp_info")]
-        debug!("TrojanUdpRecvStream::poll_proxy_stream_read()");
+        crate::debug_info!(recv self, "enter", "");
         if self.recv_buffer.len() > 0 {
             if let res @ Poll::Ready(_) = self.as_mut().try_extract_packet(cx, outer_buf) {
+                crate::debug_info!(recv self, "early return", res);
                 return res;
             }
         }
@@ -218,13 +197,14 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpStream<R> {
         let mut me = self.as_mut().project();
         let mut buf_inner = me.recv_buffer.as_read_buf();
         let ptr = buf_inner.filled().as_ptr();
-        match ready!(me.inner.as_mut().poll_read(cx, &mut buf_inner)) {
-            Ok(_) => {
+        match me.inner.as_mut().poll_read(cx, &mut buf_inner)? {
+            Poll::Ready(_) => {
                 // Ensure the pointer does not change from under us
                 assert_eq!(ptr, buf_inner.filled().as_ptr());
                 let n = buf_inner.filled().len();
 
                 if n == 0 {
+                    crate::debug_info!(recv me, "n == 0", "");
                     // EOF is seen
                     return Poll::Ready(Ok(MixAddrType::None));
                 }
@@ -235,15 +215,41 @@ impl<R: AsyncRead + Unpin> UdpRead for TrojanUdpStream<R> {
                     me.recv_buffer.advance_mut(n);
                 }
 
-                #[cfg(feature = "udp_info")]
-                debug!(
-                    "TrojanUdpRecvStream::poll_proxy_stream_read() buf {:?}",
-                    me.recv_buffer
-                );
+                crate::debug_info!(recv me, "read ready", n);
             }
-            Err(e) => return Poll::Ready(Err(e)),
+            Poll::Pending => {
+                crate::debug_info!(recv me, "pending", "");
+                return Poll::Pending;
+            }
         }
 
         self.try_extract_packet(cx, outer_buf)
     }
+}
+
+#[macro_export]
+macro_rules! debug_info {
+    (recv $me:expr, $msg:expr, $addition:expr) => {
+        #[cfg(feature = "udp_info")]
+        debug!(
+            "TrojanUdpRecv {} buf len {} expecting {:?} addr {:?} | {:?}",
+            $msg,
+            $me.recv_buffer.chunk().len(),
+            $me.expecting,
+            $me.addr_buf,
+            $addition
+        );
+    };
+
+    (send $me:expr, $msg:expr, $buf:expr, $addr:expr, $addition:expr) => {
+        #[cfg(feature = "udp_info")]
+        debug!(
+            "TrojanUdpSend {} inner_buf len {} buf len {} addr {:?} | {:?}",
+            $msg,
+            $me.send_buffer.chunk().len(),
+            $buf.len(),
+            $addr,
+            $addition,
+        );
+    };
 }
