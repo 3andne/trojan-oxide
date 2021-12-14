@@ -77,15 +77,17 @@ impl<IO> TrojanUdpStream<IO> {
                         as usize;
                 *me.expecting = Some(expecting);
                 me.recv_buffer.advance(2 + 2); // `len` + `\r\n`
-                me.recv_buffer.reserve(expecting);
+                if me.recv_buffer.reserve(expecting) {
+                    cx.waker().wake_by_ref();
+                }
             }
             Some(exp) => {
                 expecting = *exp;
             }
         }
-        if me.recv_buffer.len() < expecting {
-            cx.waker().wake_by_ref();
-        }
+        // if me.recv_buffer.len() < expecting {
+        //     cx.waker().wake_by_ref();
+        // }
         Poll::Ready(())
     }
 
