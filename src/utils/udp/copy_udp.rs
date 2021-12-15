@@ -47,6 +47,8 @@ pub(crate) struct UdpCopyBuf {
     addr: Option<MixAddrType>,
     amt: u64,
     conn_id: Option<usize>,
+    need_flush: bool,
+    read_done: bool,
 }
 
 impl UdpCopyBuf {
@@ -56,6 +58,8 @@ impl UdpCopyBuf {
             addr: None,
             amt: 0,
             conn_id,
+            need_flush: false,
+            read_done: false,
         }
     }
 
@@ -70,19 +74,30 @@ impl UdpCopyBuf {
         W: UdpWrite + Unpin,
     {
         loop {
-            if !self.buf.has_remaining() {
+            if !self.buf.has_remaining() && !self.read_done {
                 #[cfg(feature = "udp_info")]
                 debug!("[{:?}]CopyUdp::poll reset buffer", self.conn_id);
                 unsafe {
                     self.buf.reset();
                 }
-                let new_addr = ready!(reader.as_mut().poll_proxy_stream_read(cx, &mut self.buf))?;
+                let new_addr = match reader.as_mut().poll_proxy_stream_read(cx, &mut self.buf)? {
+                    Poll::Ready(addr) => addr,
+                    Poll::Pending => {
+                        // Try flushing when the reader has no progress to avoid deadlock
+                        // when the reader depends on buffered writer.
+                        if self.need_flush {
+                            ready!(writer.as_mut().poll_flush(cx))?;
+                            self.need_flush = false;
+                        }
+
+                        return Poll::Pending;
+                    }
+                };
                 if new_addr.is_none() {
                     #[cfg(feature = "udp_info")]
                     debug!("[{:?}]CopyUdp::poll new_addr.is_none()", self.conn_id);
-                    break;
-                }
-                if self.addr.as_ref().map_or(true, |prev| prev != &new_addr) {
+                    self.read_done = true;
+                } else if self.addr.as_ref().map_or(true, |prev| prev != &new_addr) {
                     if self.conn_id.is_some() {
                         info!("[udp][{}] => {:?}", self.conn_id.unwrap(), &new_addr);
                     }
@@ -90,31 +105,39 @@ impl UdpCopyBuf {
                 }
             }
 
-            #[cfg(feature = "debug_info")]
+            #[cfg(feature = "udp_info")]
             debug!(
-                "[{:?}]CopyUdp::poll self.addr {:?}, self.buff: {:?}",
+                "[{:?}]CopyUdp::poll self.addr {:?}, self.buff len: {:?}",
                 self.conn_id,
                 self.addr,
-                &self.buf.chunk()
+                &self.buf.chunk().len()
             );
 
-            let x = ready!(writer.as_mut().poll_proxy_stream_write(
-                cx,
-                &self.buf.chunk(),
-                self.addr.as_ref().unwrap()
-            ))?;
+            while self.buf.has_remaining() {
+                let x = ready!(writer.as_mut().poll_proxy_stream_write(
+                    cx,
+                    &self.buf.chunk(),
+                    self.addr.as_ref().unwrap()
+                ))?;
 
-            ready!(writer.as_mut().poll_flush(cx))?; // for TlsStream
+                if x == 0 {
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "write zero byte into writer",
+                    )));
+                }
 
-            if x == 0 {
-                break;
+                #[cfg(feature = "udp_info")]
+                debug!("[{:?}]CopyUdp::poll self.buf.advance({})", self.conn_id, x);
+                self.buf.advance(x);
+                self.amt += x as u64;
+                self.need_flush = true;
             }
 
-            #[cfg(feature = "debug_info")]
-            debug!("[{:?}]CopyUdp::poll self.buf.advance({})", self.conn_id, x);
-            self.buf.advance(x);
-            self.amt += x as u64;
+            if !self.buf.has_remaining() && self.read_done {
+                ready!(writer.as_mut().poll_flush(cx))?;
+                return Poll::Ready(Ok(self.amt));
+            }
         }
-        return Poll::Ready(Ok(self.amt));
     }
 }

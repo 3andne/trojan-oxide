@@ -11,7 +11,7 @@ pub struct UdpRelayBuffer {
 
 impl<'a> UdpRelayBuffer {
     pub fn new() -> Self {
-        let buf = Vec::with_capacity(2048);
+        let buf = Vec::with_capacity(0x4000);
         Self {
             cursor: 0,
             inner: buf,
@@ -39,6 +39,10 @@ impl<'a> UdpRelayBuffer {
         self.inner.is_empty()
     }
 
+    pub fn is_full(&self) -> bool {
+        self.inner.capacity() == self.inner.len()
+    }
+
     pub fn compact(&mut self) {
         if self.cursor == 0 {
             return;
@@ -53,16 +57,14 @@ impl<'a> UdpRelayBuffer {
         self.cursor = 0;
     }
 
-    pub fn reserve(&mut self, len: usize) -> bool {
-        let len = len + self.cursor;
-        if len <= self.inner.capacity() {
-            return false;
+    pub fn reserve_by_cursor(&mut self, len: usize) {
+        if len + self.cursor <= self.inner.capacity() {
+            return;
         }
         let mut new_inner = Vec::with_capacity(len);
         new_inner.extend_from_slice(self.chunk());
         self.inner = new_inner;
         self.cursor = 0;
-        true
     }
 }
 
