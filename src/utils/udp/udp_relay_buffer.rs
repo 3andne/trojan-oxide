@@ -1,4 +1,7 @@
-use crate::utils::{CursoredBuffer, ExtendableFromSlice, VecAsReadBufExt};
+use crate::{
+    protocol::UDP_BUFFER_SIZE,
+    utils::{CursoredBuffer, ExtendableFromSlice, VecAsReadBufExt},
+};
 use bytes::BufMut;
 use std::ops::Deref;
 use tokio::io::ReadBuf;
@@ -11,7 +14,7 @@ pub struct UdpRelayBuffer {
 
 impl<'a> UdpRelayBuffer {
     pub fn new() -> Self {
-        let buf = Vec::with_capacity(0x4000);
+        let buf = Vec::with_capacity(UDP_BUFFER_SIZE);
         Self {
             cursor: 0,
             inner: buf,
@@ -37,10 +40,6 @@ impl<'a> UdpRelayBuffer {
 
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
-    }
-
-    pub fn is_full(&self) -> bool {
-        self.inner.capacity() == self.inner.len()
     }
 
     pub fn compact(&mut self) {

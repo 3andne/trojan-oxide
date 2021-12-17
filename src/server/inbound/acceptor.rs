@@ -140,7 +140,6 @@ impl<'a> TrojanAcceptor<'a> {
                         continue;
                     }
                     Ok(()) => {
-                        debug!("Ok");
                         break;
                     }
                 }

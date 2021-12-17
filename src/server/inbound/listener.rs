@@ -74,7 +74,7 @@ pub async fn tcp_tls_listener(mut context: TrojanContext) -> Result<()> {
                 continue;
             }
         };
-        // stream.set_nodelay(true)?; // buggy
+        stream.set_nodelay(true)?;
         tokio::spawn(
             handle_tcp_tls_connection(
                 context.clone_with_signal(shutdown_tx.subscribe()),
