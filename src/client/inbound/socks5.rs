@@ -87,7 +87,7 @@ impl Socks5Request {
 
         match self.is_udp {
             false => {
-                MixAddrType::init_from(&inbound.local_addr()?).write_buf(&mut buf);
+                MixAddrType::from(&inbound.local_addr()?).write_buf(&mut buf);
                 inbound.write_all(&buf).await?;
                 Ok(ConnectionRequest::TCP(new_client_tcp_stream(inbound, None)))
             }
@@ -95,7 +95,7 @@ impl Socks5Request {
             true => {
                 let local_ip = inbound.local_addr()?.ip();
                 let server_udp_socket = UdpSocket::bind(SocketAddr::new(local_ip, 0)).await?;
-                MixAddrType::init_from(&server_udp_socket.local_addr()?).write_buf(&mut buf);
+                MixAddrType::from(&server_udp_socket.local_addr()?).write_buf(&mut buf);
                 inbound.write_all(&buf).await?;
                 let (stream_reset_signal_tx, stream_reset_signal_rx) = oneshot::channel();
 

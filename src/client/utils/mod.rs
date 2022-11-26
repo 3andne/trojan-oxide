@@ -12,6 +12,9 @@ pub use client_server_connection::*;
 mod connection_mode;
 pub use connection_mode::ConnectionMode;
 
+mod rustls_utils;
+pub use rustls_utils::get_rustls_config;
+
 use tokio::net::TcpStream;
 #[cfg(feature = "udp")]
 use tokio::sync::mpsc;

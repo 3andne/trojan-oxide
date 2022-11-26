@@ -1,21 +1,17 @@
-use crate::{args::Opt, client::utils::ClientServerConnection};
-use anyhow::{anyhow, Result};
-use rustls_native_certs;
+use crate::{
+    args::Opt,
+    client::utils::{get_rustls_config, ClientServerConnection},
+};
+use anyhow::Result;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::{
-    rustls::ClientConfig, rustls::ClientSessionMemoryCache, webpki::DNSNameRef, TlsConnector,
+    rustls::{ClientConfig, RootCertStore, ServerName},
+    TlsConnector,
 };
 
 pub async fn tls_client_config() -> ClientConfig {
-    let mut config = ClientConfig::new();
-    // config
-    //     .root_store
-    //     .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-    config.root_store =
-        rustls_native_certs::load_native_certs().expect("could not load platform certs");
-    config.set_persistence(ClientSessionMemoryCache::new(128));
-    config
+    get_rustls_config(RootCertStore::empty())
 }
 
 pub struct TrojanTcpTlsConnector {
@@ -37,12 +33,15 @@ impl TrojanTcpTlsConnector {
             is_lite,
         } = self;
         let opt = &*opt;
-        let domain = DNSNameRef::try_from_ascii_str(&opt.server_hostname)
-            .map_err(|_| anyhow!("invalid dnsname"))?;
         let connector = TlsConnector::from(tls_config);
         let stream = TcpStream::connect(&opt.remote_socket_addr.unwrap()).await?;
         stream.set_nodelay(true)?;
-        let stream = connector.connect(domain, stream).await?;
+        let stream = connector
+            .connect(
+                ServerName::try_from(opt.server_hostname.as_str()).expect("invalid DNS name"),
+                stream,
+            )
+            .await?;
         use ClientServerConnection::*;
         return Ok(match is_lite {
             #[cfg(feature = "lite_tls")]

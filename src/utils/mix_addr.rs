@@ -11,6 +11,7 @@ use crate::{
     utils::{transmute_u16s_to_u8s, CursoredBuffer, ExtendableFromSlice, ParserError, DNS_TX},
 };
 use std::net::SocketAddr;
+#[cfg(feature = "debug_info")]
 use tracing::*;
 #[derive(Debug, Clone)]
 pub enum MixAddrType {
@@ -82,7 +83,6 @@ impl MixAddrType {
         })
     }
 
-    #[cfg(feature = "client")]
     pub fn encoded_len(&self) -> usize {
         use MixAddrType::*;
         match self {
@@ -106,6 +106,7 @@ impl MixAddrType {
 
     #[cfg(feature = "client")]
     pub fn from_http_header(is_https: bool, buf: &[u8]) -> Result<Self, ParserError> {
+        #[cfg(feature = "debug_info")]
         debug!(
             "from_http_header: entered, buf: {:?}",
             std::str::from_utf8(buf)
@@ -119,6 +120,7 @@ impl MixAddrType {
                 break;
             }
         }
+        #[cfg(feature = "debug_info")]
         debug!("from_http_header: port_idx {}", port_idx);
 
         if port_idx == 0 {
@@ -150,11 +152,13 @@ impl MixAddrType {
             }
         }
 
+        #[cfg(feature = "debug_info")]
         debug!("from_http_header: port {}", port);
         let addr = &buf[0..port_idx];
         let last = addr[addr.len() - 1];
         if last == b']' {
             // IPv6: `[real_IPv6_addr]`
+            #[cfg(feature = "debug_info")]
             debug!("from_http_header: IPv6");
             let str_buf = std::str::from_utf8(addr).map_err(|_| {
                 ParserError::Invalid("MixAddrType::from_http_header IPv6 Utf8Error".into())
@@ -170,6 +174,7 @@ impl MixAddrType {
             Ok(Self::V6((v6_addr_u16, port)))
         } else if last <= b'z' && last >= b'a' || last <= b'Z' && last >= b'A' {
             // Hostname: ends with alphabetic characters
+            #[cfg(feature = "debug_info")]
             debug!("from_http_header: Hostname");
             Ok(Self::Hostname((
                 String::from_utf8(addr.to_vec())
@@ -183,6 +188,7 @@ impl MixAddrType {
             )))
         } else {
             // IPv4: ends with digit characters
+            #[cfg(feature = "debug_info")]
             debug!("from_http_header: IPv4");
             let str_buf = std::str::from_utf8(addr).map_err(|_| {
                 ParserError::Invalid("MixAddrType::from_http_header IPv4 Utf8Error".into())
@@ -251,13 +257,13 @@ impl MixAddrType {
     ///          order
     ///```
     pub fn from_encoded_bytes(buf: &[u8]) -> Result<(MixAddrType, usize), ParserError> {
+        #[cfg(feature = "debug_info")]
         debug!("MixAddrType::from_encoded_bytes buf: {:?}", buf);
         expect_buf_len!(buf, 2, "MixAddrType::from_encoded_bytes cmd");
         match buf[0] {
             // Field ATYP
             0x01 => {
                 // IPv4
-                debug!("IPv4");
                 expect_buf_len!(buf, 1 + 4 + 2, "MixAddrType::from_encoded_bytes IPv4"); // cmd + ipv4 + port
                 let ip = [buf[1], buf[2], buf[3], buf[4]];
                 let port = u16::from_be_bytes([buf[5], buf[6]]);
@@ -265,7 +271,6 @@ impl MixAddrType {
             }
             0x03 => {
                 // Domain Name
-                debug!("Domain Name");
                 let host_len = buf[1] as usize;
                 expect_buf_len!(
                     buf,
@@ -284,7 +289,6 @@ impl MixAddrType {
             }
             0x04 => {
                 // IPv6
-                debug!("IPv6");
                 expect_buf_len!(buf, 1 + 16 + 2, "MixAddrType::from_encoded_bytes IPv6"); // cmd + ipv6u8(16 bytes) + port
                 let v6u8 = &buf[1..1 + 16];
                 let mut v6u16 = [0u16; 8];
@@ -312,16 +316,17 @@ impl MixAddrType {
         })
     }
 
-    #[cfg(feature = "client")]
-    pub fn init_from(addr: &SocketAddr) -> Self {
+    #[cfg(all(feature = "udp"))]
+    pub fn new_null() -> Self {
+        Self::V4(([0, 0, 0, 0], 0))
+    }
+}
+
+impl From<&SocketAddr> for MixAddrType {
+    fn from(addr: &SocketAddr) -> Self {
         match addr {
             SocketAddr::V4(v4) => Self::V4((v4.ip().octets(), v4.port())),
             SocketAddr::V6(v6) => Self::V6((v6.ip().segments(), v6.port())),
         }
-    }
-
-    #[cfg(all(feature = "udp"))]
-    pub fn new_null() -> Self {
-        Self::V4(([0, 0, 0, 0], 0))
     }
 }

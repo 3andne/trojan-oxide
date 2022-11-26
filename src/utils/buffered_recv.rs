@@ -22,19 +22,6 @@ impl<T> BufferedRecv<T> {
     }
 }
 
-// impl<T> Splitable for BufferedRecv<T>
-// where
-//     T: Splitable,
-// {
-//     type R = BufferedRecv<T::R>;
-//     type W = T::W;
-
-//     fn split(self) -> (Self::R, Self::W) {
-//         let (r, w) = self.inner.split();
-//         (BufferedRecv::new(r, self.buffered_request), w)
-//     }
-// }
-
 impl<T> AsyncRead for BufferedRecv<T>
 where
     T: AsyncRead + Unpin,
@@ -48,7 +35,6 @@ where
             let (index, buffered_request) = self.buffered_request.as_ref().unwrap();
             buf.put_slice(&buffered_request[*index..]);
             self.buffered_request = None;
-            cx.waker().wake_by_ref(); // super important
             return Poll::Ready(Ok(()));
         }
 

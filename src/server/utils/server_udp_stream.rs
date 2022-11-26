@@ -1,5 +1,6 @@
 use crate::utils::{MixAddrType, UdpRead, UdpRelayBuffer, UdpWrite, DNS_TX};
-use futures::ready;
+use futures::{ready, Future};
+use std::io::Result;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::{
@@ -8,8 +9,7 @@ use std::{
 };
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
-use tokio::sync::oneshot::error::TryRecvError;
-#[cfg(feature = "debug_info")]
+#[cfg(feature = "udp_info")]
 use tracing::*;
 
 #[cfg_attr(feature = "debug_info", derive(Debug))]
@@ -33,36 +33,43 @@ impl UdpWrite for ServerUdpStream {
         cx: &mut Context<'_>,
         buf: &[u8],
         addr: &MixAddrType,
-    ) -> Poll<std::io::Result<usize>> {
-        #[cfg(feature = "debug_info")]
-        debug!("ServerUdpSendStream::poll_proxy_stream_write()");
+    ) -> Poll<Result<usize>> {
+        mc::debug_info!(send self, "enter", "");
         loop {
             match self.addr_task {
-                ResolveAddr::Pending(ref mut task) => {
-                    let ip = match task.try_recv() {
-                        Ok(ip) => ip,
-                        Err(TryRecvError::Empty) => return Poll::Pending,
-                        Err(TryRecvError::Closed) => return Poll::Ready(Ok(0)),
+                ResolveAddr::Pending((ref mut task, ref mut missed_wakeup)) => {
+                    let ip = match Pin::new(task).poll(cx) {
+                        Poll::Pending => {
+                            *missed_wakeup = true;
+                            mc::debug_info!(send self, "resolving pending & pending", "");
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Ok(ip)) => {
+                            if *missed_wakeup {
+                                mc::debug_info!(send self, "adding back wakeups", "");
+                                cx.waker().wake_by_ref();
+                            }
+                            ip
+                        }
+                        Poll::Ready(Err(_)) => return Poll::Ready(Ok(0)),
                     };
                     self.addr_task = ResolveAddr::Ready((ip, addr.port()).into());
                 }
                 ResolveAddr::Ready(s_addr) => {
-                    #[cfg(feature = "debug_info")]
-                    debug!(
-                        "ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::Ready({}), buf {:?}",
-                        s_addr, buf
-                    );
-
                     let res = self.inner.poll_send_to(cx, buf, s_addr);
 
-                    if res.is_ready() {
-                        self.addr_task = ResolveAddr::None;
+                    if let Poll::Ready(Ok(val)) = res {
+                        if val == buf.len() {
+                            self.addr_task = ResolveAddr::None;
+                        }
                     }
+                    mc::debug_info!(send self,
+                        "ResolveAddr::Ready({})", format!("addr {:?} buf len {:?}, res {:?}", s_addr, buf.len(), res)
+                    );
                     return res;
                 }
                 ResolveAddr::None => {
-                    #[cfg(feature = "debug_info")]
-                    debug!("ServerUdpSendStream::poll_proxy_stream_write() ResolveAddr::None");
+                    mc::debug_info!(send self, "ResolveAddr::None", "");
 
                     use MixAddrType::*;
                     self.addr_task = match addr {
@@ -73,7 +80,7 @@ impl UdpWrite for ServerUdpStream {
                             tokio::spawn(async move {
                                 DNS_TX.get().unwrap().send((name, task_tx)).await
                             });
-                            ResolveAddr::Pending(task_rx)
+                            ResolveAddr::Pending((task_rx, false))
                         }
                         _ => panic!("unprecedented MixAddrType variant"),
                     };
@@ -82,18 +89,18 @@ impl UdpWrite for ServerUdpStream {
         }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<()>> {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<()>> {
         Poll::Ready(Ok(()))
     }
 }
 
 #[cfg_attr(feature = "debug_info", derive(Debug))]
 enum ResolveAddr {
-    Pending(oneshot::Receiver<IpAddr>),
+    Pending((oneshot::Receiver<IpAddr>, bool)),
     Ready(SocketAddr),
     None,
 }
@@ -103,18 +110,14 @@ impl UdpRead for ServerUdpStream {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut UdpRelayBuffer,
-    ) -> Poll<std::io::Result<MixAddrType>> {
-        #[cfg(feature = "debug_info")]
-        debug!("ServerUdpRecvStream::poll_proxy_stream_read()");
-        let mut buf_inner = buf.as_read_buf();
-        let ptr = buf_inner.filled().as_ptr();
+    ) -> Poll<Result<MixAddrType>> {
+        mc::debug_info!(recv self, "enter", format!("buf len {}", buf.len()));
 
-        let _ = ready!(self.inner.poll_recv_from(cx, &mut buf_inner))?;
+        let mut read_buf = buf.as_read_buf();
 
-        // Ensure the pointer does not change from under us
-        assert_eq!(ptr, buf_inner.filled().as_ptr());
-        let n = buf_inner.filled().len();
+        let addr = ready!(self.inner.poll_recv_from(cx, &mut read_buf))?;
 
+        let n = read_buf.filled().len();
         if n == 0 {
             // EOF is seen
             return Poll::Ready(Ok(MixAddrType::None));
@@ -126,12 +129,23 @@ impl UdpRead for ServerUdpStream {
             buf.advance_mut(n);
         }
 
-        #[cfg(feature = "debug_info")]
-        debug!(
-            "ServerUdpRecvStream::poll_proxy_stream_read() buf {:?}",
-            buf
-        );
+        mc::debug_info!(recv self, "read ok", format!("buf len {}, n {}", buf.len(), n));
 
-        Poll::Ready(Ok(MixAddrType::new_null()))
+        Poll::Ready(Ok((&addr).into()))
     }
+}
+
+mod mc {
+    macro_rules! debug_info {
+        (recv $me:expr, $msg:expr, $addition:expr) => {
+            #[cfg(feature = "udp_info")]
+            debug!("ServerUdpRecv {} | {:?}", $msg, $addition);
+        };
+
+        (send $me:expr, $msg:expr, $addition:expr) => {
+            #[cfg(feature = "udp_info")]
+            debug!("ServerUdpSend {} | {:?}", $msg, $addition,);
+        };
+    }
+    pub(crate) use debug_info;
 }

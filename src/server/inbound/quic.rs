@@ -2,48 +2,20 @@ use super::get_server_local_addr;
 use crate::{
     args::Opt,
     protocol::{ALPN_QUIC_HTTP, MAX_CONCURRENT_BIDI_STREAMS, QUIC_MAX_IDLE_TIMEOUT},
+    server::utils::get_server_certs_and_key,
 };
-use anyhow::*;
+use anyhow::{bail, Context, Result};
+use quinn::Endpoint;
 #[cfg(feature = "quic")]
 use quinn::*;
 use std::sync::Arc;
 use tokio::{fs, io};
+use tokio_rustls::rustls::{self, ServerConfig};
 use tracing::*;
 
 pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config.max_idle_timeout(Some(QUIC_MAX_IDLE_TIMEOUT))?;
-    transport_config.persistent_congestion_threshold(6);
-    transport_config.packet_threshold(4);
-    transport_config.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS as u64)?;
-
-    let mut server_config = quinn::ServerConfig::default();
-    server_config.transport = Arc::new(transport_config);
-    let mut server_config = quinn::ServerConfigBuilder::new(server_config);
-    server_config.protocols(ALPN_QUIC_HTTP);
-
-    // server_config.use_stateless_retry(true);
-    if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
-        debug!("private key path {:?}, cert_path {:?}", key_path, cert_path);
-        let key = fs::read(key_path)
-            .await
-            .context("failed to read private key")?;
-        let key = if key_path.extension().map_or(false, |x| x == "der") {
-            quinn::PrivateKey::from_der(&key)?
-        } else {
-            quinn::PrivateKey::from_pem(&key)?
-        };
-        let cert_chain = fs::read(cert_path)
-            .await
-            .context("failed to read certificate chain")?;
-        let cert_chain = if cert_path.extension().map_or(false, |x| x == "der") {
-            quinn::CertificateChain::from_certs(Some(
-                quinn::Certificate::from_der(&cert_chain).unwrap(),
-            ))
-        } else {
-            quinn::CertificateChain::from_pem(&cert_chain)?
-        };
-        server_config.certificate(cert_chain, key)?;
+    let (certs, key) = if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
+        get_server_certs_and_key(key_path, cert_path).await?
     } else {
         let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
         let path = dirs.data_local_dir();
@@ -73,14 +45,26 @@ pub async fn quic_tunnel_rx(options: &Opt) -> Result<(Endpoint, Incoming)> {
                 bail!("failed to read certificate: {}", e);
             }
         };
-        let key = quinn::PrivateKey::from_der(&key)?;
-        let cert = quinn::Certificate::from_der(&cert)?;
-        server_config.certificate(quinn::CertificateChain::from_certs(vec![cert]), key)?;
-    }
 
-    let mut endpoint = quinn::Endpoint::builder();
-    endpoint.listen(server_config.build());
+        let key = rustls::PrivateKey(key);
+        let cert = rustls::Certificate(cert);
+        (vec![cert], key)
+    };
+
+    let mut crypto_config = ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)?;
+    crypto_config.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
+
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(crypto_config));
+
+    let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+    transport_config.max_idle_timeout(Some(QUIC_MAX_IDLE_TIMEOUT.try_into()?));
+    transport_config.persistent_congestion_threshold(6);
+    transport_config.packet_threshold(4);
+    transport_config.max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.try_into()?);
 
     let server_addr = get_server_local_addr(options.server_port);
-    Ok(endpoint.bind(&server_addr)?)
+    Ok(Endpoint::server(server_config, server_addr)?)
 }

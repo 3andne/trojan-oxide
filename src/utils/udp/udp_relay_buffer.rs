@@ -1,9 +1,12 @@
-use crate::utils::{CursoredBuffer, ExtendableFromSlice, VecAsReadBufExt};
+use crate::{
+    protocol::UDP_BUFFER_SIZE,
+    utils::{CursoredBuffer, ExtendableFromSlice, VecAsReadBufExt},
+};
 use bytes::BufMut;
 use std::ops::Deref;
 use tokio::io::ReadBuf;
 
-#[cfg_attr(feature = "debug_info", derive(Debug))]
+#[cfg_attr(feature = "udp_info", derive(Debug))]
 pub struct UdpRelayBuffer {
     cursor: usize,
     inner: Vec<u8>,
@@ -11,7 +14,7 @@ pub struct UdpRelayBuffer {
 
 impl<'a> UdpRelayBuffer {
     pub fn new() -> Self {
-        let buf = Vec::with_capacity(2048);
+        let buf = Vec::with_capacity(UDP_BUFFER_SIZE);
         Self {
             cursor: 0,
             inner: buf,
@@ -19,7 +22,7 @@ impl<'a> UdpRelayBuffer {
     }
 
     pub fn as_read_buf(&'a mut self) -> ReadBuf<'a> {
-        self.inner.as_read_buf(self.cursor)
+        self.inner.as_read_buf()
     }
 
     pub unsafe fn advance_mut(&mut self, cnt: usize) {
@@ -39,7 +42,7 @@ impl<'a> UdpRelayBuffer {
         self.inner.is_empty()
     }
 
-    pub fn pump(&mut self) {
+    pub fn compact(&mut self) {
         if self.cursor == 0 {
             return;
         }
@@ -50,6 +53,16 @@ impl<'a> UdpRelayBuffer {
         unsafe {
             self.inner.set_len(data_len);
         }
+        self.cursor = 0;
+    }
+
+    pub fn reserve_by_cursor(&mut self, len: usize) {
+        if len + self.cursor <= self.inner.capacity() {
+            return;
+        }
+        let mut new_inner = Vec::with_capacity(len);
+        new_inner.extend_from_slice(self.chunk());
+        self.inner = new_inner;
         self.cursor = 0;
     }
 }
