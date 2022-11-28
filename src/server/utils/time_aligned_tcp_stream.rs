@@ -24,7 +24,7 @@ pin_project! {
     pub struct TimeAlignedTcpStream<T> {
         #[pin]
         inner: T,
-        outbound_rtt_ms: u32,
+        filled: usize,
         enable: bool,
         stage: Stage,
         sleep: Pin<Box<Sleep>>,
@@ -34,13 +34,14 @@ pin_project! {
 
 impl<T> TimeAlignedTcpStream<T> {
     pub fn new(inner: T) -> Self {
-        let outbound_rtt_ms = LATENCY_EST.load(Ordering::Acquire);
         Self {
             inner,
-            outbound_rtt_ms,
-            enable: true,
+            filled: 0,
+            enable: false,
             stage: Stage::Read,
-            sleep: Box::pin(sleep(Duration::from_millis(outbound_rtt_ms as u64))),
+            sleep: Box::pin(sleep(Duration::from_millis(
+                LATENCY_EST.load(Ordering::Acquire) as u64,
+            ))),
             res: None,
         }
     }
@@ -67,17 +68,21 @@ impl<T: AsyncRead + Unpin> AsyncRead for TimeAlignedTcpStream<T> {
             match me.stage {
                 Stage::Read => {
                     *me.res = Some(ready!(me.inner.poll_read(cx, buf)));
+                    *me.filled = buf.filled().len();
+                    buf.set_filled(0);
                     *me.stage = Stage::Sleep;
-                    me.sleep
-                        .as_mut()
-                        .reset(Instant::now() + Duration::from_millis(*me.outbound_rtt_ms as u64));
+                    me.sleep.as_mut().reset(
+                        Instant::now()
+                            + Duration::from_millis(LATENCY_EST.load(Ordering::Acquire) as u64),
+                    );
                     ready!(me.sleep.as_mut().poll(cx));
                     Poll::Pending
                 }
                 Stage::Sleep => {
                     ready!(me.sleep.as_mut().poll(cx));
                     *me.stage = Stage::Read;
-                    Poll::Ready(Ok(()))
+                    buf.set_filled(*me.filled);
+                    Poll::Ready(me.res.take().unwrap())
                 }
             }
         }
