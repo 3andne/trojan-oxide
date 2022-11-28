@@ -62,14 +62,17 @@ pub async fn handle_quic_connection(
     Ok(())
 }
 
+use crate::server::utils::time_aligned_tcp_stream::TimeAlignedTcpStream;
+
 #[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 pub async fn handle_tcp_tls_connection(
     context: TrojanContext,
-    incoming: Accept<TcpStream>,
+    incoming: Accept<TimeAlignedTcpStream<TcpStream>>,
 ) -> Result<()> {
     let stream = timeout(Duration::from_secs(5), incoming)
         .await
         .with_context(|| anyhow!("failed to accept TlsStream"))??;
+
     handle_outbound(context, stream).await?;
     Ok(())
 }

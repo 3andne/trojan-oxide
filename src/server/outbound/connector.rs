@@ -2,13 +2,12 @@ use crate::{
     adapt,
     args::TrojanContext,
     protocol::{SERVER_OUTBOUND_CONNECT_TIMEOUT, TCP_MAX_IDLE_TIMEOUT},
-    server::inbound::TrojanAcceptor,
-    utils::{lite_tls::LeaveTls, Adapter, ConnectionRequest, MixAddrType},
+    server::{inbound::TrojanAcceptor, utils::inbound_stream::InboundStream},
+    utils::{Adapter, ConnectionRequest, MixAddrType},
 };
 use anyhow::{anyhow, Context, Error, Result};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
     net::TcpStream,
     select,
     time::{timeout, Duration},
@@ -45,7 +44,7 @@ async fn outbound_connect(target_host: &MixAddrType) -> Result<TcpStream> {
 
 pub async fn handle_outbound<I>(mut context: TrojanContext, stream: I) -> Result<()>
 where
-    I: AsyncRead + AsyncWrite + LeaveTls + Unpin + Send + 'static,
+    I: InboundStream,
 {
     let opt = &*context.options;
     let mut target = TrojanAcceptor::new(opt.password.as_bytes(), opt.fallback_port);

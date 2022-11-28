@@ -7,7 +7,10 @@ use crate::{
     protocol::{
         ECHO_REQUEST_CMD, HASH_LEN, LITE_TLS_REQUEST_CMD, TCP_REQUEST_CMD, UDP_REQUEST_CMD,
     },
-    server::{outbound::fallback, utils::TcpOption},
+    server::{
+        outbound::fallback,
+        utils::{trojan_inbound_callback::TrojanInboundCallback, TcpOption},
+    },
     utils::{BufferedRecv, ConnectionRequest, MixAddrType, ParserError},
 };
 use anyhow::Result;
@@ -114,9 +117,8 @@ impl<'a> TrojanAcceptor<'a> {
         mut inbound: I,
     ) -> Result<ServerConnectionRequest<I>, ParserError>
     where
-        I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        I: AsyncRead + AsyncWrite + TrojanInboundCallback + Unpin + Send + 'static,
     {
-        // let (mut read_half, write_half) = inbound.split();
         loop {
             let read = inbound
                 .read_buf(&mut self.buf)
@@ -153,6 +155,8 @@ impl<'a> TrojanAcceptor<'a> {
         } else {
             Some((self.cursor, std::mem::take(&mut self.buf)))
         };
+
+        inbound.handshake_finished();
 
         use TcpOption::*;
         match self.cmd_code {

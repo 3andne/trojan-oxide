@@ -51,6 +51,8 @@ pub async fn quic_listener(mut context: TrojanContext) -> Result<()> {
 
 #[cfg(any(feature = "tcp_tls", feature = "lite_tls"))]
 pub async fn tcp_tls_listener(mut context: TrojanContext) -> Result<()> {
+    use crate::server::utils::time_aligned_tcp_stream::TimeAlignedTcpStream;
+
     let (shutdown_tx, _) = broadcast::channel(1);
     let config = tls_server_config(&context.options)
         .await
@@ -75,6 +77,7 @@ pub async fn tcp_tls_listener(mut context: TrojanContext) -> Result<()> {
             }
         };
         stream.set_nodelay(true)?;
+        let stream = TimeAlignedTcpStream::new(stream);
         tokio::spawn(
             handle_tcp_tls_connection(
                 context.clone_with_signal(shutdown_tx.subscribe()),

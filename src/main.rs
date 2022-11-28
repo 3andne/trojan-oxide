@@ -1,6 +1,5 @@
 // #![feature(aarch64_target_feature)]
 // #![feature(stdsimd)]
-#![feature(generic_associated_types)]
 #![feature(type_alias_impl_trait)]
 #![feature(associated_type_defaults)]
 
@@ -75,6 +74,7 @@ async fn main() -> Result<()> {
     );
 
     utils::start_dns_resolver_thread();
+    utils::start_latency_estimator();
 
     let _ = proxy::build_tunnel(tokio::signal::ctrl_c(), Arc::new(options)).await;
     Ok(())
