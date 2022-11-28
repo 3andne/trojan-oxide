@@ -35,7 +35,6 @@ optional = true
 
 [dependencies.tokio-rustls]
 version = "0.23.4"
-path = "../tls/tokio-rustls"
 optional = true
 
 [dependencies.rcgen]
