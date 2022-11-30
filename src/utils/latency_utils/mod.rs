@@ -31,12 +31,13 @@ const SAMPLE_WEBSITES: [&'static str; 17] = [
     "www.weather.com:443",
 ];
 
-pub fn start_latency_estimator() {
+pub fn start_latency_estimator(latency_factor: f32) {
     info!("starting latency_estimator");
-    tokio::spawn(latency_estimator_service());
+    tokio::spawn(latency_estimator_service(latency_factor));
 }
 
-async fn latency_estimator_service() {
+async fn latency_estimator_service(latency_factor: f32) {
+    info!("latency factor: {}", latency_factor);
     loop {
         let mut elapsed = 0;
         let mut accessed = 0;
@@ -55,7 +56,7 @@ async fn latency_estimator_service() {
         let new = if accessed == 0 {
             100
         } else {
-            elapsed / accessed
+            (elapsed as f32 * latency_factor / accessed as f32) as u32
         };
         info!("new est latency {}", new);
         let curr = LATENCY_EST.load(Ordering::Acquire);

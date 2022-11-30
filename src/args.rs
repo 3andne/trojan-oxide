@@ -146,7 +146,11 @@ pub struct Opt {
     #[cfg(feature = "client")]
     #[structopt(short = "m", long, default_value = "t", parse(from_str = parse_connection_mode))]
     pub connection_mode: ConnectionMode,
-
+    
+    #[cfg(feature = "server")]
+    #[structopt(short = "n", long, default_value = "1.2")]
+    pub latency_factor: f32,
+   
     pub remote_socket_addr: Option<SocketAddr>,
 }
 

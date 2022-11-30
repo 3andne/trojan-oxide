@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
     );
 
     utils::start_dns_resolver_thread();
-    utils::start_latency_estimator();
+    utils::start_latency_estimator(options.latency_factor);
 
     let _ = proxy::build_tunnel(tokio::signal::ctrl_c(), Arc::new(options)).await;
     Ok(())
